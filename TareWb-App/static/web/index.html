@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weighbridge Automation - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/paho-mqtt.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-logo">
+                    <div class="logo-icon">WB</div>
+                    <div class="header-title">
+                        <h1>Weighbridge</h1>
+                        <span class="subtitle">
+                            Operational Dashboard
+                            <span id="app-version" style="margin-left:8px; opacity:0.85; font-weight:600;">v--</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="update-btn" class="camera-icon-btn" title="Update Available" onclick="openUpdateModal()" style="display:none;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                </button>
+                <button id="version-btn" class="camera-icon-btn" title="Application Version" onclick="showVersionInfo()">
+                    i
+                </button>
+                <button id="camera-btn" class="camera-icon-btn" title="View Top Camera">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                        <circle cx="12" cy="13" r="4"></circle>
+                    </svg>
+                </button>
+                <div class="system-status" id="system-status">
+                    <span class="status-indicator-dot"></span>
+                    <span id="status-text">System Operational</span>
+                </div>
+                <div class="timestamp" id="current-time">--:--:--</div>
+                <button id="login-button" class="header-login-btn" type="button">Login</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Left Panel: Device Status -->
+        <div class="left-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Device Status</h2>
+            </div>
+            <div class="panel-body">
+                <div class="device-status-container">
+                <!-- RFID Reader -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">RFID Reader</div>
+                        <div class="device-status status-connected">
+                            <span class="status-indicator"></span>
+                            Connected
+                        </div>
+                    </div>
+                    <div class="device-details">Port: COM3</div>
+                </div>
+
+                <!-- Digitizer -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Digitizer</div>
+                        <div class="device-status status-connected">
+                            <span class="status-indicator"></span>
+                            Connected
+                        </div>
+                    </div>
+                    <div class="device-details">Port: COM4</div>
+                </div>
+
+                <!-- I/O Controller -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">I/O Controller</div>
+                        <div class="device-status status-connected">
+                            <span class="status-indicator"></span>
+                            Connected
+                        </div>
+                    </div>
+                    <div class="device-details">Modbus RTU</div>
+                </div>
+
+                <!-- Sensors -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Sensors</div>
+                    </div>
+                    <div class="sensor-list">
+                        <div class="sensor-item">
+                            <span class="sensor-name">S1</span>
+                            <span class="sensor-state state-inactive">Inactive</span>
+                        </div>
+                        <div class="sensor-item">
+                            <span class="sensor-name">S2</span>
+                            <span class="sensor-state state-inactive">Inactive</span>
+                        </div>
+                        <div class="sensor-item">
+                            <span class="sensor-name">S3</span>
+                            <span class="sensor-state state-inactive">Inactive</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Traffic Light Entry -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Traffic Light (Entry)</div>
+                        <div class="device-status status-active">
+                            <span class="status-indicator"></span>
+                            Green
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Traffic Light Exit -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Traffic Light (Exit)</div>
+                        <div class="device-status status-inactive">
+                            <span class="status-indicator"></span>
+                            Red
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Boom Barrier Entry -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Boom Barrier (Entry)</div>
+                        <div class="device-status status-active">
+                            <span class="status-indicator"></span>
+                            Open
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Boom Barrier Exit -->
+                <div class="device-item">
+                    <div class="device-header">
+                        <div class="device-name">Boom Barrier (Exit)</div>
+                        <div class="device-status status-inactive">
+                            <span class="status-indicator"></span>
+                            Closed
+                        </div>
+                    </div>
+                </div>
+            </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Transaction Flow -->
+        <div class="right-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Transaction Flow</h2>
+            </div>
+            
+            <!-- RFID Display Box -->
+            <div class="rfid-display-container" id="rfid-display-box" style="display: none;">
+                <div class="rfid-display-header">
+                    <div class="rfid-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect>
+                            <line x1="7" y1="9" x2="7" y2="9"></line>
+                            <line x1="7" y1="15" x2="17" y2="15"></line>
+                        </svg>
+                    </div>
+                    <span class="rfid-label">RFID / ANPR / Weight</span>
+                </div>
+                <div class="rfid-display-body">
+                    <div class="rfid-data-row">
+                        <span class="rfid-data-label">RFID:</span>
+                        <span class="rfid-data-value" id="rfid-value">--</span>
+                    </div>
+                    <div class="rfid-data-row">
+                        <span class="rfid-data-label">Truck Number:</span>
+                        <span class="rfid-data-value" id="truck-number-value">--</span>
+                    </div>
+                    <div class="rfid-data-row">
+                        <span class="rfid-data-label">Weight:</span>
+                        <span class="rfid-data-value" id="weight-value">--</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-container">
+                <div class="flow-step" id="step-vehicle-entering" data-step="vehicle_entering">
+                    <div class="step-title">Vehicle Weighbridge Alignment Process</div>
+                    <div class="step-content">Waiting for vehicle...</div>
+                </div>
+
+                <div class="flow-step" id="step-reading-weight" data-step="reading_weight">
+                    <div class="step-title">Reading Weight Process</div>
+                    <div class="step-content">Weight: 0 kg</div>
+                </div>
+
+                <div class="flow-step" id="step-rfid-read" data-step="rfid_read">
+                    <div class="step-title">RFID Read Process</div>
+                    <div class="step-content">Waiting for RFID scan...</div>
+                </div>
+
+                <div class="flow-step" id="step-validating-rfid" data-step="validating_rfid">
+                    <div class="step-title">RFID Validation Process</div>
+                    <div class="step-content">Waiting for validation...</div>
+                </div>
+
+                <div class="flow-step" id="step-validating-anpr" data-step="validating_anpr">
+                    <div class="step-title">ANPR Validation Process</div>
+                    <div class="step-content">Waiting for ANPR...</div>
+                </div>
+
+                <div class="flow-step" id="step-validating-weight" data-step="validating_weight">
+                    <div class="step-title">Weight Details Process</div>
+                    <div class="step-content">Waiting for weight details...</div>
+                </div>
+
+                <div class="flow-step" id="step-exit-start" data-step="exit_start">
+                    <div class="step-title">Vehicle Exit Process</div>
+                    <div class="step-content"></div>
+                </div>
+
+                <div class="flow-step" id="step-exit-completed" data-step="exit_completed">
+                    <div class="step-title">Transaction Complete</div>
+                    <div class="step-content">Waiting for next transaction...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camera Modal -->
+    <div id="camera-modal" class="camera-modal">
+        <div class="camera-modal-content">
+            <div class="camera-modal-header">
+                <h2>Top Camera View</h2>
+                <button class="camera-modal-close" id="camera-modal-close">&times;</button>
+            </div>
+            <div class="camera-modal-body">
+                <div class="camera-stream-container">
+                    <img id="camera-stream" src="" alt="Camera Stream" />
+                    <div id="camera-loading" class="camera-loading">
+                        <div class="camera-loading-spinner"></div>
+                        <p>Loading camera stream...</p>
+                    </div>
+                    <div id="camera-error" class="camera-error" style="display: none;">
+                        <p>Unable to load camera stream</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="check-sensor-popup" class="check-sensor-popup" aria-hidden="true">
+        <div class="check-sensor-card">
+            <div class="check-sensor-pulse"></div>
+            <div class="check-sensor-icon" aria-hidden="true">!</div>
+            <h2>CHECK SENSOR</h2>
+            <p id="check-sensor-detail">A sensor is active while the weighbridge is idle.</p>
+            <ul id="check-sensor-list"></ul>
+        </div>
+    </div>
+
+    <div id="api-alert-popup" class="check-sensor-popup api-alert-popup" aria-hidden="true">
+        <div class="check-sensor-card">
+            <div class="check-sensor-pulse"></div>
+            <div class="check-sensor-icon" aria-hidden="true">!</div>
+            <h2 id="api-alert-title">SERVICE ERROR</h2>
+            <p id="api-alert-detail">A required service is not reachable.</p>
+            <button type="button" id="api-alert-dismiss" class="api-alert-dismiss">Dismiss</button>
+        </div>
+    </div>
+
+    <div class="demo-controls" id="operator-controls" hidden>
+        <button id="free-pass-button" class="free-pass-button" type="button" onclick="handleFreePass()">Free Pass</button>
+        <button id="reset-button" class="reset-button" type="button" onclick="handleResetApplication()">Reset</button>
+    </div>
+
+    <div id="login-modal" class="modal">
+        <div class="modal-content login-card">
+            <div class="modal-header login-card-header">
+                <h2>Operator Login</h2>
+            </div>
+            <div class="modal-body">
+                <form id="login-form" autocomplete="on">
+                    <label class="login-label" for="login-username">Username</label>
+                    <input id="login-username" class="login-input" type="text" name="username" required>
+                    <label class="login-label" for="login-password">Password</label>
+                    <input id="login-password" class="login-input" type="password" name="password" required>
+                    <p id="login-error" class="login-error" hidden></p>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id="login-cancel-btn" class="modal-btn modal-btn-cancel" type="button">Cancel</button>
+                <button id="login-submit-btn" class="modal-btn modal-btn-ok" type="submit" form="login-form">Login</button>
+            </div>
+            <div id="login-spinner" class="login-spinner" hidden>
+                <div class="login-spinner-ring"></div>
+                <p>Signing in...</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="reset-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Reset Application</h2>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to reset the application?</p>
+                <p class="modal-warning">This will stop any ongoing transaction and return to IDLE.</p>
+            </div>
+            <div class="modal-footer">
+                <button id="modal-cancel-btn" class="modal-btn modal-btn-cancel" type="button">Cancel</button>
+                <button id="modal-ok-btn" class="modal-btn modal-btn-ok" type="button">Confirm Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="free-pass-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header modal-header-warning">
+                <h2>Free Pass</h2>
+            </div>
+            <div class="modal-body">
+                <p>Open all traffic lights and boom barriers so the vehicle can pass without weighing?</p>
+                <p class="modal-warning">The application returns to IDLE after the vehicle cuts and then clears the exit sensor (uncut → cut → uncut).</p>
+            </div>
+            <div class="modal-footer">
+                <button id="free-pass-cancel-btn" class="modal-btn modal-btn-cancel" type="button">Cancel</button>
+                <button id="free-pass-ok-btn" class="modal-btn modal-btn-ok modal-btn-warning" type="button">Confirm Free Pass</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+
+    <div id="update-modal" class="camera-modal">
+        <div class="camera-modal-content" style="max-width: 640px;">
+            <div class="camera-modal-header">
+                <h2>Application Update</h2>
+                <button class="camera-modal-close" onclick="closeUpdateModal()">&times;</button>
+            </div>
+            <div class="camera-modal-body">
+                <p><strong>Current:</strong> <span id="upd-current-version">-</span></p>
+                <p><strong>Latest:</strong> <span id="upd-latest-version">-</span></p>
+                <div id="upd-progress-wrap" style="margin-top:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <strong>Update Progress</strong>
+                        <span id="upd-progress-label">0%</span>
+                    </div>
+                    <div style="height:10px;background:#2b3f56;border-radius:999px;overflow:hidden;">
+                        <div id="upd-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4da3ff,#2f80ed);transition:width .25s ease;"></div>
+                    </div>
+                </div>
+                <div id="upd-release-notes" style="max-height:180px;overflow:auto;border:1px solid #2b3f56;padding:8px;border-radius:8px;white-space:pre-wrap;"></div>
+                <p id="upd-message" style="margin-top:10px;">Ready</p>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button class="nav-button" onclick="closeUpdateModal()">Close</button>
+                    <button class="nav-button" id="apply-update-btn" onclick="applyUpdateNow()">Download & Update</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

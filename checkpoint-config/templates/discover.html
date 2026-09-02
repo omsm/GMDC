@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block title %}GMDC - Device Discovery{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<header class="header">
+    <div class="header-brand">
+        <i class="bi bi-cpu"></i>
+        <span>{{ app_name }}</span>
+    </div>
+    <div class="header-actions">
+        <button class="btn btn-link" onclick="goBack()" title="Back to Checklist">
+            <i class="bi bi-arrow-left"></i> Back
+        </button>
+        <button class="theme-toggle" id="versionInfoBtn" title="Application Version: {{ app_version }}" onclick="showAppVersionInfo()">
+            <i class="bi bi-info-circle"></i>
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+            <i class="bi bi-sun-fill" id="themeIcon"></i>
+        </button>
+    </div>
+</header>
+
+<div class="discovery-page">
+    <div class="discovery-header">
+        <h1><i class="bi bi-search"></i> Device Discovery</h1>
+        <p>Scanning network and detecting connected devices...</p>
+    </div>
+    
+    <div class="discovery-progress-card">
+        <div class="progress-section" id="scanProgressSection">
+            <div class="progress-header">
+                <div class="progress-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="scanProgress">0</div>
+                        <div class="stat-label">Scanned</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="scanTotal">0</div>
+                        <div class="stat-label">Total</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="scanFound">0</div>
+                        <div class="stat-label">Found</div>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="scanProgressBar"></div>
+            </div>
+            <div class="current-ip" id="scanCurrentIp">Initializing scan...</div>
+        </div>
+    </div>
+    
+    <div class="discovery-results hidden" id="discoveryResults">
+        <div class="results-summary">
+            <div class="summary-card">
+                <i class="bi bi-hdd-network"></i>
+                <div class="summary-value" id="networkDeviceCount">0</div>
+                <div class="summary-label">Network Devices</div>
+            </div>
+            <div class="summary-card">
+                <i class="bi bi-usb-drive"></i>
+                <div class="summary-value" id="comPortCount">0</div>
+                <div class="summary-label">COM Ports</div>
+            </div>
+        </div>
+        
+        <div class="results-tables">
+            <div class="results-table-container">
+                <h3><i class="bi bi-hdd-network"></i> Network Devices</h3>
+                <table class="results-table" id="networkDevicesTable">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Device Type</th>
+                            <th>Open Ports</th>
+                        </tr>
+                    </thead>
+                    <tbody id="networkDevicesBody">
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="results-table-container">
+                <h3><i class="bi bi-usb-drive"></i> COM Ports</h3>
+                <table class="results-table" id="comPortsTable">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comPortsBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="discovery-footer">
+            <button class="btn btn-secondary" onclick="goBack()">
+                <i class="bi bi-arrow-left"></i> Back to Checklist
+            </button>
+            <button class="btn btn-secondary" onclick="rescan()">
+                <i class="bi bi-arrow-clockwise"></i> Rescan
+            </button>
+            <button class="btn btn-primary btn-lg" onclick="proceedToConfig()">
+                <i class="bi bi-gear"></i> Continue to Configuration
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Checkpoint type + direction selection -->
+<div class="modal-overlay" id="weighbridgeLayoutModal">
+    <div class="modal-container layout-modal">
+        <div class="modal-header">
+            <h2><i class="bi bi-signpost-split"></i> Checkpoint type</h2>
+            <p>Select which GMDC site this PC configures. Weighbridges also choose uni or bidirectional flow.</p>
+        </div>
+        <div class="modal-body layout-modal-body">
+            <label class="form-label" for="checkpointTypeSelect" style="color:#e2e8f0;margin-bottom:8px;display:block;">Site type</label>
+            <select id="checkpointTypeSelect" class="form-select" style="margin-bottom:16px;">
+                {% for c in checkpoint_type_choices %}
+                <option value="{{ c.id }}" data-family="{{ c.family }}"
+                    {% if c.id == checkpoint_type %}selected{% endif %}>
+                    {{ c.label }}
+                </option>
+                {% endfor %}
+            </select>
+            <div id="directionChoiceBlock" class="layout-choice-list" role="radiogroup" aria-label="Weighbridge direction">
+                <label class="layout-choice-card">
+                    <input type="radio" name="weighbridgeLayoutChoice" value="unidirectional" class="layout-choice-input" checked>
+                    <span class="layout-choice-icon layout-choice-icon--uni" aria-hidden="true"><i class="bi bi-arrow-right"></i></span>
+                    <span class="layout-choice-content">
+                        <span class="layout-choice-title-row">
+                            <span class="layout-choice-title">Unidirectional</span>
+                            <span class="layout-choice-badge">Default</span>
+                        </span>
+                    </span>
+                    <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+                </label>
+                <label class="layout-choice-card">
+                    <input type="radio" name="weighbridgeLayoutChoice" value="bidirectional" class="layout-choice-input">
+                    <span class="layout-choice-icon layout-choice-icon--bi" aria-hidden="true"><i class="bi bi-arrow-left-right"></i></span>
+                    <span class="layout-choice-content">
+                        <span class="layout-choice-title-row">
+                            <span class="layout-choice-title">Bidirectional</span>
+                        </span>
+                    </span>
+                    <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer layout-modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeWeighbridgeLayoutModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="confirmWeighbridgeLayoutChoice()">
+                <i class="bi bi-check-lg"></i> Continue to configuration
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/discover.js') }}"></script>
+{% endblock %}
+

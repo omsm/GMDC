@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="renderer" content="webkit">
+    <title>{% block title %}Device Configuration{% endblock %}</title>
+    <!-- Disable right-click / context menu in the application UI -->
+    <script>
+        document.addEventListener('contextmenu', function (e) {
+            e.preventDefault();
+            return false;
+        }, true);
+
+        // Fullscreen helpers: start fullscreen; Esc restores window controls / minimize
+        (function appFullscreenControls() {
+            var lockedFullscreen = true;
+
+            function exitBrowserFullscreen() {
+                var exitFs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+                if (!exitFs) return;
+                try {
+                    var p = exitFs.call(document);
+                    if (p && typeof p.catch === 'function') p.catch(function () {});
+                } catch (e) { /* ignore */ }
+            }
+
+            function enterBrowserFullscreen() {
+                if (document.fullscreenElement || document.webkitFullscreenElement) return;
+                var el = document.documentElement;
+                var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+                if (!req) return;
+                try {
+                    var p = req.call(el);
+                    if (p && typeof p.catch === 'function') p.catch(function () {});
+                } catch (e) { /* ignore */ }
+            }
+
+            function leaveAppFullscreen() {
+                lockedFullscreen = false;
+                exitBrowserFullscreen();
+                fetch('/api/ui/exit_fullscreen', { method: 'POST' }).catch(function () {});
+            }
+
+            function enterAppFullscreen() {
+                lockedFullscreen = true;
+                enterBrowserFullscreen();
+                fetch('/api/ui/enter_fullscreen', { method: 'POST' }).catch(function () {});
+            }
+
+            function minimizeApp() {
+                lockedFullscreen = false;
+                exitBrowserFullscreen();
+                fetch('/api/ui/minimize', { method: 'POST' }).catch(function () {});
+            }
+
+            // Auto-enter once after load (do not re-enter on every key)
+            [300, 800, 1500].forEach(function (ms) {
+                setTimeout(function () {
+                    if (lockedFullscreen) enterBrowserFullscreen();
+                }, ms);
+            });
+            window.addEventListener('load', function () {
+                if (lockedFullscreen) enterBrowserFullscreen();
+            }, { once: true });
+
+            document.addEventListener('keydown', function (e) {
+                var key = e.key || e.code;
+                if (key === 'Escape' || key === 'Esc') {
+                    e.preventDefault();
+                    leaveAppFullscreen();
+                    return;
+                }
+                // F11 toggles fullscreen
+                if (key === 'F11') {
+                    e.preventDefault();
+                    if (lockedFullscreen) leaveAppFullscreen();
+                    else enterAppFullscreen();
+                    return;
+                }
+                // Ctrl+M minimizes
+                if ((e.ctrlKey || e.metaKey) && (key === 'm' || key === 'M')) {
+                    e.preventDefault();
+                    minimizeApp();
+                }
+            }, true);
+
+            // Expose for optional UI buttons
+            window.gmdcLeaveFullscreen = leaveAppFullscreen;
+            window.gmdcEnterFullscreen = enterAppFullscreen;
+            window.gmdcMinimizeWindow = minimizeApp;
+        })();
+    </script>
+    <!-- Polyfills for older browsers -->
+    <script>
+        // Polyfill for older Edge/IE
+        (function() {
+            // Object.assign polyfill
+            if (typeof Object.assign != 'function') {
+                Object.assign = function(target) {
+                    'use strict';
+                    if (target == null) {
+                        throw new TypeError('Cannot convert undefined or null to object');
+                    }
+                    var to = Object(target);
+                    for (var index = 1; index < arguments.length; index++) {
+                        var nextSource = arguments[index];
+                        if (nextSource != null) {
+                            for (var nextKey in nextSource) {
+                                if (Object.prototype.hasOwnProperty.call(nextSource, nextKey)) {
+                                    to[nextKey] = nextSource[nextKey];
+                                }
+                            }
+                        }
+                    }
+                    return to;
+                };
+            }
+            
+            // Array.from polyfill
+            if (!Array.from) {
+                Array.from = function(arrayLike, mapFn, thisArg) {
+                    var C = this;
+                    var items = Object(arrayLike);
+                    if (arrayLike == null) {
+                        throw new TypeError('Array.from requires an array-like object - not null or undefined');
+                    }
+                    var mapFunction = mapFn === undefined ? undefined : mapFn;
+                    var T;
+                    if (typeof mapFunction !== 'undefined') {
+                        if (typeof mapFunction !== 'function') {
+                            throw new TypeError('Array.from: when provided, the second argument must be a function');
+                        }
+                        if (arguments.length > 2) {
+                            T = thisArg;
+                        }
+                    }
+                    var len = parseInt(items.length) || 0;
+                    var A = typeof C === 'function' ? Object(new C(len)) : new Array(len);
+                    var k = 0;
+                    var kValue;
+                    while (k < len) {
+                        kValue = items[k];
+                        if (mapFunction) {
+                            A[k] = typeof T === 'undefined' ? mapFunction(kValue, k) : mapFunction.call(T, kValue, k);
+                        } else {
+                            A[k] = kValue;
+                        }
+                        k += 1;
+                    }
+                    A.length = len;
+                    return A;
+                };
+            }
+            
+            // Promise polyfill check
+            if (typeof Promise === 'undefined') {
+                console.warn('Promise not supported - some features may not work');
+            }
+            
+            // Fetch polyfill check
+            if (typeof fetch === 'undefined') {
+                console.warn('Fetch API not supported - using XMLHttpRequest fallback');
+                window.fetch = function(url, options) {
+                    return new Promise(function(resolve, reject) {
+                        var xhr = new XMLHttpRequest();
+                        xhr.open(options && options.method || 'GET', url);
+                        if (options && options.headers) {
+                            Object.keys(options.headers).forEach(function(key) {
+                                xhr.setRequestHeader(key, options.headers[key]);
+                            });
+                        }
+                        xhr.onload = function() {
+                            resolve({
+                                ok: xhr.status >= 200 && xhr.status < 300,
+                                status: xhr.status,
+                                statusText: xhr.statusText,
+                                json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); },
+                                text: function() { return Promise.resolve(xhr.responseText); }
+                            });
+                        };
+                        xhr.onerror = reject;
+                        xhr.send(options && options.body || null);
+                    });
+                };
+            }
+            
+            // matchMedia polyfill
+            if (!window.matchMedia) {
+                window.matchMedia = function(mediaQuery) {
+                    return {
+                        matches: false,
+                        media: mediaQuery,
+                        addListener: function() {},
+                        removeListener: function() {}
+                    };
+                };
+            }
+            
+            // localStorage polyfill (fallback to memory storage)
+            if (typeof(Storage) === 'undefined' || !window.localStorage) {
+                var localStorageData = {};
+                window.localStorage = {
+                    getItem: function(key) { return localStorageData[key] || null; },
+                    setItem: function(key, value) { localStorageData[key] = value; },
+                    removeItem: function(key) { delete localStorageData[key]; },
+                    clear: function() { localStorageData = {}; }
+                };
+            }
+        })();
+    </script>
+    <!-- Bootstrap 5.3.2 -->
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/bootstrap-icons.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <!-- Browser compatibility check -->
+    <script>
+        (function() {
+            // Check for minimum browser requirements
+            var isCompatible = true;
+            var issues = [];
+            
+            // Check for CSS custom properties (CSS variables)
+            if (!window.CSS || !CSS.supports || !CSS.supports('color', 'var(--test)')) {
+                issues.push('CSS Variables not supported');
+            }
+            
+            // Check for ES6 features
+            try {
+                eval('(function() { const test = 1; let test2 = 2; })');
+            } catch(e) {
+                issues.push('ES6 features not fully supported');
+            }
+            
+            // Check for required APIs
+            if (typeof document.querySelector === 'undefined') {
+                isCompatible = false;
+                issues.push('querySelector not available');
+            }
+            
+            if (typeof document.addEventListener === 'undefined') {
+                isCompatible = false;
+                issues.push('addEventListener not available');
+            }
+            
+            // Show compatibility warning if needed
+            if (issues.length > 0) {
+                console.warn('Browser compatibility issues detected:', issues);
+                // Add a class to body for CSS fallbacks
+                document.documentElement.classList.add('legacy-browser');
+            }
+            
+            // Store compatibility info
+            window.BROWSER_COMPAT = {
+                compatible: isCompatible,
+                issues: issues
+            };
+            
+            // Apply fallback styles if CSS variables aren't supported
+            if (issues.indexOf('CSS Variables not supported') >= 0) {
+                // Wait for DOM to be ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', applyLegacyStyles);
+                } else {
+                    applyLegacyStyles();
+                }
+            }
+            
+            function applyLegacyStyles() {
+                // Apply fallback colors using inline styles for critical elements
+                var style = document.createElement('style');
+                style.id = 'legacy-fallback-styles';
+                var css = '/* Legacy browser fallback styles */' +
+                    'body { background: #f8fafc !important; color: #0f172a !important; }' +
+                    'html[data-theme="dark"] body { background: #0c1222 !important; color: #f1f5f9 !important; }' +
+                    '.header { background: #ffffff !important; border-bottom: 1px solid #e2e8f0 !important; }' +
+                    'html[data-theme="dark"] .header { background: #131c31 !important; border-bottom-color: #1e3a5f !important; }' +
+                    '.sidebar { background: #ffffff !important; border-right: 1px solid #e2e8f0 !important; }' +
+                    'html[data-theme="dark"] .sidebar { background: #131c31 !important; border-right-color: #1e3a5f !important; }' +
+                    '.config-card, .card { background: #ffffff !important; border: 1px solid #e2e8f0 !important; color: #0f172a !important; }' +
+                    'html[data-theme="dark"] .config-card, html[data-theme="dark"] .card { background: #131c31 !important; border-color: #1e3a5f !important; color: #f1f5f9 !important; }' +
+                    '.btn-primary { background: #2563eb !important; border-color: #2563eb !important; color: #ffffff !important; }' +
+                    '.btn-primary:hover { background: #1d4ed8 !important; border-color: #1d4ed8 !important; }' +
+                    '.btn-success { background: #059669 !important; border-color: #059669 !important; color: #ffffff !important; }' +
+                    '.btn-danger { background: #dc2626 !important; border-color: #dc2626 !important; color: #ffffff !important; }' +
+                    '.text-primary { color: #0f172a !important; }' +
+                    'html[data-theme="dark"] .text-primary { color: #f1f5f9 !important; }' +
+                    '.text-secondary { color: #475569 !important; }' +
+                    'html[data-theme="dark"] .text-secondary { color: #94a3b8 !important; }' +
+                    '.text-muted { color: #94a3b8 !important; }' +
+                    /* Brighter muted text in dark mode for better readability */
+                    'html[data-theme="dark"] .text-muted { color: #cbd5f5 !important; }';
+                if (style.styleSheet) {
+                    // IE8 and older
+                    style.styleSheet.cssText = css;
+                } else {
+                    style.textContent = css;
+                }
+                document.head.appendChild(style);
+            }
+        })();
+    </script>
+</head>
+<body>
+    {% block content %}{% endblock %}
+
+    <!-- Notification Ribbon -->
+    <div class="notification-ribbon" id="notificationRibbon">
+        <i class="bi" id="notifIcon"></i>
+        <span class="notif-text" id="notifText"></span>
+        <button class="notif-close" onclick="hideNotification()">
+            <i class="bi bi-x"></i>
+        </button>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <span id="loadingMessage">Processing...</span>
+    </div>
+
+    <!-- Admin / Debug Password Modal -->
+    <div class="custom-modal-overlay" id="adminDebugOverlay">
+        <div class="custom-modal">
+            <div class="custom-modal-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Admin Debug Mode</h5>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeAdminDebugModal()">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="custom-modal-body">
+                <p class="mb-2">Enter the admin password to enable full debug mode (skip for optional modules only: display and audio; relaxed validation; verbose logs).</p>
+                <div class="mb-2">
+                    <label for="adminDebugPassword" class="form-label">Admin Password</label>
+                    <input type="password" id="adminDebugPassword" class="form-control" autocomplete="off" />
+                </div>
+                <div id="adminDebugError" class="text-danger small" style="display:none;"></div>
+            </div>
+            <div class="custom-modal-footer">
+                <button class="btn btn-outline-secondary" type="button" onclick="closeAdminDebugModal()">Cancel</button>
+                <button class="btn btn-primary" type="button" onclick="submitAdminDebugPassword()">Enable Debug</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin / Debug Disable Confirmation Modal -->
+    <div class="custom-modal-overlay" id="adminDebugConfirmOverlay">
+        <div class="custom-modal">
+            <div class="custom-modal-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Turn Off Debug Mode</h5>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeAdminDebugConfirmModal()">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="custom-modal-body">
+                <p class="mb-2">
+                    Debug mode is currently <strong>ON</strong>. Turning it off will hide optional skip controls (display, audio) and restore strict validation.
+                </p>
+                <p class="mb-0">
+                    Are you sure you want to <strong>disable</strong> debug mode for this session?
+                </p>
+            </div>
+            <div class="custom-modal-footer">
+                <!-- NO = keep debug ON (green) -->
+                <button class="btn btn-success" type="button" onclick="cancelDisableDebugMode()">No, keep Debug</button>
+                <!-- YES = turn debug OFF (red) -->
+                <button class="btn btn-danger" type="button" onclick="confirmDisableDebugMode()">Yes, turn Off Debug</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pass config to JavaScript -->
+    <script>
+        window.APP_CONFIG = {
+            debug: {{ debug | tojson }},
+            requireDeviceInfo: {{ require_device_info | tojson }},
+            enableCamera: {{ enable_camera_configuration | default(true) | tojson }},
+            allowSkipWbSensorTest: {{ enable_wb_sensor_test_skip | default(false) | tojson }},
+            wbType: {{ wb_type | default('unidirectional') | tojson }},
+            checkpointType: {{ checkpoint_type | default('mines_entry') | tojson }},
+            profile: {{ checkpoint_profile | default({}) | tojson }},
+            validCardsStartIndex: {{ valid_cards_start_index | default([]) | tojson }},
+            validCardCharLengths: {{ valid_card_char_lengths | default([24, 32]) | tojson }},
+            appName: {{ app_name | tojson }},
+            appVersion: {{ app_version | tojson }},
+            configPort: {{ config_port | default(8080) | tojson }}
+        };
+
+        // Global admin/debug helpers and version info
+        (function() {
+            function openAdminDebugModal() {
+                const overlay = document.getElementById('adminDebugOverlay');
+                const errorEl = document.getElementById('adminDebugError');
+                const input = document.getElementById('adminDebugPassword');
+                if (!overlay) return;
+                overlay.style.display = 'flex';
+                if (errorEl) {
+                    errorEl.style.display = 'none';
+                    errorEl.textContent = '';
+                }
+                if (input) {
+                    input.value = '';
+                    setTimeout(() => input.focus(), 50);
+                }
+            }
+
+            function closeAdminDebugModal() {
+                const overlay = document.getElementById('adminDebugOverlay');
+                if (!overlay) return;
+                overlay.style.display = 'none';
+            }
+
+            function openAdminDebugConfirmModal() {
+                const overlay = document.getElementById('adminDebugConfirmOverlay');
+                if (!overlay) return;
+                overlay.style.display = 'flex';
+            }
+
+            function closeAdminDebugConfirmModal() {
+                const overlay = document.getElementById('adminDebugConfirmOverlay');
+                if (!overlay) return;
+                overlay.style.display = 'none';
+            }
+
+            async function submitAdminDebugPassword() {
+                const input = document.getElementById('adminDebugPassword');
+                const errorEl = document.getElementById('adminDebugError');
+                const password = input ? input.value : '';
+
+                if (!password) {
+                    if (errorEl) {
+                        errorEl.textContent = 'Password is required';
+                        errorEl.style.display = 'block';
+                    }
+                    return;
+                }
+
+                try {
+                    const resp = await fetch('/api/debug/enable', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password })
+                    });
+                    const data = await resp.json();
+
+                    if (!resp.ok || data.status !== 200) {
+                        if (errorEl) {
+                            errorEl.textContent = data.message || 'Invalid password';
+                            errorEl.style.display = 'block';
+                        }
+                        if (typeof showToast === 'function') {
+                            showToast('error', 'Debug Mode', data.message || 'Invalid admin password');
+                        }
+                        return;
+                    }
+
+                    // Mark debug mode on for this page
+                    document.body.classList.add('debug-mode');
+                    if (!window.APP_CONFIG) window.APP_CONFIG = {};
+                    window.APP_CONFIG.debug = true;
+                    window.APP_CONFIG.requireDeviceInfo = false;
+
+                    if (typeof initRequiredFieldIndicators === 'function') {
+                        try { initRequiredFieldIndicators(); } catch (e) {}
+                    }
+
+                    if (typeof showToast === 'function') {
+                        showToast('success', 'Debug Mode', 'Debug mode enabled. Optional display/audio skip and relaxed validation are now active.');
+                    }
+
+                    closeAdminDebugModal();
+                } catch (e) {
+                    console.error('[Admin Debug] Error enabling debug mode:', e);
+                    if (errorEl) {
+                        errorEl.textContent = 'Failed to enable debug mode. Please try again.';
+                        errorEl.style.display = 'block';
+                    }
+                }
+            }
+
+            // Global version info helper
+            window.showAppVersionInfo = function() {
+                try {
+                    var cfg = window.APP_CONFIG || {};
+                    var name = cfg.appName || 'Application';
+                    var version = cfg.appVersion || 'unknown';
+                    if (typeof showToast === 'function') {
+                        showToast('info', name + ' Version', 'Version ' + version);
+                    } else {
+                        alert(name + ' Version: ' + version);
+                    }
+                } catch (e) {
+                    try {
+                        alert('Application Version: unknown');
+                    } catch (e2) {
+                        console.error('Failed to show app version info', e, e2);
+                    }
+                }
+            };
+
+            function ensureUpdateButton() {
+                const actions = document.querySelector('.header-actions');
+                if (!actions || document.getElementById('updateIconBtn')) return;
+                const btn = document.createElement('button');
+                btn.className = 'theme-toggle';
+                btn.id = 'updateIconBtn';
+                btn.title = 'Update Available';
+                btn.style.display = 'none';
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i>';
+                btn.addEventListener('click', function() {
+                    openUpdateModal();
+                });
+                actions.insertBefore(btn, actions.firstChild);
+            }
+
+            function ensureUpdateModal() {
+                if (document.getElementById('updateModalOverlay')) return;
+                const html = [
+                    '<div class="custom-modal-overlay" id="updateModalOverlay">',
+                    '  <div class="custom-modal">',
+                    '    <div class="custom-modal-header d-flex justify-content-between align-items-center">',
+                    '      <h5 class="mb-0">Application Update</h5>',
+                    '      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeUpdateModal()">',
+                    '        <i class="bi bi-x-lg"></i>',
+                    '      </button>',
+                    '    </div>',
+                    '    <div class="custom-modal-body">',
+                    '      <p class="mb-2"><strong>Current:</strong> <span id="updCurrentVer">-</span></p>',
+                    '      <p class="mb-2"><strong>Latest:</strong> <span id="updLatestVer">-</span></p>',
+                    '      <div id="updNotesWrap" style="max-height:180px;overflow:auto;border:1px solid var(--border-color);padding:8px;border-radius:8px;white-space:pre-wrap;"></div>',
+                    '      <p class="mt-2 mb-0 text-muted" id="updProgressText">Ready</p>',
+                    '    </div>',
+                    '    <div class="custom-modal-footer">',
+                    '      <button class="btn btn-outline-secondary" type="button" onclick="closeUpdateModal()">Close</button>',
+                    '      <button class="btn btn-primary" type="button" id="applyUpdateBtn" onclick="applyUpdateNow()">Download & Update</button>',
+                    '    </div>',
+                    '  </div>',
+                    '</div>'
+                ].join('');
+                document.body.insertAdjacentHTML('beforeend', html);
+            }
+
+            var UPDATE_STATUS_POLL_MS = 2 * 60 * 1000;
+
+            async function refreshUpdateStatus() {
+                try {
+                    const resp = await fetch('/api/update/status', { cache: 'no-store' });
+                    if (!resp.ok) return;
+                    const payload = await resp.json();
+                    const data = payload.data || {};
+                    const btn = document.getElementById('updateIconBtn');
+                    if (btn) {
+                        btn.style.display = data.update_available ? 'inline-flex' : 'none';
+                        btn.title = data.update_available
+                            ? ('Update available: ' + (data.latest_version || 'new version'))
+                            : 'No update available';
+                    }
+                    const currentEl = document.getElementById('updCurrentVer');
+                    const latestEl = document.getElementById('updLatestVer');
+                    const notesEl = document.getElementById('updNotesWrap');
+                    if (currentEl) currentEl.textContent = data.current_version || (window.APP_CONFIG && window.APP_CONFIG.appVersion) || '-';
+                    if (latestEl) latestEl.textContent = data.latest_version || '-';
+                    if (notesEl) notesEl.textContent = (data.release_notes || 'No release notes available.').toString().slice(0, 4000);
+                } catch (e) {
+                    console.error('Update status check failed', e);
+                }
+            }
+
+            window.openUpdateModal = function() {
+                ensureUpdateModal();
+                refreshUpdateStatus();
+                const overlay = document.getElementById('updateModalOverlay');
+                if (overlay) overlay.style.display = 'flex';
+            };
+
+            window.closeUpdateModal = function() {
+                const overlay = document.getElementById('updateModalOverlay');
+                if (overlay) overlay.style.display = 'none';
+            };
+
+            window.applyUpdateNow = async function() {
+                const progressEl = document.getElementById('updProgressText');
+                const btn = document.getElementById('applyUpdateBtn');
+                if (btn) btn.disabled = true;
+                if (progressEl) progressEl.textContent = 'Downloading and preparing updater...';
+                try {
+                    const resp = await fetch('/api/update/apply', { method: 'POST' });
+                    const data = await resp.json();
+                    if (!resp.ok || data.status !== 200) {
+                        throw new Error(data.message || 'Failed to start update');
+                    }
+                    if (progressEl) progressEl.textContent = 'Update started. Application will close now.';
+                    if (typeof showToast === 'function') {
+                        showToast('success', 'Updater', 'Update started. Application will close now.');
+                    }
+                } catch (e) {
+                    if (progressEl) progressEl.textContent = 'Update failed: ' + e;
+                    if (btn) btn.disabled = false;
+                    if (typeof showToast === 'function') {
+                        showToast('error', 'Updater', String(e));
+                    }
+                }
+            };
+
+            // Expose helpers globally
+            window.openAdminDebugModal = openAdminDebugModal;
+            window.closeAdminDebugModal = closeAdminDebugModal;
+            window.submitAdminDebugPassword = submitAdminDebugPassword;
+            window.closeAdminDebugConfirmModal = closeAdminDebugConfirmModal;
+            window.cancelDisableDebugMode = closeAdminDebugConfirmModal;
+
+            window.confirmDisableDebugMode = async function() {
+                try {
+                    const resp = await fetch('/api/debug/disable', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+
+                    let data = {};
+                    const raw = await resp.text();
+                    try {
+                        data = raw ? JSON.parse(raw) : {};
+                    } catch (parseErr) {
+                        console.error('[Admin Debug] Non-JSON disable response:', raw);
+                        throw new Error('Server returned a non-JSON response while disabling debug mode');
+                    }
+
+                    if (!resp.ok || data.status !== 200) {
+                        if (typeof showToast === 'function') {
+                            showToast('error', 'Debug Mode', data.message || 'Failed to disable debug mode');
+                        }
+                        return;
+                    }
+
+                    // Remove debug state from this page (mutate shared APP_CONFIG object)
+                    document.body.classList.remove('debug-mode');
+                    if (!window.APP_CONFIG) window.APP_CONFIG = {};
+                    window.APP_CONFIG.debug = false;
+                    window.APP_CONFIG.requireDeviceInfo = data.require_device_info !== false;
+
+                    closeAdminDebugConfirmModal();
+
+                    if (typeof initRequiredFieldIndicators === 'function') {
+                        try { initRequiredFieldIndicators(); } catch (e) {}
+                    }
+
+                    if (typeof showToast === 'function') {
+                        showToast('success', 'Debug Mode', 'Debug mode disabled. Skip buttons are hidden and strict validation restored.');
+                    }
+                } catch (e) {
+                    console.error('[Admin Debug] Error disabling debug mode:', e);
+                    if (typeof showToast === 'function') {
+                        showToast(
+                            'error',
+                            'Debug Mode',
+                            (e && e.message) ? e.message : 'Failed to disable debug mode. Please try again.'
+                        );
+                    }
+                }
+            };
+
+            document.addEventListener('DOMContentLoaded', function() {
+                ensureUpdateButton();
+                ensureUpdateModal();
+                refreshUpdateStatus();
+                setInterval(refreshUpdateStatus, UPDATE_STATUS_POLL_MS);
+                // Attach click handler to admin button if present
+                const adminBtn = document.getElementById('adminToggle');
+                if (adminBtn) {
+                    adminBtn.addEventListener('click', function() {
+                        // If already in debug mode, show confirmation to turn it off
+                        if (document.body.classList.contains('debug-mode') ||
+                            (window.APP_CONFIG && window.APP_CONFIG.debug)) {
+                            openAdminDebugConfirmModal();
+                        } else {
+                            openAdminDebugModal();
+                        }
+                    });
+                }
+
+                // Apply debug-mode class based on initial APP_CONFIG
+                if (window.APP_CONFIG && window.APP_CONFIG.debug) {
+                    document.body.classList.add('debug-mode');
+                }
+                if (window.APP_CONFIG && window.APP_CONFIG.allowSkipWbSensorTest) {
+                    document.body.classList.add('wb-sensor-skip-enabled');
+                }
+            });
+        })();
+    </script>
+
+    <script src="{{ url_for('static', filename='js/weighbridge-layout.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Device Configuration{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<header class="header">
+    <div class="header-brand">
+        <i class="bi bi-cpu"></i>
+        <span>{{ app_name }}</span>
+    </div>
+    <div class="header-actions">
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+            <i class="bi bi-sun-fill" id="themeIcon"></i>
+        </button>
+        <button class="theme-toggle" id="adminToggle" title="Admin / Debug Tools">
+            <i class="bi bi-shield-lock"></i>
+        </button>
+    </div>
+</header>
+
+<div class="checklist-page">
+    <div class="checklist-header">
+        <i class="bi bi-cpu brand-icon"></i>
+        <h1>GMDC Device Configuration</h1>
+        <p class="subtitle">Weighbridge Configuration Portal</p>
+    </div>
+    
+    <div class="checklist-card">
+        <h2><i class="bi bi-clipboard-check"></i> Pre-Configuration Checklist</h2>
+        <p class="checklist-intro">Please ensure the following items are ready before proceeding:</p>
+        
+        <div class="checklist-items">
+            <label class="checklist-item">
+                <input type="checkbox" id="check1">
+                <span class="checkmark"></span>
+                <span class="check-text">All network devices have been assigned static IP addresses</span>
+            </label>
+            <label class="checklist-item">
+                <input type="checkbox" id="check2">
+                <span class="checkmark"></span>
+                <span class="check-text">RFID reader is powered on and connected to the network</span>
+            </label>
+            <label class="checklist-item">
+                <input type="checkbox" id="check3">
+                <span class="checkmark"></span>
+                <span class="check-text">IP Cameras are powered on and configured with RTSP URLs</span>
+            </label>
+            <label class="checklist-item">
+                <input type="checkbox" id="check4">
+                <span class="checkmark"></span>
+                <span class="check-text">Display unit is connected (API mode or MQTT)</span>
+            </label>
+            <label class="checklist-item">
+                <input type="checkbox" id="check5">
+                <span class="checkmark"></span>
+                <span class="check-text">I/O Controller (Modbus) is powered on and connected</span>
+            </label>
+            <label class="checklist-item">
+                <input type="checkbox" id="check6">
+                <span class="checkmark"></span>
+                <span class="check-text">Weighbridge digitizer is connected via serial port. Please collect digitizer configuration from WB Owner.</span>
+            </label>
+            <label class="checklist-item"> 
+                <input type="checkbox" id="check7">
+                <span class="checkmark"></span>
+                <span class="check-text">Backend server is running and accessible</span>
+            </label>
+        </div>
+        
+        <div class="ip-range-section">
+            <h3><i class="bi bi-router"></i> Network IP Range</h3>
+            <p>Enter the IP range of your local network to auto-discover devices:</p>
+            <div class="ip-range-inputs">
+                <div class="ip-input-group">
+                    <label>Starting IP</label>
+                    <input type="text" id="startIp" placeholder="Detecting...">
+                </div>
+                <span class="ip-separator">to</span>
+                <div class="ip-input-group">
+                    <label>Ending IP</label>
+                    <input type="text" id="endIp" placeholder="Detecting...">
+                </div>
+            </div>
+            <p class="ip-note" id="ipNote" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                <i class="bi bi-info-circle"></i> IP range auto-detected based on your network. Edit if needed.
+            </p>
+        </div>
+        
+        <div class="checklist-footer">
+            <button class="btn btn-primary btn-lg" id="proceedBtn" onclick="proceedToScan()" disabled>
+                <i class="bi bi-arrow-right-circle"></i>
+                Proceed to Device Discovery
+            </button>
+            <p class="checklist-note">
+                <i class="bi bi-info-circle"></i>
+                Check all items above to enable the Proceed button
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/checklist.js') }}"></script>
+{% endblock %}
+

@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Secrets and local env (keep *.example)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# ---------------------------------------------------------------------------
+# Log directories (any folder whose name contains "log") and log files
+# ---------------------------------------------------------------------------
+**/*log*/
+**/*Log*/
+*.log
+*.log.*
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------------------------------------------------------------------------
+# Runtime / generated IoT artifacts
+# ---------------------------------------------------------------------------
+*.pid
+**/.*.pid
+**/captures/
+TareWb-App/images/
+Tracking-point-1/images/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# LibreOffice / Office lock files
+.~lock*
+
+# ---------------------------------------------------------------------------
+# OS and editors
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+.cursor/
+
+# ---------------------------------------------------------------------------
+# Cursor / chat export dumps (not application source)
+# ---------------------------------------------------------------------------
+cursor_*.md
+**/cursor_*.md

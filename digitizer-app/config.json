@@ -1,0 +1,19 @@
+{
+    "port": "COM5",
+    "baud_rate": 9600,
+    "data_bits": 8,
+    "parity": "N",
+    "stop_bits": 1.0,
+    "indexing": {
+        "frame_start_char": "\\xfd[",
+        "frame_end_char": "][",
+        "weight_start": 2,
+        "weight_end": 8,
+        "integer_start": null,
+        "integer_end": null,
+        "decimals": 0,
+        "scale": 1.0
+    },
+    "calibration_sample_hex": "fd5b3030303030305d5b",
+    "status": true
+}
