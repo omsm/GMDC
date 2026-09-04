@@ -1,4 +1,4 @@
-"""Tracking Point logging setup — wraps the shared GMDC logger."""
+"""Tracking Point logging setup - wraps the shared GMDC logger."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def setup_logging(level: Optional[int] = None) -> None:
         "app_name": "tracking_point",
         "log_dir": LOG_DIR,
         "log_file": "tracking_point.log",
+        "backup_count": 10,
     }
     if level is not None:
         kwargs["level"] = level

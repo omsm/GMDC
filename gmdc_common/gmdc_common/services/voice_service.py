@@ -1,5 +1,5 @@
 """
-Voice announcement service — pre-recorded WAV playback.
+Voice announcement service - pre-recorded WAV playback.
 
 - Windows: winsound
 - macOS: afplay (built-in)
@@ -96,17 +96,17 @@ def _play_wav_file(file_path: str) -> bool:
     if _SYSTEM == "Darwin":
         afplay = shutil.which("afplay")
         if not afplay:
-            logger.warning("afplay not found on macOS — cannot play %s", file_path)
+            logger.warning("afplay not found on macOS - cannot play %s", file_path)
             return False
         cmd = [afplay, file_path]
     elif _SYSTEM == "Linux":
         player = shutil.which("aplay") or shutil.which("paplay")
         if not player:
-            logger.warning("No aplay/paplay found on Linux — cannot play %s", file_path)
+            logger.warning("No aplay/paplay found on Linux - cannot play %s", file_path)
             return False
         cmd = [player, file_path]
     else:
-        logger.warning("No audio backend for %s — cannot play %s", _SYSTEM, file_path)
+        logger.warning("No audio backend for %s - cannot play %s", _SYSTEM, file_path)
         return False
 
     global _PLAYBACK_PROC
@@ -167,7 +167,7 @@ class VoiceService:
             self._enabled = False
         elif not AUDIO_AVAILABLE:
             logger.warning(
-                "No audio backend on %s (need winsound / afplay / aplay) — voice disabled",
+                "No audio backend on %s (need winsound / afplay / aplay) - voice disabled",
                 _SYSTEM,
             )
             self._enabled = False
@@ -195,7 +195,7 @@ class VoiceService:
                 logger.warning("Audio file not found: %s", file_path)
                 return False
             if not AUDIO_AVAILABLE:
-                logger.debug("No audio backend — skip %s", file_path)
+                logger.debug("No audio backend - skip %s", file_path)
                 return False
             if interrupt and self._interrupt_enabled:
                 _stop_playback()
@@ -238,10 +238,17 @@ class VoiceService:
         if self.error_prefix:
             self._play_safe(self._err("error_start.wav"), interrupt=False)
 
-    def _play_async(self, filepath: str, interrupt: bool = True) -> None:
+    def _play_async(self, filepath: str, interrupt: bool = True, *, force: bool = False) -> None:
         if not self._enabled:
             return
-        if interrupt and self._interrupt_enabled and self._multi_play_active:
+        if force:
+            self._multi_play_active = False
+        if (
+            not force
+            and interrupt
+            and self._interrupt_enabled
+            and self._multi_play_active
+        ):
             logger.debug(
                 "Deferring voice until multi-play finishes: %s",
                 os.path.basename(filepath),
@@ -303,8 +310,8 @@ class VoiceService:
         if os.path.exists(path):
             self._play_async(path)
         else:
-            # No dedicated clip in some packs — stay silent rather than wrong prompt
-            logger.debug("please_wait.wav missing — skip")
+            # No dedicated clip in some packs - stay silent rather than wrong prompt
+            logger.debug("please_wait.wav missing - skip")
         logger.info("Voice: Please Wait")
 
     def welcome(self) -> None:
@@ -312,7 +319,8 @@ class VoiceService:
         logger.info("Voice: Welcome")
 
     def application_reset(self) -> None:
-        self._play_async(self._info("application_reset.wav"))
+        """Always play information/application_reset.wav (UI Reset button)."""
+        self._play_async(self._info("application_reset.wav"), interrupt=True, force=True)
         logger.info("Voice: Application Reset")
 
     def rescan_card(self) -> None:
@@ -333,7 +341,7 @@ class VoiceService:
                 self._end_multi_play()
 
         Thread(target=_play, daemon=True).start()
-        logger.info("Voice: Entry timeout — error_start + rescan_card")
+        logger.info("Voice: Entry timeout - error_start + rescan_card")
 
     def goto_exit(self) -> None:
         path = self._info("goto_exit.wav")
@@ -410,17 +418,31 @@ class VoiceService:
         logger.info("Voice: Technical Issue")
 
     def anpr_error(self) -> None:
-        """ANPR mismatch — reuse technical-issue clip (no dedicated ANPR WAV)."""
-        self.tech_issue()
-        logger.info("Voice: ANPR error")
+        """ANPR detect returned anpr_status 0 or 2."""
+        self._play_async(self._err("rfid_502.wav"))
+        logger.info("Voice: Number plate error")
 
     def check_weighbridge(self) -> None:
         self._play_error_sequence("weighbridge_0.wav")
         logger.info("Voice: Check Weighbridge")
 
+    def weighbridge_0(self) -> None:
+        """Platform (s2) and exit (s3) occupied while the lane is IDLE."""
+        self._play_async(self._err("weighbridge_0.wav"))
+        logger.info("Voice: weighbridge_0 (s2+s3 cut while IDLE)")
+
     def tare_weight_error(self, error_code: int) -> None:
         self._play_error_sequence(f"t{error_code}.wav")
         logger.info("Voice: Tare Weight Error T%s", error_code)
+
+    def weight_out_of_tolerance(self, trip_type: str = "T") -> None:
+        """Out-of-RTO-band weight: t1.wav for tare, g2.wav for gross/vadhghat."""
+        trip = str(trip_type or "T").upper()[:1]
+        clip = "t1.wav" if trip == "T" else "g2.wav"
+        self._play_error_sequence(clip)
+        logger.info(
+            "Voice: Weight out of tolerance type=%s clip=%s", trip, clip
+        )
 
     def weight_submit_error_by_status(self, status_code: Union[int, str]) -> None:
         try:
@@ -451,20 +473,38 @@ class VoiceService:
     # ------------------------------------------------------------------
     # Weight / vehicle number
     # ------------------------------------------------------------------
+    @staticmethod
+    def weight_clip_parts(weight_data) -> tuple[int, int]:
+        """Map kg to voice filenames: weight_ton/{tons}.wav and weight_kg/{kg}.wav.
+
+        Tons are whole thousands. Remainder is rounded to the nearest 10 kg
+        to match the 10.wav–990.wav pack (no 0.wav; 1000 kg carries into tons).
+        """
+        kg = int(float(weight_data))
+        if kg < 0:
+            kg = 0
+        tons = kg // 1000
+        remainder = kg % 1000
+        remainder = ((remainder + 5) // 10) * 10
+        if remainder >= 1000:
+            tons += 1
+            remainder = 0
+        return tons, remainder
+
     def speak_weight(self, weight_type: str, weight_data) -> None:
         """
-        Announce weight. weight_type: "t" (tare) or "g" (gross).
-        Sequence: type intro → Siren → tons → kg (if > 0).
+        Announce weight. weight_type: "t" (tare) or "g"/"v" (gross / vadhghat).
+        Sequence: intro → Siren → tons → kg (if > 0).
         """
         try:
-            weight_type = str(weight_type).lower()
-            weight_data = int(float(weight_data))
+            weight_type = str(weight_type).lower()[:1]
+            tons, kg_part = self.weight_clip_parts(weight_data)
         except (ValueError, TypeError) as e:
             logger.error("Invalid weight for speak_weight: %s (%s)", weight_data, e)
             return
 
-        weight_ton = str(weight_data // 1000)
-        weight_kg = str(weight_data % 1000)
+        weight_ton = str(tons)
+        weight_kg = str(kg_part)
 
         def _play():
             my_id = self._start_multi_play()
@@ -483,13 +523,12 @@ class VoiceService:
                     os.path.join(self.voice_dir, "weight_ton", "Siren.wav"),
                     interrupt=False,
                 )
-                if not self._is_play_valid(my_id):
-                    return
-                self._play_safe(
-                    os.path.join(self.voice_dir, "weight_ton", f"{weight_ton}.wav"),
-                    interrupt=False,
-                )
-                if int(weight_kg) > 0:
+                if tons > 0 and self._is_play_valid(my_id):
+                    self._play_safe(
+                        os.path.join(self.voice_dir, "weight_ton", f"{weight_ton}.wav"),
+                        interrupt=False,
+                    )
+                if kg_part > 0:
                     if not self._is_play_valid(my_id):
                         return
                     self._play_safe(
@@ -501,7 +540,7 @@ class VoiceService:
 
         Thread(target=_play, daemon=True).start()
         logger.info(
-            "Voice: Weight %s — %s t %s kg",
+            "Voice: Weight %s - %s t %s kg",
             weight_type.upper(),
             weight_ton,
             weight_kg,

@@ -10,13 +10,16 @@ from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent / "gmdc_common"))
 
 os.environ.setdefault("DEMO_MODE", "true")
 
 from services.oci_client import (  # noqa: E402
+    build_vadhghat_weight_adjustment_payload,
     parse_truck_details,
     replace_truck_details_tolerance,
     rto_weight_band,
+    under_or_over_type,
     weight_within_rto_tolerance,
 )
 
@@ -142,6 +145,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         )
         ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
         ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.vadhghat_weight_adjustment.return_value = OCIResponse(
+            ok=True, status=200, http_status=200, message="adjusted"
+        )
         ctx.digitizer = MagicMock()
         ctx.digitizer.read_stable_weight.return_value = {
             "ok": True,
@@ -163,8 +169,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         ctx.oci.weight_details.assert_called_once()
         ctx.oci.boom_close.assert_called_once()
-        ctx.voice.speak_weight.assert_called()
+        ctx.voice.speak_weight.assert_called_once_with("t", 15000.0)
         ctx.voice.tare_weight_error.assert_not_called()
+        ctx.voice.weight_out_of_tolerance.assert_not_called()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_tare_under_weight_confirm_approved_continues_flow(self):
@@ -229,7 +236,8 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.weight_details.assert_not_called()
         ctx.oci.boom_close.assert_not_called()
         ctx.display.send.assert_any_call("TARE WT ERR")
-        ctx.voice.tare_weight_error.assert_called_with(7)
+        ctx.voice.weight_out_of_tolerance.assert_called_with("T")
+        ctx.voice.speak_weight.assert_not_called()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_weight_confirm_polls_until_status_1(self):
@@ -299,6 +307,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.gross_tolerance_confirm.assert_not_called()
         ctx.oci.weight_details.assert_called_once()
         ctx.oci.boom_close.assert_called_once()
+        ctx.voice.speak_weight.assert_called_once_with("g", 44750.0)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_gross_weight_details_201_confirm_ok_resubmits_details(self):
@@ -330,6 +339,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(
             ctx.oci.boom_close.call_args.kwargs["truck_details"], details_td
         )
+        ctx.voice.speak_weight.assert_called_once_with("g", 42000.0)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_gross_tolerance_status_2_skips_second_details_opens_boom(self):
@@ -348,12 +358,13 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.weight_confirm.assert_not_called()
         ctx.oci.weight_details.assert_called_once()
         ctx.oci.boom_close.assert_called_once()
+        ctx.voice.speak_weight.assert_not_called()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_gross_tolerance_polls_until_status_1_in_band(self):
         from services.oci_client import OCIResponse
 
-        wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 42000)
+        wf, ctx = self._make_workflow(GROSS_DETAILS, 42000)
         ctx.oci.weight_details.side_effect = [
             OCIResponse(ok=False, status=201, raw={"status": 201}),
             OCIResponse(ok=True, status=200, raw={"status": 200}),
@@ -372,9 +383,10 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
             ),
         ]
         with patch("core.workflow.time.sleep", return_value=None):
-            wf._final_weight_and_details(boom_close_after=VADAGHAT_DETAILS)
+            wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
         self.assertEqual(ctx.oci.gross_tolerance_confirm.call_count, 3)
         ctx.oci.weight_confirm.assert_not_called()
+        ctx.oci.vadhghat_weight_adjustment.assert_not_called()
         self.assertEqual(ctx.oci.weight_details.call_count, 2)
 
     def test_gross_out_of_band_skips_weight_confirm(self):
@@ -382,15 +394,145 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         wf, ctx = self._make_workflow(GROSS_DETAILS, 44000)
         wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
         ctx.oci.weight_confirm.assert_not_called()
+        ctx.oci.vadhghat_weight_adjustment.assert_not_called()
         ctx.oci.weight_details.assert_called_once()
         ctx.oci.boom_close.assert_called_once()
 
-    def test_vadaghat_over_weight_skips_weight_confirm(self):
-        wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 46000)
+    def test_vadaghat_in_band_posts_details_and_boom_close(self):
+        from config.constants import State
+
+        wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 44750)
         wf._final_weight_and_details(boom_close_after=VADAGHAT_DETAILS)
-        ctx.oci.weight_confirm.assert_not_called()
+        ctx.oci.vadhghat_weight_adjustment.assert_not_called()
         ctx.oci.weight_details.assert_called_once()
         ctx.oci.boom_close.assert_called_once()
+        ctx.voice.speak_weight.assert_called_once_with("g", 44750.0)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+
+    def test_vadaghat_over_weight_calls_adjustment_skips_boom_close(self):
+        from config.constants import State
+
+        wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 46000)
+        wf._final_weight_and_details(boom_close_after=VADAGHAT_DETAILS)
+        ctx.oci.vadhghat_weight_adjustment.assert_called_once()
+        call_kw = ctx.oci.vadhghat_weight_adjustment.call_args.kwargs
+        self.assertEqual(call_kw["weight"], 46000)
+        self.assertEqual(call_kw["weight_type"], "o")
+        self.assertEqual(call_kw["device_ip"], "192.168.10.223")
+        self.assertEqual(call_kw["truck_details"], VADAGHAT_DETAILS)
+        ctx.oci.weight_details.assert_not_called()
+        ctx.oci.boom_close.assert_not_called()
+        ctx.oci.weight_confirm.assert_not_called()
+        ctx.voice.weight_out_of_tolerance.assert_called_with("V")
+        ctx.voice.speak_weight.assert_not_called()
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+
+    def test_vadaghat_under_weight_calls_adjustment_with_u(self):
+        from config.constants import State
+
+        wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 44000)
+        wf._final_weight_and_details(boom_close_after=VADAGHAT_DETAILS)
+        call_kw = ctx.oci.vadhghat_weight_adjustment.call_args.kwargs
+        self.assertEqual(call_kw["weight_type"], "u")
+        self.assertEqual(call_kw["weight"], 44000)
+        ctx.oci.weight_details.assert_not_called()
+        ctx.oci.boom_close.assert_not_called()
+        ctx.voice.weight_out_of_tolerance.assert_called_with("V")
+        ctx.voice.speak_weight.assert_not_called()
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+
+    def test_weight_details_non_200_does_not_announce(self):
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow(GROSS_DETAILS, 44750)
+        ctx.oci.weight_details.return_value = OCIResponse(
+            ok=False, status=409, http_status=409
+        )
+        wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
+        ctx.voice.speak_weight.assert_not_called()
+        ctx.voice.weight_submit_error_by_status.assert_called()
+    def test_payload_matches_gmdc_contract(self):
+        details = (
+            "V|E28068940000503F548F04BA|OD14P7339|45000|24500|50|9580109261|10.10.180.12"
+        )
+        payload = build_vadhghat_weight_adjustment_payload(
+            device_ip="10.10.180.12",
+            truck_details=details,
+            weight=44990,
+            weight_type="o/u",
+        )
+        self.assertEqual(
+            payload,
+            {
+                "device_ip": "10.10.180.12",
+                "truck_details": details,
+                "weight": 44990,
+                "weight_type": "o",
+            },
+        )
+        self.assertEqual(under_or_over_type(44990, details), "o")
+        self.assertEqual(under_or_over_type(44940, details), "u")
+
+    @patch("services.oci_client.requests.Session.post")
+    def test_client_posts_adjustment_with_gmdc_auth(self, mock_post):
+        from services.oci_client import OCIClient
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.ok = True
+        mock_resp.json.return_value = {
+            "status": 200,
+            "response_type": 1,
+            "message": "Vadhghat weight adjustment processed successfully.",
+        }
+        mock_resp.text = "{}"
+        mock_post.return_value = mock_resp
+        client = OCIClient(
+            base_url="https://gmuatociexp.gmdcltd.co.in",
+            username="user",
+            password="pass",
+            rfid_validate_url="https://x/rfid",
+            anpr_detect_url="https://x/anpr",
+            invalid_truck_url="https://x/inv",
+            update_truck_url="https://x/upd",
+            weight_details_url="https://x/wd",
+            endpoint_auth={
+                "vadhghat_weight_adjustment": ("GMDC_API_USERS", "GMDC@123"),
+            },
+        )
+        details = (
+            "V|E28068940000503F548F04BA|OD14P7339|45000|24500|50|"
+            "9580109261|10.10.180.12"
+        )
+        resp = client.vadhghat_weight_adjustment(
+            device_ip="10.10.180.12",
+            truck_details=details,
+            weight=44990.0,
+            weight_type="o",
+        )
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.status, 200)
+        sent = mock_post.call_args.kwargs["json"]
+        self.assertEqual(sent["device_ip"], "10.10.180.12")
+        self.assertEqual(sent["truck_details"], details)
+        self.assertEqual(sent["weight"], 44990)
+        self.assertEqual(sent["weight_type"], "o")
+        self.assertEqual(
+            mock_post.call_args.kwargs["auth"],
+            ("GMDC_API_USERS", "GMDC@123"),
+        )
+        self.assertIn("vadhghat_weight_adjustment", mock_post.call_args.args[0])
+
+
+class TestWeightVoiceClips(unittest.TestCase):
+    def test_maps_kg_to_ton_and_10kg_filenames(self):
+        from services.voice_service import VoiceService
+
+        self.assertEqual(VoiceService.weight_clip_parts(15000), (15, 0))
+        self.assertEqual(VoiceService.weight_clip_parts(12500), (12, 500))
+        self.assertEqual(VoiceService.weight_clip_parts(44750), (44, 750))
+        self.assertEqual(VoiceService.weight_clip_parts(12505), (12, 510))
+        self.assertEqual(VoiceService.weight_clip_parts(12995), (13, 0))
 
 
 if __name__ == "__main__":

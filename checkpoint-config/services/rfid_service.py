@@ -273,7 +273,7 @@ class RFIDService:
 
     def _try_api_mode(self, rfid_ip, username=None, password=None):
         """
-        Zebra cloud REST login — Application is HTTP server for tags (/rfid_data).
+        Zebra cloud REST login - Application is HTTP server for tags (/rfid_data).
         Validates reader reachability via HTTPS Basic Auth login.
         """
         if not rfid_ip:
@@ -413,9 +413,9 @@ class RFIDService:
                 try:
                     # login already done; set mode + start scanning
                     if not ctrl.set_mode():
-                        logger.warning("[RFID][API] set_mode failed — still waiting for push")
+                        logger.warning("[RFID][API] set_mode failed - still waiting for push")
                     elif not ctrl.start():
-                        logger.warning("[RFID][API] start failed — still waiting for push")
+                        logger.warning("[RFID][API] start failed - still waiting for push")
                     else:
                         logger.info("[RFID][API] Reader inventory started")
                 except Exception:
@@ -440,10 +440,10 @@ class RFIDService:
                 self._test_status["test_complete"] = True
                 if card_read:
                     self._test_status["message"] = tag
-                    logger.info("[RFID][API] Wait complete — tag=%s", tag)
+                    logger.info("[RFID][API] Wait complete - tag=%s", tag)
                 else:
                     self._test_status["message"] = "No RFID data received. Please try again."
-                    logger.info("[RFID][API] Wait complete — no tag within 30 seconds")
+                    logger.info("[RFID][API] Wait complete - no tag within 30 seconds")
 
             # Ensure inventory stopped if timed out
             if not card_read and ctrl:

@@ -1,6 +1,12 @@
 """State, Event enums and timeouts for Tare Weighbridge FSM (wb_plane.txt)."""
 
+from __future__ import annotations
+
+import logging
+import os
 from enum import Enum, auto
+
+logger = logging.getLogger("tare_wb.config.constants")
 
 
 class State(Enum):
@@ -51,11 +57,13 @@ class Event(Enum):
 
 
 class TIMEOUTS:
-    """Timeouts in seconds."""
+    """Timeouts in seconds (overridable via .env — see apply_timeouts_from_env)."""
 
     POSITIONING_SEC = 120.0
     WEIGHT_CAPTURE_SEC = 60.0
-    RFID_COLLECT_WINDOW_SEC = 5.0
+    # How long RFID_READ waits for the first tag after the reader starts.
+    RFID_COLLECT_TIMEOUT_SEC = 60.0
+    RFID_COLLECT_WINDOW_SEC = 5.0  # legacy alias; prefer RFID_COLLECT_TIMEOUT_SEC
     RFID_ERROR_DISPLAY_SEC = 10.0
     MANUAL_UPDATE_POLL_SEC = 5.0
     UPDATE_STATUS_2_RESET_SEC = 10.0
@@ -69,11 +77,50 @@ class TIMEOUTS:
     ANPR_ERR_2_DISPLAY_SEC = 5.0
     WEIGHT_ERROR_DISPLAY_SEC = 5.0
     WEIGHT_CONFIRM_POLL_SEC = 5.0
+    MOVE_FORWARD_INTERVAL_SEC = 5.0
 
 
-MOVE_FORWARD_INTERVAL_SEC = 5.0
+# Back-compat alias (prefer TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC).
+MOVE_FORWARD_INTERVAL_SEC = TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC
+
+MSG_NO_RFID_READ = "No RFID read within the time period"
+
+_TIMEOUT_ENV_ATTRS = (
+    "POSITIONING_SEC",
+    "WEIGHT_CAPTURE_SEC",
+    "RFID_COLLECT_TIMEOUT_SEC",
+    "RFID_COLLECT_WINDOW_SEC",
+    "RFID_ERROR_DISPLAY_SEC",
+    "MANUAL_UPDATE_POLL_SEC",
+    "UPDATE_STATUS_2_RESET_SEC",
+    "EXIT_WAIT_SEC",
+    "BOOM_CLOSE_DELAY_SEC",
+    "OCI_REQUEST_TIMEOUT_SEC",
+    "DIGITIZER_TIMEOUT_SEC",
+    "SENSOR_POLL_SEC",
+    "MIN_WEIGHT_KG",
+    "ANPR_ERR_2_DISPLAY_SEC",
+    "WEIGHT_ERROR_DISPLAY_SEC",
+    "WEIGHT_CONFIRM_POLL_SEC",
+    "MOVE_FORWARD_INTERVAL_SEC",
+)
+
+
+def apply_timeouts_from_env() -> None:
+    """Override TIMEOUTS from matching .env keys (after load_dotenv)."""
+    global MOVE_FORWARD_INTERVAL_SEC
+    for attr in _TIMEOUT_ENV_ATTRS:
+        raw = os.getenv(attr)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            setattr(TIMEOUTS, attr, float(raw))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s=%r", attr, raw)
+    MOVE_FORWARD_INTERVAL_SEC = TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC
 
 MSG_MOVE_FORWARD = "MOVE FORWARD"
+MSG_MOVE_BACKWARD = "MOVE BACKWARD"
 MSG_WEIGHING = "WEIGHING"
 MSG_RFID_ERR = "RFID ERR"
 MSG_ANPR_ERR = "ANPR ERR 1"

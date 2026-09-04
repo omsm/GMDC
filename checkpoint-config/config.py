@@ -21,7 +21,7 @@ ENABLE_WB_SENSOR_TEST_SKIP = False
 # DIGITIZER MODE
 # =====================================================
 # API: configure digitizer-app host/port and test POST /read_stable_weight
-# (serial COM / index picker removed for GMDC — digitizer runs on another PC)
+# (serial COM / index picker removed for GMDC - digitizer runs on another PC)
 DIGITIZER_MODE = "api"
 DIGITIZER_DEFAULT_PORT = 8100
 DIGITIZER_STABLE_WEIGHT_PATH = "/read_stable_weight"
@@ -98,7 +98,7 @@ RTSP_DEFAULT_PORT = 554
 MQTT_DEFAULT_PORT = 1883
 
 # =====================================================
-# SERIAL PORT SETTINGS (I/O Modbus RTU only — not digitizer)
+# SERIAL PORT SETTINGS (I/O Modbus RTU only - not digitizer)
 # =====================================================
 DEFAULT_BAUD_RATE = 9600
 AVAILABLE_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]

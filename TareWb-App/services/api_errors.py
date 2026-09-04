@@ -2,6 +2,7 @@
 
 Transport / 5xx errors become a large red dashboard popup.
 Reachable non-200 business results stay as a red step message only.
+When the API returns a human-readable message, show that in the UI DIV.
 Raw exception strings never go to the UI.
 """
 
@@ -25,9 +26,28 @@ _SERVICES = {
     "weight-details": "Weight-details service",
     "weight-confirm": "Weight-confirm service",
     "gross-tolerance-confirm": "Gross-tolerance service",
+    "vadhghat-weight-adjustment": "Vadhghat weight-adjustment service",
     "digitizer": "Digitizer",
     "reset-checkpoint": "Reset service",
 }
+
+_EXCEPTION_MARKERS = (
+    "httpconnectionpool",
+    "max retries exceeded",
+    "connection refused",
+    "failed to establish",
+    "name or service not known",
+    "nodename nor servname",
+    "traceback (most recent call last)",
+    "sslerror",
+    "read timed out",
+    "connecttimeout",
+    "readtimeout",
+    "connectionerror",
+    "proxyerror",
+    "urllib3.",
+    "requests.exceptions",
+)
 
 
 def _name(label: str) -> str:
@@ -58,6 +78,37 @@ def classify_http_status(http_status: int) -> str:
     return KIND_OK
 
 
+def _looks_like_exception_dump(text: str) -> bool:
+    lower = text.lower()
+    return any(marker in lower for marker in _EXCEPTION_MARKERS)
+
+
+def extract_api_message(resp: Any) -> str:
+    """Return a safe human-readable API message, or empty string."""
+    if resp is None:
+        return ""
+    raw = getattr(resp, "raw", None)
+    candidates = [getattr(resp, "message", None)]
+    if isinstance(raw, dict):
+        candidates.extend(
+            [
+                raw.get("message"),
+                raw.get("statusMessage"),
+                raw.get("status_message"),
+                raw.get("errorMessage"),
+                raw.get("error_message"),
+                raw.get("error"),
+                raw.get("MSG"),
+                raw.get("msg"),
+            ]
+        )
+    for value in candidates:
+        text = str(value or "").strip()
+        if text and not _looks_like_exception_dump(text):
+            return text
+    return ""
+
+
 def annotate_response(resp: Any, label: str, *, kind: Optional[str] = None) -> Any:
     """Fill operator_message / popup on an OCIResponse-like object."""
     try:
@@ -65,13 +116,24 @@ def annotate_response(resp: Any, label: str, *, kind: Optional[str] = None) -> A
     except (TypeError, ValueError):
         http = 0
     resolved = kind or classify_http_status(http)
+    api_msg = extract_api_message(resp)
+
     if resolved == KIND_OK:
         resp.kind = KIND_OK
-        resp.operator_message = ""
         resp.popup = False
         resp.popup_title = ""
+        # HTTP 200 with a non-success body status still carries API text for the UI.
+        try:
+            status = int(getattr(resp, "status", 0) or 0)
+        except (TypeError, ValueError):
+            status = 0
+        resp.operator_message = api_msg if status not in (200, 1) and api_msg else ""
         return resp
+
     short, title = operator_copy(label, resolved)
+    # Prefer GMDC body message on reachable HTTP errors; never for transport dumps.
+    if resolved != KIND_UNREACHABLE and api_msg:
+        short = api_msg
     resp.kind = resolved
     resp.operator_message = short
     resp.popup = resolved in (KIND_UNREACHABLE, KIND_SERVER)

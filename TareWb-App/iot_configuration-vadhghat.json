@@ -57,7 +57,7 @@
   },
   "digitizer": {
     "mode": "api",
-    "host": "192.168.31.66",
+    "host": "localhost",
     "port": "8001",
     "path": "/read_stable_weight",
     "timeout": "10",

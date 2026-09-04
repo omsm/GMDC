@@ -1,6 +1,12 @@
 """State, Event enums and timeout constants for Tracking Point FSM."""
 
+from __future__ import annotations
+
+import logging
+import os
 from enum import Enum, auto
+
+logger = logging.getLogger("tracking_point.config.constants")
 
 
 class State(Enum):
@@ -37,7 +43,7 @@ class Event(Enum):
 
 
 class TIMEOUTS:
-    """Timeouts in seconds (from PDF workflow)."""
+    """Timeouts in seconds (overridable via .env — see apply_timeouts_from_env)."""
 
     RFID_ERROR_DISPLAY_SEC = 10.0
     MANUAL_UPDATE_POLL_SEC = 2.0
@@ -52,6 +58,42 @@ class TIMEOUTS:
     ANPR_API_MAX_RETRIES = 3
     ANPR_API_RETRY_DELAY_SEC = 2.0
     ANPR_ERR_2_DISPLAY_SEC = 5.0  # wait after Err-2 retry failure before IDLE
+
+
+_TIMEOUT_ENV_FLOAT = (
+    "RFID_ERROR_DISPLAY_SEC",
+    "MANUAL_UPDATE_POLL_SEC",
+    "UPDATE_STATUS_2_RESET_SEC",
+    "RFID_COLLECT_WINDOW_SEC",
+    "OCI_REQUEST_TIMEOUT_SEC",
+    "SENSOR_POLL_SEC",
+    "MODBUS_TIMEOUT_SEC",
+    "VEHICLE_CROSSING_TIMEOUT_SEC",
+    "BOOM_CLOSE_DELAY_SEC",
+    "ANPR_API_RETRY_DELAY_SEC",
+    "ANPR_ERR_2_DISPLAY_SEC",
+)
+_TIMEOUT_ENV_INT = ("ANPR_API_MAX_RETRIES",)
+
+
+def apply_timeouts_from_env() -> None:
+    """Override TIMEOUTS from matching .env keys (after load_dotenv)."""
+    for attr in _TIMEOUT_ENV_FLOAT:
+        raw = os.getenv(attr)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            setattr(TIMEOUTS, attr, float(raw))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s=%r", attr, raw)
+    for attr in _TIMEOUT_ENV_INT:
+        raw = os.getenv(attr)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            setattr(TIMEOUTS, attr, int(float(raw)))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s=%r", attr, raw)
 
 
 # Display messages (PDF)

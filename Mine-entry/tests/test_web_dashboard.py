@@ -68,8 +68,12 @@ class TestWebPages(unittest.TestCase):
         self.assertNotIn("/api/frontend", body)
         self.assertIn("showApiAlert", body)
         self.assertIn("initApiAlertPopup", body)
+        self.assertIn("failedFromStep", body)
+        self.assertIn("markFailureCascade", body)
         css_body = css.get_data(as_text=True)
         self.assertIn("api-alert-popup", css_body)
+        self.assertIn("step-warning-blink", css_body)
+        self.assertIn("state-warning", css_body)
 
     def test_health_status(self):
         r = self.client.get("/status")
@@ -125,11 +129,43 @@ class TestDeviceStatusShape(unittest.TestCase):
 
         devices = collect_device_status(ctx)
         self.assertTrue(devices["sensors"]["s1"])
+        self.assertTrue(devices["sensors"]["connected"])
         self.assertEqual(devices["traffic_light"]["color"], "RED")
         self.assertEqual(devices["boom_barrier"]["position"], "Closed")
+        self.assertTrue(devices["traffic_light"]["connected"])
         self.assertTrue(devices["rfid_reader"]["connected"])
         self.assertNotIn("digitizer", devices)
         self.assertNotIn("traffic_light_exit", devices)
+
+    def test_io_disconnected_marks_dependents_disconnected(self):
+        from services.frontend_mqtt import collect_device_status
+
+        ctx = MagicMock()
+        ctx.settings.rfid_config.return_value = {
+            "ip": "192.168.63.87",
+            "port": "5084",
+        }
+        ctx.rfid_reader.get_status.return_value = {"type": "api", "running": True}
+        ctx.io.get_status.return_value = {
+            "type": "modbus",
+            "connected": False,
+            "host": "192.168.1.50",
+        }
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_occupied_latch": True,
+        }
+        ctx.traffic_light.get_status.return_value = {"state": "green"}
+        ctx.boom_barrier.get_status.return_value = {"state": "open"}
+
+        devices = collect_device_status(ctx)
+        self.assertFalse(devices["io_controller"]["connected"])
+        self.assertFalse(devices["sensors"]["connected"])
+        self.assertFalse(devices["sensors"]["s1"])
+        self.assertFalse(devices["traffic_light"]["connected"])
+        self.assertFalse(devices["boom_barrier"]["connected"])
+        self.assertEqual(devices["traffic_light"]["color"], "")
+        self.assertEqual(devices["boom_barrier"]["position"], "")
+        self.assertTrue(devices["rfid_reader"]["connected"])
 
 
 class TestFrontendSnapshotFromFsm(unittest.TestCase):

@@ -166,10 +166,10 @@ class FrontendMqtt:
                     break
                 time.sleep(0.2)
             if not self._connected:
-                logger.info("External MQTT TCP not available — using in-app WebSocket broker")
+                logger.info("External MQTT TCP not available - using in-app WebSocket broker")
             return ws_ok or self._connected
         except Exception as e:
-            logger.info("MQTT TCP skipped (%s) — using in-app WebSocket broker", e)
+            logger.info("MQTT TCP skipped (%s) - using in-app WebSocket broker", e)
             return ws_ok
 
     def disconnect(self) -> None:
@@ -320,6 +320,7 @@ class FrontendMqtt:
         *,
         popup: bool = False,
         popup_title: str = "",
+        countdown_sec: Optional[float] = None,
     ) -> bool:
         self.last_status = {
             "step": str(step or ""),
@@ -328,6 +329,11 @@ class FrontendMqtt:
             "popup": bool(popup),
             "popup_title": str(popup_title or ""),
         }
+        if countdown_sec is not None:
+            try:
+                self.last_status["countdown_sec"] = float(countdown_sec)
+            except (TypeError, ValueError):
+                pass
         payload = json.dumps(self.last_status)
         return self._publish("wb_frontend/status", payload, qos=0)
 
@@ -352,6 +358,7 @@ class FrontendMqtt:
             st.get("message") or "Waiting for vehicle.",
             popup=bool(st.get("popup")),
             popup_title=str(st.get("popup_title") or ""),
+            countdown_sec=st.get("countdown_sec"),
         )
         if self.rfid:
             self.publish_rfid(self.rfid, self.truck_number)
@@ -384,14 +391,14 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": 1,
         "step": STEP_VEHICLE_ENTERING,
         "status": "info",
-        "message": "Vehicle approaching weighbridge — move forward.",
+        "message": "Vehicle approaching weighbridge - move forward.",
         "display": "MOVE FORWARD",
     },
     "WEIGHT_CAPTURE": {
         "position": 2,
         "step": STEP_READING_WEIGHT,
         "status": "info",
-        "message": "Vehicle on platform — capturing weight.",
+        "message": "Vehicle on platform - capturing weight.",
         "display": "WEIGHING",
     },
     "RFID_READ": {
@@ -410,7 +417,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
     },
     "RFID_ERROR": {
         "position": 0,
-        "step": STEP_RFID_READ,
+        "step": STEP_VALIDATING_RFID,
         "status": "error",
         "message": "RFID validation failed.",
         "display": "RFID ERR",
@@ -426,7 +433,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": 0,
         "step": STEP_VALIDATING_ANPR,
         "status": "warning",
-        "message": "ANPR mismatch — waiting for check-status.",
+        "message": "ANPR Err-0, Number plate mismatch",
         "display": "ANPR ERR 1",
     },
     "FINAL_WEIGHT": {
@@ -454,7 +461,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": 4,
         "step": STEP_EXIT_START,
         "status": "success",
-        "message": "Exit granted — proceed.",
+        "message": "Exit granted - proceed.",
         "display": "EXIT GRANTED",
     },
     "WAIT_EXIT": {
@@ -468,14 +475,14 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": -1,
         "step": STEP_VEHICLE_ENTERING,
         "status": "error",
-        "message": "Application error — reset to idle.",
+        "message": "Application error - reset to idle.",
         "display": IDLE_DISPLAY,
     },
     "FREE_PASS": {
         "position": 4,
         "step": STEP_EXIT_START,
         "status": "info",
-        "message": "Free pass — all lights green, all booms open. Waiting for exit sensor.",
+        "message": "Free pass - all lights green, all booms open. Waiting for exit sensor.",
         "display": "FREE PASS",
     },
 }
@@ -612,6 +619,8 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
     s1 = bool(sen.get("entry_active") or sen.get("entry_occupied_latch"))
     s2 = bool(sen.get("wb_active") or sen.get("wb_occupied_latch"))
     s3 = bool(sen.get("exit_active") or sen.get("exit_occupied_latch"))
+    if not io_connected:
+        s1 = s2 = s3 = False
 
     def _tl_color(tl) -> str:
         if not tl:
@@ -641,9 +650,21 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
             "port": str(io_port),
             "details": str(io_st.get("type") or "Modbus"),
         },
-        "sensors": {"s1": s1, "s2": s2, "s3": s3},
-        "traffic_light_entry": {"color": _tl_color(entry_tl)},
-        "traffic_light_exit": {"color": _tl_color(exit_tl)},
-        "boom_barrier_entry": {"position": _boom_pos(entry_boom)},
-        "boom_barrier_exit": {"position": _boom_pos(exit_boom)},
+        "sensors": {"s1": s1, "s2": s2, "s3": s3, "connected": io_connected},
+        "traffic_light_entry": {
+            "color": _tl_color(entry_tl) if io_connected else "",
+            "connected": io_connected,
+        },
+        "traffic_light_exit": {
+            "color": _tl_color(exit_tl) if io_connected else "",
+            "connected": io_connected,
+        },
+        "boom_barrier_entry": {
+            "position": _boom_pos(entry_boom) if io_connected else "",
+            "connected": io_connected,
+        },
+        "boom_barrier_exit": {
+            "position": _boom_pos(exit_boom) if io_connected else "",
+            "connected": io_connected,
+        },
     }

@@ -83,17 +83,69 @@ class TestApiErrors(unittest.TestCase):
         )
         annotate_response(resp, "anpr-detect")
         self.assertEqual(resp.kind, KIND_HTTP)
-        self.assertEqual(resp.operator_message, "ANPR request failed")
+        self.assertEqual(resp.operator_message, "not found")
         self.assertFalse(resp.popup)
         self.assertTrue(is_api_failure(resp))
         self.assertFalse(is_service_alert(resp))
+
+    def test_http_404_without_api_message_uses_generic(self):
+        resp = SimpleNamespace(
+            ok=False, status=0, message="", raw={}, http_status=404
+        )
+        annotate_response(resp, "anpr-detect")
+        self.assertEqual(resp.operator_message, "ANPR request failed")
+
+    def test_rfid_http_error_shows_api_body_message(self):
+        msg = (
+            "Gross RFID cannot be processed because Vadhghat Boom Close "
+            "is not completed for this vehicle and loading slip."
+        )
+        resp = SimpleNamespace(
+            ok=False,
+            status=409,
+            message=msg,
+            raw={"status": 409, "message": msg},
+            http_status=409,
+        )
+        annotate_response(resp, "rfid-validate")
+        self.assertEqual(resp.kind, KIND_HTTP)
+        self.assertEqual(resp.operator_message, msg)
+        self.assertFalse(resp.popup)
+
+    def test_http_200_business_reject_keeps_api_message(self):
+        msg = "Truck already processed at this checkpoint."
+        resp = SimpleNamespace(
+            ok=False,
+            status=500,
+            message=msg,
+            raw={"status": 500, "message": msg},
+            http_status=200,
+        )
+        annotate_response(resp, "rfid-validate")
+        self.assertEqual(resp.kind, KIND_OK)
+        self.assertEqual(resp.operator_message, msg)
+        self.assertFalse(resp.popup)
+
+    def test_http_503_prefers_api_message_keeps_popup_title(self):
+        resp = SimpleNamespace(
+            ok=False,
+            status=0,
+            message="Upstream OCI gateway unavailable",
+            raw={"message": "Upstream OCI gateway unavailable"},
+            http_status=503,
+        )
+        annotate_response(resp, "rfid-validate")
+        self.assertEqual(resp.operator_message, "Upstream OCI gateway unavailable")
+        self.assertTrue(resp.popup)
+        self.assertEqual(resp.popup_title, "RFID SERVICE SERVER ERROR")
+        self.assertTrue(is_service_alert(resp))
 
     def test_http_503_is_popup(self):
         resp = SimpleNamespace(
             ok=False, status=0, message="bad gateway", raw={}, http_status=503
         )
         annotate_response(resp, "rfid-validate")
-        self.assertEqual(resp.operator_message, "RFID service server error")
+        self.assertEqual(resp.operator_message, "bad gateway")
         self.assertTrue(resp.popup)
         self.assertEqual(resp.popup_title, "RFID SERVICE SERVER ERROR")
         self.assertTrue(is_service_alert(resp))

@@ -682,7 +682,7 @@ def save_api_endpoints_config():
 def disable_debug_mode():
     """
     Disable runtime DEBUG mode (no password required).
-    Session-only — does not rewrite config.py.
+    Session-only - does not rewrite config.py.
     """
     try:
         global RUNTIME_DEBUG, RUNTIME_REQUIRE_DEVICE_INFO
@@ -828,7 +828,7 @@ def save_section_config(section):
         if err:
             return jsonify({"status": 400, "message": err}), 400
     if section == 'digitizer':
-        # GMDC: API digitizer — only require host/port; skip serial calibration
+        # GMDC: API digitizer - only require host/port; skip serial calibration
         dig = data or {}
         if (dig.get("mode") or "api") == "api":
             if not str(dig.get("host") or dig.get("ip") or "").strip():
@@ -1122,7 +1122,7 @@ def rfid_data_intake():
 
 @app.route('/rfid_management', methods=['POST'])
 def rfid_management_intake():
-    """Zebra keepalive / management — acknowledge during commissioning."""
+    """Zebra keepalive / management - acknowledge during commissioning."""
     return jsonify({"status": "success"}), 200
 
 

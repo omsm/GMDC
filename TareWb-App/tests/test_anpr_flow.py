@@ -204,6 +204,96 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         td = ctx.oci.boom_close.call_args.kwargs.get("truck_details")
         self.assertTrue(str(td).startswith("T|"))
 
+    def test_anpr_status_0_plays_number_plate_error(self):
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.voice = MagicMock()
+        ctx.oci.anpr_detect.return_value = OCIResponse(
+            ok=False, status=0, raw={**ANPR_RAW, "anpr_status": 0}
+        )
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
+        )
+        ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+
+        wf._after_rfid_valid()
+
+        ctx.voice.anpr_error.assert_called()
+        ctx.voice.tech_issue.assert_not_called()
+
+    def test_anpr_status_2_plays_number_plate_error(self):
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.voice = MagicMock()
+        ctx.oci.anpr_detect.return_value = OCIResponse(
+            ok=False, status=2, raw={**ANPR_RAW, "anpr_status": 2}
+        )
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
+        )
+        ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+
+        wf._after_rfid_valid()
+
+        ctx.voice.anpr_error.assert_called()
+        ctx.voice.tech_issue.assert_not_called()
+
+    def test_status_check_http_4xx_keeps_anpr_mismatch_warning(self):
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        fe = MagicMock()
+        ctx.frontend = fe
+        ctx.oci.anpr_detect.return_value = OCIResponse(
+            ok=False, status=0, raw={**ANPR_RAW, "anpr_status": 0}
+        )
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.update_truck_number.side_effect = [
+            OCIResponse(
+                ok=False,
+                status=0,
+                http_status=400,
+                kind="http",
+                operator_message="Status-check service request failed",
+                raw={"message": "Vehicle is not manually updated"},
+            ),
+            OCIResponse(
+                ok=True,
+                status=1,
+                raw={"vehicleStatus": 1, "statusCode": 200},
+            ),
+        ]
+        ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+
+        wf._after_rfid_valid()
+
+        warning_msgs = []
+        error_msgs = []
+        for call in fe.publish_status.call_args_list:
+            args, kwargs = call
+            status = args[1] if len(args) > 1 else kwargs.get("status")
+            message = args[2] if len(args) > 2 else kwargs.get("message")
+            if status == "warning":
+                warning_msgs.append(message)
+            if status == "error":
+                error_msgs.append(message)
+        self.assertIn("ANPR Err-0, Number plate mismatch", warning_msgs)
+        self.assertNotIn("Status-check service request failed", error_msgs)
+        ctx.oci.weight_details.assert_called_once()
+
     def test_status_code_200_retries_until_vehicle_status_1(self):
         from services.oci_client import OCIResponse
 
@@ -322,14 +412,34 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         self.assertEqual(title, "ANPR NOT REACHABLE")
         self.assertNotIn("HTTPConnectionPool", message)
 
-    def test_manual_reset_without_transaction_sends_empty_rfid(self):
+    def test_manual_reset_without_transaction_skips_reset_api(self):
         wf, ctx = self._make_workflow()
         ctx.transactions.clear()
+        ctx.oci.reset_checkpoint.reset_mock()
         wf.force_reset(announce_reset=True)
-        kwargs = ctx.oci.reset_checkpoint.call_args.kwargs
-        self.assertEqual(kwargs["device_ip"], "192.168.10.223")
-        self.assertEqual(kwargs["rfid_no"], "")
-        self.assertEqual(kwargs["truck_details"], "")
+        ctx.oci.reset_checkpoint.assert_not_called()
+
+    def test_startup_notify_gmdc_reset_skips_when_idle(self):
+        wf, ctx = self._make_workflow()
+        ctx.transactions.clear()
+        ctx.oci.reset_checkpoint.reset_mock()
+        wf.notify_gmdc_reset()
+        ctx.oci.reset_checkpoint.assert_not_called()
+
+    def test_ui_reset_plays_application_reset_wav(self):
+        wf, ctx = self._make_workflow()
+        ctx.voice = MagicMock()
+        wf.force_reset(announce_reset=True)
+        ctx.voice.application_reset.assert_called()
+        ctx.voice.stop.assert_not_called()
+
+    def test_automatic_idle_reset_does_not_call_reset_api(self):
+        wf, ctx = self._make_workflow()
+        ctx.oci.reset_checkpoint.reset_mock()
+        wf.force_reset()
+        ctx.oci.reset_checkpoint.assert_not_called()
+        wf.notify_gmdc_reset()
+        ctx.oci.reset_checkpoint.assert_not_called()
 
     def test_manual_reset_with_transaction_sends_rfid_and_details(self):
         wf, ctx = self._make_workflow()
@@ -356,7 +466,48 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         wf._complete_lane_exit("vehicle crossed")
         ctx.oci.reset_checkpoint.assert_not_called()
 
-    def test_anpr_unreachable_exit_notifies_gmdc_reset(self):
+    def test_exit_during_boom_close_wait_skips_reset_api(self):
+        """Exit sensor during the post boom-close debug wait must not reset."""
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.oci.anpr_detect.return_value = OCIResponse(
+            ok=True, status=1, raw={**ANPR_RAW, "anpr_status": 1}
+        )
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+
+        def _boom_close(**_kwargs):
+            wf._complete_lane_exit("exit sensor during boom-close wait")
+            return OCIResponse(ok=True, status=200)
+
+        ctx.oci.boom_close.side_effect = _boom_close
+        ctx.oci.reset_checkpoint.reset_mock()
+        wf._after_rfid_valid()
+        ctx.oci.reset_checkpoint.assert_not_called()
+
+    def test_exit_timeout_after_boom_close_skips_reset_api(self):
+        from config.constants import State
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.oci.anpr_detect.return_value = OCIResponse(
+            ok=True, status=1, raw={**ANPR_RAW, "anpr_status": 1}
+        )
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+        wf._after_rfid_valid()
+        ctx.state_machine.force_state(State.EXIT_GRANTED)
+        ctx.oci.reset_checkpoint.reset_mock()
+        wf._on_exit_timeout()
+        ctx.oci.reset_checkpoint.assert_not_called()
+
+    def test_anpr_unreachable_exit_does_not_call_reset_api(self):
         from services.oci_client import OCIResponse
 
         wf, ctx = self._make_workflow()
@@ -366,9 +517,27 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         wf._after_rfid_valid()
         ctx.oci.reset_checkpoint.reset_mock()
         wf._complete_lane_exit("anpr abort")
-        ctx.oci.reset_checkpoint.assert_called()
-        kwargs = ctx.oci.reset_checkpoint.call_args.kwargs
-        self.assertEqual(kwargs["rfid_no"], "D2030DBE")
+        ctx.oci.reset_checkpoint.assert_not_called()
+
+    def test_exit_after_rfid_error_publishes_error_not_success(self):
+        from config.constants import State
+
+        wf, ctx = self._make_workflow()
+        ctx.frontend = MagicMock()
+        ctx.state_machine.force_state(State.RFID_ERROR)
+        statuses = []
+
+        def _capture(step, status, message, **kwargs):
+            statuses.append((step, status, message))
+
+        ctx.frontend.publish_status.side_effect = _capture
+        wf._enter_exit_granted(reason="rfid_error")
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        self.assertTrue(statuses)
+        step, status, message = statuses[-1]
+        self.assertEqual(step, "exit_start")
+        self.assertEqual(status, "error")
+        self.assertIn("failure", message.lower())
 
 
 if __name__ == "__main__":

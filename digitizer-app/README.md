@@ -23,7 +23,7 @@ Local HTTP API always listens on `0.0.0.0:8800` (not configurable in UI).
 ### Setup order
 
 1. On first run, Config opens: set **serial port** + **ASCII index calibration**, then Save.
-2. Only after that does the dashboard open and read weight (index-based only — no free-form parse).
+2. Only after that does the dashboard open and read weight (index-based only - no free-form parse).
 
 Calibration steps: Capture sample → pick R1/R3/R4 → Save.  
 Stored in `config.json` as `indexing` + `calibration_sample_hex`.

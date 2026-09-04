@@ -1,5 +1,5 @@
 /*
- * digitizer_index_picker.js — operator byte-index picker for the digitizer.
+ * digitizer_index_picker.js - operator byte-index picker for the digitizer.
  *
  * Flow (see digitizer-demo/FUTURE_INDEX_PICKER_UI_SPEC.md):
  *   Check & Save → POST /api/digitizer/sample (45 bytes, 10s)
@@ -32,12 +32,12 @@ function _dpCalibrationMinKg() {
 
 // Friendly UI labels (rows 1, 3, and 4 are required).
 const DIGITIZER_INDEX_FRIENDLY_LABELS = [
-    'Start of weight message — 1st character (required)',
-    'Start of weight message — 2nd character (optional)',
-    'Weight number — where digits begin (required)',
-    'Weight number — where digits end (required)',
-    'End of weight message — 1st character (optional)',
-    'End of weight message — 2nd character (optional)',
+    'Start of weight message - 1st character (required)',
+    'Start of weight message - 2nd character (optional)',
+    'Weight number - where digits begin (required)',
+    'Weight number - where digits end (required)',
+    'End of weight message - 1st character (optional)',
+    'End of weight message - 2nd character (optional)',
 ];
 
 const _DP_REQUIRED_ROWS = [0, 2, 3]; // zero-based rows 1, 3, and 4
@@ -163,9 +163,9 @@ function _dpEnsureModal() {
                     </thead>
                     <tbody id="digitizerIndexTableBody"></tbody>
                 </table>
-                <div class="digitizer-index-preview" id="digitizerIndexPreview">Preview: —</div>
+                <div class="digitizer-index-preview" id="digitizerIndexPreview">Preview: -</div>
                 <div class="digitizer-index-hint" id="digitizerIndexHint">
-                    Required: row 1 (start of weight message — 1st character), rows 3–4 (weight number).
+                    Required: row 1 (start of weight message - 1st character), rows 3–4 (weight number).
                     Preview must be at least ${_dpCalibrationMinKg()} kg.
                 </div>
                 <div class="digitizer-index-error" id="digitizerIndexError"></div>
@@ -187,7 +187,7 @@ function _dpEnsureModal() {
             <div class="custom-modal-header"><h3>Confirm Weight</h3></div>
             <div class="custom-modal-body">
                 <p>Please confirm the weight shown now is the same as the digitizer display.</p>
-                <div class="digitizer-index-confirm-weight" id="digitizerIndexConfirmWeight">—</div>
+                <div class="digitizer-index-confirm-weight" id="digitizerIndexConfirmWeight">-</div>
                 <div class="digitizer-index-ruler" id="digitizerIndexConfirmRuler"></div>
             </div>
             <div class="custom-modal-footer">
@@ -372,15 +372,15 @@ function _dpApplyPreview(data) {
 
     if (_dpMissingRequiredPicks(_dpState.picks)) {
         errorEl.textContent =
-            'Set row 1 (start of weight message — 1st character) and rows 3–4 (weight number).';
-        previewEl.textContent = 'Preview: —';
+            'Set row 1 (start of weight message - 1st character) and rows 3–4 (weight number).';
+        previewEl.textContent = 'Preview: -';
         checkBtn.disabled = true;
         return;
     }
 
     if (data.validation_error) {
         errorEl.textContent = data.validation_error;
-        previewEl.textContent = 'Preview: —';
+        previewEl.textContent = 'Preview: -';
         checkBtn.disabled = true;
         return;
     }
@@ -550,8 +550,8 @@ function updateDigitizerSavedConfig(config) {
         panel.innerHTML = `
             <div class="digitizer-saved-title">Saved Weight Parsing (index based)</div>
             <table class="digitizer-saved-table">
-                <tr><td>Frame start</td><td>${_dpEscape(ix.frame_start_char ?? '—')}</td></tr>
-                <tr><td>Frame end</td><td>${_dpEscape(ix.frame_end_char ?? '—')}</td></tr>
+                <tr><td>Frame start</td><td>${_dpEscape(ix.frame_start_char ?? '-')}</td></tr>
+                <tr><td>Frame end</td><td>${_dpEscape(ix.frame_end_char ?? '-')}</td></tr>
                 <tr><td>Weight start (offset)</td><td>${ix.weight_start}</td></tr>
                 <tr><td>Weight end (exclusive)</td><td>${ix.weight_end}</td></tr>
                 <tr><td>Decimals / Scale</td><td>${ix.decimals ?? 0} / ${ix.scale ?? 1}</td></tr>

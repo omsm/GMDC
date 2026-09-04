@@ -1,10 +1,10 @@
 """
-GMDC checkpoint profiles — single source of truth for which devices
+GMDC checkpoint profiles - single source of truth for which devices
 each site type needs.
 
 Families:
-  checkpoint  — mines_entry, tracking_1, tracking_2, mines_exit
-  weighbridge — tare_wb, vadaghat_wb, gross_wb  (uni or bi direction)
+  checkpoint  - mines_entry, tracking_1, tracking_2, mines_exit
+  weighbridge - tare_wb, vadaghat_wb, gross_wb  (uni or bi direction)
 """
 
 from __future__ import annotations
@@ -172,7 +172,7 @@ def traffic_light_locations(
     Checkpoint: ['entry']
     Uni WB: ['entry', 'exit']
     Bi WB:  ['entry_a.entry', 'entry_a.exit', 'entry_b.entry', 'entry_b.exit']
-            (bidirectional JS already uses nested entry_a/entry_b — callers
+            (bidirectional JS already uses nested entry_a/entry_b - callers
              that need nested structure should use is_bidirectional_layout)
     """
     profile = get_profile(checkpoint_type)
@@ -246,6 +246,14 @@ _API_BOOM = {
     "username_key": "boom_close_username",
     "password_key": "boom_close_password",
 }
+_API_RESET = {
+    "id": "reset_checkpoint",
+    "label": "Reset Checkpoint",
+    "url_key": "reset_checkpoint_url",
+    "base_key": "oci_base_url",
+    "username_key": "reset_checkpoint_username",
+    "password_key": "reset_checkpoint_password",
+}
 _API_WEIGHT = {
     "id": "weight_details",
     "label": "Weight Details",
@@ -254,6 +262,14 @@ _API_WEIGHT = {
     "username_key": "weight_details_username",
     "password_key": "weight_details_password",
 }
+_API_VADHGHAT_ADJUST = {
+    "id": "vadhghat_weight_adjustment",
+    "label": "Vadhghat Weight Adjustment",
+    "url_key": "vadhghat_weight_adjustment_url",
+    "base_key": "oci_base_url",
+    "username_key": "vadhghat_weight_adjustment_username",
+    "password_key": "vadhghat_weight_adjustment_password",
+}
 
 _CHECKPOINT_API_FIELDS = (
     _API_RFID,
@@ -261,6 +277,7 @@ _CHECKPOINT_API_FIELDS = (
     _API_INVALID,
     _API_STATUS,
     _API_BOOM,
+    _API_RESET,
 )
 _WEIGHBRIDGE_API_FIELDS = (
     _API_RFID,
@@ -269,6 +286,7 @@ _WEIGHBRIDGE_API_FIELDS = (
     _API_STATUS,
     _API_WEIGHT,
     _API_BOOM,
+    _API_RESET,
 )
 
 
@@ -280,7 +298,10 @@ def api_endpoint_fields(checkpoint_type: Optional[str] = None) -> List[Dict[str,
         if profile.family == "weighbridge"
         else _CHECKPOINT_API_FIELDS
     )
-    return [dict(f) for f in fields]
+    result = [dict(f) for f in fields]
+    if profile.id == "vadaghat_wb":
+        result.append(dict(_API_VADHGHAT_ADJUST))
+    return result
 
 
 def profile_public_dict(checkpoint_type: Optional[str] = None) -> Dict[str, Any]:

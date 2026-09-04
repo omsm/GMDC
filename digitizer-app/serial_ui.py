@@ -1,5 +1,5 @@
 """
-GMDC Digitizer App — standalone serial weight dashboard + local HTTP API.
+GMDC Digitizer App - standalone serial weight dashboard + local HTTP API.
 
 - Reads weighbridge digitizer over COM
 - ASCII index calibration for raw-data weight extraction
@@ -609,7 +609,7 @@ class ConfigDialog(QDialog):
             self.row_buttons.append(rb)
             spin = QSpinBox()
             spin.setRange(-1, 999)
-            spin.setSpecialValueText("—")
+            spin.setSpecialValueText("-")
             spin.setValue(-1)
             spin.valueChanged.connect(lambda _v, idx=i: self._spin_changed(idx))
             self.row_spins.append(spin)
@@ -1510,7 +1510,7 @@ def main() -> None:
         if not saved or not is_calibrated(window.config):
             sys.exit(0)
 
-    # 2) After calibration — show dashboard and read indexed weight only
+    # 2) After calibration - show dashboard and read indexed weight only
         window.show()
     if is_calibrated(window.config):
             window._start_serial()

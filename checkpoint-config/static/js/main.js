@@ -883,7 +883,7 @@ async function loadConfig() {
 }
 
 function populateFormFields() {
-    // Server — fixed localhost:80 (read-only fields)
+    // Server - fixed localhost:80 (read-only fields)
     applyServerConfigDefaults();
     
     // RFID

@@ -125,6 +125,9 @@ def _endpoint_cred(
 
 def load_settings(config_path: Optional[str] = None) -> Settings:
     load_dotenv(PROJECT_ROOT / ".env")
+    from config.constants import apply_timeouts_from_env
+
+    apply_timeouts_from_env()
 
     path = Path(
         config_path

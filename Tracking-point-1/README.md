@@ -49,7 +49,7 @@ Boom-close body:
 }
 ```
 
-- No local RTSP photo capture — `front_image` / `anpr_image` come from the ANPR `/api/detect` response (same as Mine-entry).
+- No local RTSP photo capture - `front_image` / `anpr_image` come from the ANPR `/api/detect` response (same as Mine-entry).
 - `top_image` is always `null`.
 
 ## Setup

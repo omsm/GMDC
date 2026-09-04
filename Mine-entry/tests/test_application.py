@@ -381,9 +381,24 @@ class TestOCIClient(unittest.TestCase):
         self.assertEqual(sent["rfid_no"], "E28068940000503F548F04BA")
         self.assertEqual(sent["truck_details"], TRUCK_DETAILS)
         self.assertIn("reset_checkpoint", mock_post.call_args.args[0])
+        self.assertEqual(mock_post.call_args.kwargs["auth"], ("user", "pass"))
         self.client.reset_checkpoint(device_ip="10.10.180.12")
         self.assertEqual(mock_post.call_args.kwargs["json"]["rfid_no"], "")
         self.assertEqual(mock_post.call_args.kwargs["json"]["truck_details"], "")
+        self.assertEqual(mock_post.call_args.kwargs["auth"], ("user", "pass"))
+
+    @patch("services.oci_client.requests.Session.post")
+    def test_reset_checkpoint_uses_endpoint_auth(self, mock_post):
+        mock_post.return_value = self._mock_response(200, {"status": 200})
+        self.client.endpoint_auth["reset_checkpoint"] = (
+            "GMDC_API_USER",
+            "GMDC@1234",
+        )
+        self.client.reset_checkpoint(device_ip="10.10.180.12")
+        self.assertEqual(
+            mock_post.call_args.kwargs["auth"],
+            ("GMDC_API_USER", "GMDC@1234"),
+        )
 
     @patch("services.oci_client.requests.Session.post")
     def test_invalid_truck_filtered_payload(self, mock_post):
@@ -529,13 +544,13 @@ class TestWorkflow(unittest.TestCase):
         self.assertEqual(kwargs["rfid_no"], "badtag")
         self.assertEqual(kwargs["device_ip"], "192.168.10.223")
 
-    def test_manual_reset_without_transaction_sends_empty_rfid(self):
+    def test_manual_reset_without_transaction_skips_reset_api(self):
         self.workflow.force_reset()
-        self.oci.reset_checkpoint.assert_called_once()
-        kwargs = self.oci.reset_checkpoint.call_args.kwargs
-        self.assertEqual(kwargs["device_ip"], "192.168.10.223")
-        self.assertEqual(kwargs["rfid_no"], "")
-        self.assertEqual(kwargs["truck_details"], "")
+        self.oci.reset_checkpoint.assert_not_called()
+
+    def test_startup_notify_gmdc_reset_skips_when_idle(self):
+        self.workflow.notify_gmdc_reset()
+        self.oci.reset_checkpoint.assert_not_called()
 
     def test_manual_reset_with_transaction_sends_rfid_and_details(self):
         txn = self.ctx.transactions.current
@@ -745,6 +760,50 @@ class TestWorkflow(unittest.TestCase):
         # status_check must receive ANPR-derived payload fields
         call_kwargs = self.oci.update_truck_number.call_args.kwargs
         self.assertEqual(call_kwargs["anpr_payload"]["vehicleNo_anpr"], "OD14AF2721")
+        self.boom.open.assert_called()
+
+    def test_manual_loop_http_4xx_keeps_anpr_mismatch_warning(self):
+        fe = MagicMock()
+        self.ctx.frontend = fe
+        self._rfid_ok()
+        self.oci.anpr_detect.return_value = OCIResponse(
+            ok=False, status=0, raw=ANPR_RAW
+        )
+        self.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=201
+        )
+        self.oci.update_truck_number.side_effect = [
+            OCIResponse(
+                ok=False,
+                status=0,
+                http_status=400,
+                kind="http",
+                operator_message="Status-check service request failed",
+                raw={"message": "Vehicle is not manually updated"},
+            ),
+            OCIResponse(
+                ok=True,
+                status=1,
+                raw={"statusCode": 200, "vehicleStatus": 1},
+            ),
+        ]
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+
+        warning_msgs = []
+        error_msgs = []
+        for call in fe.publish_status.call_args_list:
+            args, kwargs = call
+            status = args[1] if len(args) > 1 else kwargs.get("status")
+            message = args[2] if len(args) > 2 else kwargs.get("message")
+            if status == "warning":
+                warning_msgs.append(message)
+            if status == "error":
+                error_msgs.append(message)
+        self.assertIn("ANPR Err-0, Number plate mismatch", warning_msgs)
+        self.assertNotIn("Status-check service request failed", error_msgs)
         self.boom.open.assert_called()
 
     def test_manual_loop_vehicle_status_2_resets_idle(self):
@@ -985,6 +1044,10 @@ class TestSettings(unittest.TestCase):
         self.assertIn("status_check", settings.update_truck_url)
         self.assertGreater(settings.truck_anpr_retry_timer, 0)
         self.assertGreater(settings.vehicle_crossing_timeout, 0)
+        self.assertEqual(
+            settings.endpoint_auth.get("reset_checkpoint"),
+            ("GMDC_API_USER", "GMDC@1234"),
+        )
 
     def test_anpr_url_separate_from_oci(self):
         settings = load_settings(str(ROOT / "iot_configuration.json"))

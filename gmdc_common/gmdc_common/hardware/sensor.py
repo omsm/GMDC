@@ -38,7 +38,7 @@ class SensorPoller:
         on_exit: Optional[Callable[[], None]] = None,
         on_wb: Optional[Callable[[], None]] = None,
         wb_pin: Optional[int] = None,
-        # Rising-edge (occupied) callbacks — used by weighbridge positioning
+        # Rising-edge (occupied) callbacks - used by weighbridge positioning
         on_entry_occupied: Optional[Callable[[], None]] = None,
         on_exit_occupied: Optional[Callable[[], None]] = None,
         on_wb_occupied: Optional[Callable[[], None]] = None,

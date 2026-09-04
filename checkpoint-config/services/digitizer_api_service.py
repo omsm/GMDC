@@ -64,7 +64,7 @@ class DigitizerApiService:
             logger.warning("Digitizer API URLError: %s", e)
             return {
                 "status": 400,
-                "message": f"Cannot reach digitizer-app at {host}:{port} — {e.reason}",
+                "message": f"Cannot reach digitizer-app at {host}:{port} - {e.reason}",
                 "url": url,
             }
         except Exception as e:
@@ -104,7 +104,7 @@ class DigitizerApiService:
 
         ok = http_status == 200
         message = (
-            f"Digitizer-app OK — stable weight={weight}"
+            f"Digitizer-app OK - stable weight={weight}"
             if ok and weight is not None
             else ("Digitizer-app reachable (HTTP 200)" if ok else f"HTTP {http_status}")
         )

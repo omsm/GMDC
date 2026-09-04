@@ -567,7 +567,7 @@ class PDFReportGenerator:
         if ENABLE_CAMERA_CONFIGURATION:
             story.append(Paragraph("4. Camera Configuration", heading_style))
             camera_config = config.get('camera', {})
-            # When the camera wizard is disabled, do not open RTSP during PDF build — stale URLs can hang OpenCV indefinitely.
+            # When the camera wizard is disabled, do not open RTSP during PDF build - stale URLs can hang OpenCV indefinitely.
             pdf_camera_snapshots = CV2_AVAILABLE
             
             # Top Camera

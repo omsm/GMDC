@@ -37,6 +37,11 @@ class TestSettings(unittest.TestCase):
         self.assertIn("tare", s.checkpoint_type.lower() or "tare_wb")
         self.assertTrue(s.digitizer_url.startswith("http"))
         self.assertIn("reset_checkpoint", s.reset_checkpoint_url)
+        self.assertIn("vadhghat_weight_adjustment", s.vadhghat_weight_adjustment_url)
+        self.assertEqual(
+            s.endpoint_auth.get("reset_checkpoint"),
+            ("GMDC_API_USERS", "GMDC@123"),
+        )
 
 
 class TestDigitizerDemo(unittest.TestCase):

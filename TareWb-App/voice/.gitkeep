@@ -4,7 +4,7 @@
 # Directory structure:
 # voice/
 # ├── information/
-# │   ├── move_forward.wav
+# │   ├── forward.wav
 # │   ├── move_backward.wav
 # │   ├── rescan_card.wav
 # │   ├── welcome.wav

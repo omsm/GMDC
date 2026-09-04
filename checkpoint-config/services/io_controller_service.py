@@ -21,7 +21,7 @@ try:
         write_register_compat,
     )
 except ImportError:
-    # Fallback if gmdc_common not installed — will still fail on new pymodbus
+    # Fallback if gmdc_common not installed - will still fail on new pymodbus
     def read_coils_compat(client, address, count, slave_id=1):
         return client.read_coils(address, count, unit=slave_id)
     def read_discrete_inputs_compat(client, address, count, slave_id=1):

@@ -38,7 +38,7 @@ datas = [
     # Editable files loaded at runtime from beside configuration.exe (not bundled):
     # - conversion.py
     # - logging_config.py
-    # - timeout_config.py  (ONE file for both EXEs — built from Weighbridge-App/timeout_config.py)
+    # - timeout_config.py  (ONE file for both EXEs - built from Weighbridge-App/timeout_config.py)
     # NOTE: Do NOT add services/ or utils/ to datas - they are Python packages
     # and should be auto-detected by PyInstaller's analysis
 ]

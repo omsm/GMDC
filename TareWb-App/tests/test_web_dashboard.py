@@ -66,7 +66,12 @@ class TestWebPages(unittest.TestCase):
     def test_static_css_and_paho(self):
         css = self.client.get("/static/css/style.css")
         self.assertEqual(css.status_code, 200)
-        self.assertIn("api-alert-popup", css.get_data(as_text=True))
+        css_body = css.get_data(as_text=True)
+        self.assertIn("api-alert-popup", css_body)
+        self.assertIn("step-warning-blink", css_body)
+        self.assertIn("state-warning", css_body)
+        self.assertIn(".flow-step.state-error .step-content", css_body)
+        self.assertIn("--font-size-base", css_body)
         paho = self.client.get("/static/js/paho-mqtt.js")
         self.assertEqual(paho.status_code, 200)
         truck = self.client.get("/static/images/truck.png")
@@ -115,6 +120,25 @@ class TestWebPages(unittest.TestCase):
         self.assertIn("formatWeightTonKg", body)
         self.assertIn("showApiAlert", body)
         self.assertIn("initApiAlertPopup", body)
+        self.assertIn("fetch('/api/reset'", body)
+        self.assertNotIn("wb_frontend/reset_application", body)
+        self.assertIn("ioDependentsDisconnected", body)
+        self.assertIn("failedFromStep", body)
+        self.assertIn("markFailureCascade", body)
+
+    def test_ui_reset_endpoint_plays_application_reset(self):
+        from core.app_context import AppContext
+
+        AppContext.reset_instance()
+        ctx = AppContext.get_instance()
+        wf = MagicMock()
+        ctx.workflow = wf
+        try:
+            r = self.client.post("/api/reset")
+            self.assertEqual(r.status_code, 200)
+            wf.force_reset.assert_called_once_with(announce_reset=True)
+        finally:
+            AppContext.reset_instance()
         anim = self.client.get("/static/js/animated.js")
         self.assertEqual(anim.status_code, 200)
         self.assertNotIn("/api/frontend", anim.get_data(as_text=True))
@@ -150,10 +174,52 @@ class TestDeviceStatusShape(unittest.TestCase):
         devices = collect_device_status(ctx)
         self.assertTrue(devices["sensors"]["s1"])
         self.assertFalse(devices["sensors"]["s2"])
+        self.assertTrue(devices["sensors"]["connected"])
         self.assertEqual(devices["traffic_light_entry"]["color"], "GREEN")
         self.assertEqual(devices["traffic_light_exit"]["color"], "RED")
         self.assertEqual(devices["boom_barrier_entry"]["position"], "Open")
         self.assertEqual(devices["boom_barrier_exit"]["position"], "Closed")
+        self.assertTrue(devices["traffic_light_entry"]["connected"])
+        self.assertTrue(devices["boom_barrier_entry"]["connected"])
+
+    def test_io_disconnected_marks_dependents_disconnected(self):
+        from services.frontend_mqtt import collect_device_status
+
+        ctx = MagicMock()
+        ctx.settings.rfid_config.return_value = {"ip": "192.168.1.10", "port": "5084"}
+        ctx.settings.digitizer_url = "http://127.0.0.1:8100/read_stable_weight"
+        ctx.rfid_reader.get_status.return_value = {"type": "api", "running": True}
+        ctx.digitizer.demo_mode = True
+        ctx.io.get_status.return_value = {
+            "type": "modbus",
+            "connected": False,
+            "host": "192.168.1.50",
+            "port": 502,
+        }
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_occupied_latch": True,
+            "wb_occupied_latch": True,
+            "exit_occupied_latch": True,
+        }
+        ctx.entry_tl.get_status.return_value = {"state": "green"}
+        ctx.exit_tl.get_status.return_value = {"state": "red"}
+        ctx.entry_boom.get_status.return_value = {"state": "open"}
+        ctx.exit_boom.get_status.return_value = {"state": "closed"}
+
+        devices = collect_device_status(ctx)
+        self.assertFalse(devices["io_controller"]["connected"])
+        self.assertFalse(devices["sensors"]["connected"])
+        self.assertFalse(devices["sensors"]["s1"])
+        self.assertFalse(devices["sensors"]["s2"])
+        self.assertFalse(devices["sensors"]["s3"])
+        self.assertFalse(devices["traffic_light_entry"]["connected"])
+        self.assertFalse(devices["traffic_light_exit"]["connected"])
+        self.assertFalse(devices["boom_barrier_entry"]["connected"])
+        self.assertFalse(devices["boom_barrier_exit"]["connected"])
+        self.assertEqual(devices["traffic_light_entry"]["color"], "")
+        self.assertEqual(devices["boom_barrier_entry"]["position"], "")
+        self.assertTrue(devices["rfid_reader"]["connected"])
+        self.assertTrue(devices["digitizer"]["connected"])
 
 
 class TestFrontendPublishOnWorkflow(unittest.TestCase):

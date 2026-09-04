@@ -713,7 +713,7 @@ class Digitizer_Convert:
         if method == "index_based":
             if not self._index_config_ready or not self._indexing_dict:
                 logger.warning(
-                    "index_based calibration not loaded — rejecting digitizer packet"
+                    "index_based calibration not loaded - rejecting digitizer packet"
                 )
                 return None
             from digitizer_index_engine import extract_weight_from_indexing
@@ -1474,7 +1474,7 @@ class Digitizer_Convert:
                 if w_kg is not None:
                     weight = w_kg
 
-            # Euro frames with 0x80 stripped decode as glued digits — recover last frame.
+            # Euro frames with 0x80 stripped decode as glued digits - recover last frame.
             if weight is None and self._euro_ascii_fallback_blocked(raw_data, text):
                 w_glued = self._method_euro_glued_digits_recovery(text)
                 if w_glued is not None:
@@ -2145,7 +2145,7 @@ class Digitizer_Convert:
             except ValueError:
                 pass
 
-        # Zero stream: 0`P<uppercase> — must not match trailing 0 of e.g. 41940
+        # Zero stream: 0`P<uppercase> - must not match trailing 0 of e.g. 41940
         if re.search(r"(?<![0-9])0[\x60`]P[A-Z]", buf):
             logger.info("Weight decoded via P-marker zero-stream token: 0 kg")
             return 0.0

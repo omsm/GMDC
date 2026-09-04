@@ -945,7 +945,7 @@ DEFAULT_CONFIG = {
         "mqtt_topic_rx": "iot_display/display_to_application",
         "validated": False
     },
-    # Digitizer-app on another PC — HTTP /read_stable_weight (not local COM)
+    # Digitizer-app on another PC - HTTP /read_stable_weight (not local COM)
     "digitizer": {
         "mode": "api",
         "host": "",
@@ -1075,7 +1075,9 @@ DEFAULT_CONFIG = {
         "invalid_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number",
         "update_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/status_check",
         "boom_close_url": "/ords/gmdc_dicsm/dlms_checkpoint/boom-close",
+        "reset_checkpoint_url": "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint",
         "weight_details_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-details",
+        "vadhghat_weight_adjustment_url": "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment",
         # Per-endpoint credentials
         "rfid_validate_username": "GMDC_API_USER",
         "rfid_validate_password": "GMDC@1234",
@@ -1087,8 +1089,12 @@ DEFAULT_CONFIG = {
         "update_truck_password": "GMDC@1234",
         "boom_close_username": "GMDC_API_USER",
         "boom_close_password": "GMDC@1234",
+        "reset_checkpoint_username": "GMDC_API_USER",
+        "reset_checkpoint_password": "GMDC@1234",
         "weight_details_username": "GMDC_API_USER",
         "weight_details_password": "GMDC@1234",
+        "vadhghat_weight_adjustment_username": "GMDC_API_USER",
+        "vadhghat_weight_adjustment_password": "GMDC@1234",
         # Legacy shared keys (kept for older configs / fallback)
         "oci_username": "GMDC_API_USER",
         "oci_password": "GMDC@1234",

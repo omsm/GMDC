@@ -552,7 +552,7 @@ def force_chrome_app_fullscreen(proc, timeout_sec=15.0, title_hints=None):
                 if best is None:
                     best = _find_hwnd_by_title_substrings(hints)
                 if best:
-                    # Apply repeatedly — Chrome often re-asserts chrome UI after paint
+                    # Apply repeatedly - Chrome often re-asserts chrome UI after paint
                     for delay in (0.0, 0.4, 0.9, 1.5):
                         if delay:
                             time.sleep(delay)
@@ -677,7 +677,7 @@ def terminate_chrome_process():
 
     try:
         if sys.platform == "win32" and pid:
-            # Kill process tree — Chrome spawns child processes for the app window
+            # Kill process tree - Chrome spawns child processes for the app window
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 stdout=subprocess.DEVNULL,

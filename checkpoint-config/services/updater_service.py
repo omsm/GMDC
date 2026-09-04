@@ -70,7 +70,7 @@ def _iot_find_best_source_root(extract_dir: str, target_exe: str) -> str:
 def run_update_worker_main(cfg_path: str) -> None:
     """
     Invoked as: configuration.exe --iot-update-worker <cfg.json>
-    See Weighbridge updater — same fix for PyInstaller (cannot run temp .py via frozen exe).
+    See Weighbridge updater - same fix for PyInstaller (cannot run temp .py via frozen exe).
     """
     import ctypes
     import traceback

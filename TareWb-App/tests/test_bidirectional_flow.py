@@ -46,6 +46,7 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.entry_boom = MagicMock()
         ctx.exit_boom = MagicMock()
         ctx.voice = MagicMock()
+        ctx.voice.is_multi_play_active.return_value = False
 
         workflow = TareWbWorkflow(ctx)
         return workflow, ctx
@@ -62,7 +63,7 @@ class TestBidirectionalFlow(unittest.TestCase):
         # Sensor selection records direction but does not start RFID.
         ctx.rfid_clouds["entry_a"].prepare_idle.assert_not_called()
         ctx.rfid_clouds["entry_b"].prepare_idle.assert_not_called()
-        ctx.voice.weighbridge_janch.assert_called_once()
+        ctx.voice.move_forward.assert_called()
         workflow.force_reset()
 
     def test_exit_sensor_selects_entry_b_reader_while_idle(self):
@@ -76,7 +77,46 @@ class TestBidirectionalFlow(unittest.TestCase):
         self.assertEqual(ctx.active_rfid_direction, "")
         ctx.rfid_clouds["entry_b"].prepare_idle.assert_not_called()
         ctx.rfid_clouds["entry_a"].prepare_idle.assert_not_called()
-        ctx.voice.weighbridge_janch.assert_called_once()
+        ctx.voice.move_forward.assert_called()
+        workflow.force_reset()
+
+    def test_idle_s2_and_s3_cut_plays_weighbridge_0(self):
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "wb_active": True,
+            "exit_active": True,
+            "wb_occupied_latch": True,
+            "exit_occupied_latch": True,
+        }
+
+        workflow.on_wb_occupied()
+
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.voice.weighbridge_0.assert_called()
+        ctx.voice.move_forward.assert_not_called()
+        workflow.force_reset()
+
+    def test_idle_s2_and_s3_cut_blocks_entry_b(self):
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "wb_active": True,
+            "exit_active": True,
+            "wb_occupied_latch": True,
+            "exit_occupied_latch": True,
+        }
+
+        workflow.on_exit_occupied()
+
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.voice.weighbridge_0.assert_called()
+        ctx.rfid_clouds["entry_b"].prepare_idle.assert_not_called()
         workflow.force_reset()
 
     def test_rfid_tags_ignored_while_sensor_active(self):

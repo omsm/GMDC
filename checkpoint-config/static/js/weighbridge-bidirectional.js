@@ -296,7 +296,7 @@ function initBidirectionalAssignedDevices() {
     }
 }
 
-/** Assigned IPs to hide from dropdown — excludes self and peer so swap/interchange is possible. */
+/** Assigned IPs to hide from dropdown - excludes self and peer so swap/interchange is possible. */
 function getAssignedIpsForBidirectionalRfid(directionKey) {
     const selfKey = RFID_DIRECTION_UI[directionKey]?.assignKey;
     const peerKey = RFID_DIRECTION_UI[

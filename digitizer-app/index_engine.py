@@ -1,7 +1,7 @@
 """
 Local copy of the digitizer ASCII index extraction engine for GMDC Digitizer App.
 
-Standalone — not imported from other GMDC packages. Operator-picked byte indices
+Standalone - not imported from other GMDC packages. Operator-picked byte indices
 extract weight from raw serial frames.
 """
 
@@ -22,7 +22,7 @@ WIZARD_CAPTURE_BYTES = 45
 # Minimum live/preview weight (kg) required before a calibration can be saved.
 DIGITIZER_INDEX_MIN_SAVE_WEIGHT_KG = 50
 
-# Default sanity ceiling — accept heavy mining gross weights (e.g. 231050 kg).
+# Default sanity ceiling - accept heavy mining gross weights (e.g. 231050 kg).
 DEFAULT_MAX_WEIGHT_KG = 999_999.0
 
 # Only rescale obvious extra-digit overflow errors (e.g. 2500000 -> 250000),
@@ -41,7 +41,7 @@ ROW_LABELS = [
 
 
 # ---------------------------------------------------------------------------
-# Whitespace helpers (dynamic — apply to all digitizers)
+# Whitespace helpers (dynamic - apply to all digitizers)
 # ---------------------------------------------------------------------------
 
 _DIGIT_RUN_RE = re.compile(rb"[+-]?\d+(?:\.\d+)?")
@@ -487,7 +487,7 @@ def validate_pick_indices(
     i1, i2, i3, i4, i5, i6 = picks
 
     if i1 is None:
-        return "Row 1 (start of weight message — 1st character) is required."
+        return "Row 1 (start of weight message - 1st character) is required."
     if i3 is None or i4 is None:
         return "Rows 3 and 4 (weight start and end) are required."
     if i4 < i3:
@@ -535,7 +535,7 @@ def validate_indexing_for_calibration(indexing: Optional[Dict[str, Any]]) -> Opt
     """
     Validate a saved ``indexing`` block before digitizer calibration is stored.
 
-    Row 1 (frame start) is mandatory — same as weight start/end rows in the picker.
+    Row 1 (frame start) is mandatory - same as weight start/end rows in the picker.
     """
     if not indexing or not isinstance(indexing, dict):
         return "Indexing configuration is required."
@@ -551,7 +551,7 @@ def validate_indexing_for_calibration(indexing: Optional[Dict[str, Any]]) -> Opt
     frame_start = decode_frame_field(indexing.get("frame_start_char"))
     if not frame_start:
         return (
-            "Start of weight message — 1st character (row 1) is required, "
+            "Start of weight message - 1st character (row 1) is required, "
             "same as the weight number rows."
         )
     return None
@@ -600,7 +600,7 @@ def picks_from_indexing(
     sample: bytes, indexing: Optional[Dict[str, Any]]
 ) -> List[Optional[int]]:
     """
-    Inverse of :func:`build_indexing_from_picks` — restore the six picker rows
+    Inverse of :func:`build_indexing_from_picks` - restore the six picker rows
     for a given sample so the modal can re-open with the operator's choices.
 
     Uses :func:`_locate_bytes_after_weight` for the frame-end rows, so a frame-end
@@ -669,7 +669,7 @@ def build_ruler(raw: bytes) -> Dict[str, Any]:
     """
     Build the ruler payload used by the index picker modal.
 
-    Indices are sequential (0, 1, 2 …) — not hex offsets.
+    Indices are sequential (0, 1, 2 …) - not hex offsets.
     """
     n = len(raw)
     tens = "".join(str((i // 10) % 10) if i % 10 == 0 else " " for i in range(n))

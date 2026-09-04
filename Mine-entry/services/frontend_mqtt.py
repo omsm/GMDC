@@ -163,10 +163,10 @@ class FrontendMqtt:
                     break
                 time.sleep(0.2)
             if not self._connected:
-                logger.info("External MQTT TCP not available — using in-app WebSocket broker")
+                logger.info("External MQTT TCP not available - using in-app WebSocket broker")
             return ws_ok or self._connected
         except Exception as e:
-            logger.info("MQTT TCP skipped (%s) — using in-app WebSocket broker", e)
+            logger.info("MQTT TCP skipped (%s) - using in-app WebSocket broker", e)
             return ws_ok
 
     def disconnect(self) -> None:
@@ -388,7 +388,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
     },
     "RFID_ERROR": {
         "position": 0,
-        "step": STEP_RFID_READ,
+        "step": STEP_VALIDATING_RFID,
         "status": "error",
         "message": "RFID validation failed.",
         "display": "RFID ERR",
@@ -411,14 +411,14 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": 1,
         "step": STEP_VALIDATING_ANPR,
         "status": "warning",
-        "message": "ANPR mismatch — waiting for check-status.",
+        "message": "ANPR Err-0, Number plate mismatch",
         "display": "ANPR ERR 1",
     },
     "ENTRY_GRANTED": {
         "position": 2,
         "step": STEP_ENTRY_GRANTED,
         "status": "success",
-        "message": "Entry granted — proceed.",
+        "message": "Entry granted - proceed.",
         "display": "ENTRY GRANTED",
     },
     "WAIT_CROSSING": {
@@ -432,14 +432,14 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": -1,
         "step": STEP_RFID_READ,
         "status": "error",
-        "message": "Application error — reset to idle.",
+        "message": "Application error - reset to idle.",
         "display": IDLE_DISPLAY,
     },
     "FREE_PASS": {
         "position": 2,
         "step": STEP_WAIT_CROSSING,
         "status": "info",
-        "message": "Free pass — traffic light green, boom open. Waiting for entry sensor.",
+        "message": "Free pass - traffic light green, boom open. Waiting for entry sensor.",
         "display": "FREE PASS",
     },
 }
@@ -556,6 +556,8 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
 
     sen = sensors.get_status() if sensors else {}
     s1 = bool(sen.get("entry_active") or sen.get("entry_occupied_latch"))
+    if not io_connected:
+        s1 = False
 
     def _tl_color(device) -> str:
         if not device:
@@ -580,7 +582,13 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
             "port": str(io_port),
             "details": str(io_st.get("type") or "Modbus"),
         },
-        "sensors": {"s1": s1},
-        "traffic_light": {"color": _tl_color(tl)},
-        "boom_barrier": {"position": _boom_pos(boom)},
+        "sensors": {"s1": s1, "connected": io_connected},
+        "traffic_light": {
+            "color": _tl_color(tl) if io_connected else "",
+            "connected": io_connected,
+        },
+        "boom_barrier": {
+            "position": _boom_pos(boom) if io_connected else "",
+            "connected": io_connected,
+        },
     }

@@ -392,7 +392,7 @@ def replace_prior_instances(instance_key: str, logger_name: str = "instance_guar
 
     prior = find_prior_instance_pids(instance_key, log)
     if not prior:
-        log.info("No prior instance found — starting new instance (key=%s)", instance_key)
+        log.info("No prior instance found - starting new instance (key=%s)", instance_key)
         _write_pid_file(instance_key)
         return 0
 
@@ -459,7 +459,7 @@ def register_shutdown_listener(
             while not _listener_stop.is_set():
                 rc = k32.WaitForSingleObject(handle, 500)
                 if rc == _WAIT_OBJECT_0:
-                    log.info("Shutdown request received — starting graceful exit")
+                    log.info("Shutdown request received - starting graceful exit")
                     try:
                         on_shutdown()
                     except Exception as exc:  # pragma: no cover

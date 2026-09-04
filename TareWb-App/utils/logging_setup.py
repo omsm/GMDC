@@ -1,4 +1,4 @@
-"""Tare WB logging — shared GMDC logger."""
+"""Tare WB logging - shared GMDC logger."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def setup_logging(level: Optional[int] = None) -> None:
         "app_name": "tare_wb",
         "log_dir": LOG_DIR,
         "log_file": "tare_wb.log",
+        "backup_count": 10,
     }
     if level is not None:
         kwargs["level"] = level

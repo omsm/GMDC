@@ -45,7 +45,7 @@ Flask serves the Weighbridge dashboard on the same port as the runtime API
 | `http://localhost:8080/` | Operational dashboard |
 | `http://localhost:8080/animated.html` | Live truck / weighbridge animation |
 
-Live updates use **MQTT over WebSocket on port 9001** (in-process broker —
+Live updates use **MQTT over WebSocket on port 9001** (in-process broker -
 Mosquitto is not required). Open the dashboard on the weighbridge PC IP, e.g.
 `http://10.30.1.102:8080/`. The browser connects to `ws://10.30.1.102:9001`.
 
@@ -114,9 +114,9 @@ Uses the same WAV pack layout as `wb-old/Weighbridge-App/voice`
 (`information/`, `error/`, `weight_ton/`, `weight_kg/`, `VNO/`).
 
 Playback backends:
-- **Windows** — `winsound`
-- **macOS** — `afplay` (built-in; Mac mini / MacBook)
-- **Linux** — `aplay` or `paplay`
+- **Windows** - `winsound`
+- **macOS** - `afplay` (built-in; Mac mini / MacBook)
+- **Linux** - `aplay` or `paplay`
 
 `TareWb-App/voice` is a junction to that pack (or place your own copy).
 Gated by `voice.enabled` + `voice.validated` in IoT config (same as wb-old).

@@ -106,7 +106,7 @@ def register_routes(app: Flask) -> None:
         return jsonify(ctx.status_snapshot())
 
     # ------------------------------------------------------------------
-    # RFID reader endpoints (Zebra / reader HTTP push — existing contract)
+    # RFID reader endpoints (Zebra / reader HTTP push - existing contract)
     # ------------------------------------------------------------------
     @app.post("/rfid_data")
     def rfid_data():

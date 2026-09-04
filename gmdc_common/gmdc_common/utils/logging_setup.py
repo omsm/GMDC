@@ -1,10 +1,10 @@
-"""Shared rotating-file + console logging setup for GMDC apps."""
+"""Shared day-wise rotating-file + console logging setup for GMDC apps."""
 
 from __future__ import annotations
 
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional, Union
 
@@ -57,15 +57,22 @@ def setup_logging(
     log_dir: Optional[Union[str, Path]] = None,
     log_file: Optional[str] = None,
     level: int = logging.INFO,
+    backup_count: int = 10,
+    when: str = "midnight",
+    # Kept for callers that still pass size-based kwargs; ignored with day rotation.
     max_bytes: int = 5_000_000,
-    backup_count: int = 5,
 ) -> Path:
     """
-    Configure root logging with console + rotating file handlers.
+    Configure root logging with console + day-wise rotating file handlers.
+
+    Rotates at midnight; keeps ``backup_count`` previous days (default 10).
+    Rolled files are named ``{log_file}.YYYY-MM-DD``.
 
     Returns the resolved log file path. Safe to call more than once; existing
     root handlers are cleared so reloads do not duplicate output.
     """
+    del max_bytes  # size-based rotation is no longer used
+
     if log_dir is None:
         log_dir = Path.cwd() / "logs"
     log_dir = Path(log_dir)
@@ -89,17 +96,23 @@ def setup_logging(
     console.setLevel(level)
     root.addHandler(console)
 
-    file_handler = RotatingFileHandler(
-        log_path,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
+    file_handler = TimedRotatingFileHandler(
+        filename=str(log_path),
+        when=when,
+        interval=1,
+        backupCount=int(backup_count),
         encoding="utf-8",
     )
+    file_handler.suffix = "%Y-%m-%d"
     file_handler.setFormatter(fmt)
     file_handler.setLevel(level)
     root.addHandler(file_handler)
 
     _install_modbus_noise_filter(level)
 
-    logging.getLogger(app_name).info("Logging initialized -> %s", log_path)
+    logging.getLogger(app_name).info(
+        "Logging initialized -> %s (daily rotate, keep %s days)",
+        log_path,
+        backup_count,
+    )
     return log_path

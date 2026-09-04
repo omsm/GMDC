@@ -77,6 +77,6 @@ DEFAULT_STABLE_COUNT = 5  # Number of identical readings for stable weight
 # RFID calibration / runtime: tag hex must start with one of these prefixes (case-insensitive)
 VALID_CARDS_START_INDEX = ["341", "E28"]
 
-# Accepted RFID/FASTag hex lengths (characters). Not every tag is 24 chars — some are 32.
+# Accepted RFID/FASTag hex lengths (characters). Not every tag is 24 chars - some are 32.
 # During RFID calibration, the entered tag length must match one of these.
 CHAR_LENGTH = ["24", "32"]

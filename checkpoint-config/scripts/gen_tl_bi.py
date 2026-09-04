@@ -14,7 +14,7 @@ for dk, prefix, label, icon, sides in dirs:
         side_label = side.capitalize()
         lines.append(f'''        <div class="device-config-card">
             <div class="device-header">
-                <span class="device-name">{label} — {side_label} Traffic Light</span>
+                <span class="device-name">{label} - {side_label} Traffic Light</span>
                 <span class="device-status" id="{prefix}_{side}TLStatus"></span>
             </div>
             <div class="device-fields">

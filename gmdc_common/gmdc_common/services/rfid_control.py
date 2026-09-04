@@ -1,4 +1,4 @@
-"""Zebra FX cloud control — login, mode, start/stop inventory via HTTPS."""
+"""Zebra FX cloud control - login, mode, start/stop inventory via HTTPS."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""RFID reader TCP client/server — forwards tag batches to application callback."""
+"""RFID reader TCP client/server - forwards tag batches to application callback."""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ def create_rfid_reader(
         return DemoRFIDReader(on_tags=on_tags)
 
     mode = (rfid_cfg.get("mode") or "API").upper()
-    # API / HTTP / CLOUD: reader pushes tags to our Flask API — no TCP bridge
+    # API / HTTP / CLOUD: reader pushes tags to our Flask API - no TCP bridge
     if mode in ("API", "HTTP", "CLOUD", "REST", "HTTPS"):
         logger.info(
             "RFID mode=%s - using HTTP intake (/rfid_data); TCP client disabled",

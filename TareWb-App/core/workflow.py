@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config.constants import (
-    MOVE_FORWARD_INTERVAL_SEC,
     MSG_ANPR_ERR,
     MSG_ANPR_ERR_2,
     MSG_EXIT,
     MSG_FREE_PASS,
+    MSG_MOVE_BACKWARD,
     MSG_MOVE_FORWARD,
+    MSG_NO_RFID_READ,
     MSG_RFID_ERR,
     MSG_WEIGHING,
     TIMEOUTS,
@@ -36,6 +37,7 @@ from services.oci_client import (
     weight_within_rto_tolerance,
 )
 from services.api_errors import (
+    extract_api_message,
     is_api_failure,
     is_service_alert,
 )
@@ -72,14 +74,17 @@ class TareWbWorkflow:
         self._rfid_err_timer: Optional[threading.Timer] = None
         self._forward_timer: Optional[threading.Timer] = None
         self._boom_close_timer: Optional[threading.Timer] = None
+        self._idle_s2_s3_timer: Optional[threading.Timer] = None
+        self._backward_timer: Optional[threading.Timer] = None
         self._timer_lock = threading.Lock()
         self._rfid_control_lock = threading.Lock()
         self._awaiting_rfid = False
         self._forward_loop_active = False
+        self._idle_s2_s3_loop_active = False
+        self._backward_loop_active = False
         self._rfid_started_direction = ""
         self._pending_rfid_tags: Optional[tuple[List[str], List[dict]]] = None
         self._status_check_alerted = False
-        self._gmdc_needs_reset = False
 
     def _collect_reset_fields(self) -> tuple[str, str, str]:
         settings = self.ctx.settings
@@ -97,13 +102,13 @@ class TareWbWorkflow:
         return device_ip, rfid, details
 
     def _notify_gmdc_reset(self, *, manual: bool = False) -> None:
-        """Tell GMDC this lane is idle. Manual UI reset always posts."""
+        """POST reset_checkpoint only for the operator Reset button."""
         oci = self.ctx.oci
         if oci is None or not hasattr(oci, "reset_checkpoint"):
             return
         device_ip, rfid, details = self._collect_reset_fields()
-        if not manual and not rfid and not details:
-            logger.info("reset_checkpoint skipped - no active transaction")
+        if not rfid and not details:
+            logger.info("reset_checkpoint skipped - no RFID/truck_details")
             return
         if not device_ip:
             logger.warning("reset_checkpoint skipped - device_ip missing")
@@ -130,7 +135,10 @@ class TareWbWorkflow:
                 resp,
                 fallback="Reset service not reachable",
             )
-        self._gmdc_needs_reset = False
+
+    def notify_gmdc_reset(self) -> None:
+        """No-op. reset_checkpoint is only posted from the UI Reset button."""
+        logger.info("startup reset_checkpoint skipped - UI Reset only")
 
     # ------------------------------------------------------------------
     # Hardware helpers
@@ -225,31 +233,72 @@ class TareWbWorkflow:
         *,
         popup: bool = False,
         popup_title: str = "",
+        countdown_sec: Optional[float] = None,
     ) -> None:
         fe = self._frontend()
         if fe:
             fe.publish_status(
-                step, status, message, popup=popup, popup_title=popup_title
+                step,
+                status,
+                message,
+                popup=popup,
+                popup_title=popup_title,
+                countdown_sec=countdown_sec,
             )
 
     def _ui_api_failure(
         self, step: str, resp: Any, *, fallback: str = ""
     ) -> None:
-        msg = str(getattr(resp, "operator_message", "") or fallback or "Service failed")
+        msg = str(
+            getattr(resp, "operator_message", "")
+            or extract_api_message(resp)
+            or fallback
+            or "Service failed"
+        )
         popup = is_service_alert(resp)
         title = str(getattr(resp, "popup_title", "") or "")
         if popup and not title:
-            title = msg.upper()
+            title = "SERVICE ERROR"
         self._ui_status(step, "error", msg, popup=popup, popup_title=title)
+
+    def _anpr_wait_message(self, txn: Any) -> str:
+        try:
+            status = int(getattr(txn, "anpr_status", 0) or 0)
+        except (TypeError, ValueError):
+            status = 0
+        if status == 2:
+            return "ANPR Err-2, Number not readable"
+        return "ANPR Err-0, Number plate mismatch"
+
+    def _ui_anpr_waiting(self, txn: Any) -> None:
+        self._ui_status(
+            STEP_VALIDATING_ANPR,
+            "warning",
+            self._anpr_wait_message(txn),
+        )
 
     def _ui_result_failure(
         self, step: str, result: Dict[str, Any], *, fallback: str = ""
     ) -> None:
-        msg = str(result.get("operator_message") or fallback or "Service failed")
+        msg = str(
+            result.get("operator_message")
+            or result.get("message")
+            or fallback
+            or "Service failed"
+        )
+        if any(
+            marker in msg.lower()
+            for marker in (
+                "httpconnectionpool",
+                "max retries exceeded",
+                "traceback",
+            )
+        ):
+            msg = fallback or "Service failed"
         popup = bool(result.get("popup"))
         title = str(result.get("popup_title") or "")
         if popup and not title:
-            title = msg.upper()
+            title = "SERVICE ERROR"
         self._ui_status(step, "error", msg, popup=popup, popup_title=title)
 
     def _ui_position(self, position: int) -> None:
@@ -287,8 +336,9 @@ class TareWbWorkflow:
         voice = self._voice()
         if not voice:
             return
-        # Defer while weight/error multi-clip sequences are playing
-        if voice.is_multi_play_active():
+        # Defer only while a real multi-clip sequence is playing.
+        check = getattr(voice, "is_multi_play_active", None)
+        if callable(check) and check() is True:
             return
         voice.move_forward()
 
@@ -312,7 +362,7 @@ class TareWbWorkflow:
             self._schedule_forward_loop()
 
         self._cancel_timer("_forward_timer")
-        timer = threading.Timer(MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
         timer.daemon = True
         with self._timer_lock:
             self._forward_timer = timer
@@ -321,6 +371,143 @@ class TareWbWorkflow:
     def _stop_move_forward_announcement(self, stop_audio: bool = True) -> None:
         self._forward_loop_active = False
         self._cancel_timer("_forward_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
+
+    def _wb_and_exit_occupied(self) -> bool:
+        poller = getattr(self.ctx, "sensor_poller", None)
+        if not poller or not hasattr(poller, "get_status"):
+            return False
+        st = poller.get_status() or {}
+        wb = bool(st.get("wb_active") or st.get("wb_occupied_latch"))
+        exit_ = bool(st.get("exit_active") or st.get("exit_occupied_latch"))
+        return wb and exit_
+
+    def _start_idle_s2_s3_announcement(self) -> None:
+        """Play weighbridge_0.wav while IDLE with platform (s2) and exit (s3) cut."""
+        if self._idle_s2_s3_loop_active:
+            return
+        self._idle_s2_s3_loop_active = True
+        self._play_idle_s2_s3_once()
+        self._schedule_idle_s2_s3_loop()
+
+    def _play_idle_s2_s3_once(self) -> None:
+        voice = self._voice()
+        if not voice:
+            return
+        play = getattr(voice, "weighbridge_0", None) or getattr(
+            voice, "check_weighbridge", None
+        )
+        if callable(play):
+            play()
+
+    def _schedule_idle_s2_s3_loop(self) -> None:
+        if not self._idle_s2_s3_loop_active:
+            return
+
+        def _tick():
+            sm = self.ctx.state_machine
+            if (
+                not self._idle_s2_s3_loop_active
+                or not sm
+                or sm.current_state != State.IDLE
+                or not self._wb_and_exit_occupied()
+            ):
+                self._stop_idle_s2_s3_announcement(stop_audio=False)
+                return
+            self._play_idle_s2_s3_once()
+            self._schedule_idle_s2_s3_loop()
+
+        self._cancel_timer("_idle_s2_s3_timer")
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._idle_s2_s3_timer = timer
+        timer.start()
+
+    def _stop_idle_s2_s3_announcement(self, stop_audio: bool = False) -> None:
+        self._idle_s2_s3_loop_active = False
+        self._cancel_timer("_idle_s2_s3_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
+
+    def _maybe_announce_idle_s2_s3(self) -> bool:
+        """True when IDLE and s2+s3 are cut (announcement started)."""
+        sm = self.ctx.state_machine
+        if not sm or sm.current_state != State.IDLE:
+            self._stop_idle_s2_s3_announcement()
+            return False
+        if not self._wb_and_exit_occupied():
+            self._stop_idle_s2_s3_announcement()
+            return False
+        self._start_idle_s2_s3_announcement()
+        return True
+
+    def _sensor_cut(self, which: str) -> bool:
+        poller = getattr(self.ctx, "sensor_poller", None)
+        if not poller or not hasattr(poller, "get_status"):
+            return False
+        st = poller.get_status() or {}
+        if which == "wb":
+            return bool(st.get("wb_active") or st.get("wb_occupied_latch"))
+        if which == "exit":
+            return bool(st.get("exit_active") or st.get("exit_occupied_latch"))
+        return False
+
+    def _start_backward_announcement(self) -> None:
+        """Play backward.wav while positioning with exit (s3) cut."""
+        if self._backward_loop_active:
+            return
+        self._stop_move_forward_announcement(stop_audio=True)
+        self._backward_loop_active = True
+        self._announce(MSG_MOVE_BACKWARD)
+        self._ui_status(
+            STEP_VEHICLE_ENTERING,
+            "warning",
+            "Move back - only the platform sensor should be occupied.",
+        )
+        self._play_backward_once()
+        self._schedule_backward_loop()
+
+    def _play_backward_once(self) -> None:
+        voice = self._voice()
+        if not voice:
+            return
+        play = getattr(voice, "move_backward", None)
+        if callable(play):
+            play()
+
+    def _schedule_backward_loop(self) -> None:
+        if not self._backward_loop_active:
+            return
+
+        def _tick():
+            sm = self.ctx.state_machine
+            if (
+                not self._backward_loop_active
+                or not sm
+                or sm.current_state != State.VEHICLE_POSITIONING
+                or not self._sensor_cut("exit")
+            ):
+                self._stop_backward_announcement(stop_audio=False)
+                return
+            self._play_backward_once()
+            self._schedule_backward_loop()
+
+        self._cancel_timer("_backward_timer")
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._backward_timer = timer
+        timer.start()
+
+    def _stop_backward_announcement(self, stop_audio: bool = False) -> None:
+        self._backward_loop_active = False
+        self._cancel_timer("_backward_timer")
         if stop_audio:
             voice = self._voice()
             if voice:
@@ -432,6 +619,8 @@ class TareWbWorkflow:
 
     def _cancel_all_timers(self) -> None:
         self._forward_loop_active = False
+        self._idle_s2_s3_loop_active = False
+        self._backward_loop_active = False
         for name in (
             "_pos_timer",
             "_weight_timer",
@@ -440,6 +629,8 @@ class TareWbWorkflow:
             "_rfid_err_timer",
             "_forward_timer",
             "_boom_close_timer",
+            "_idle_s2_s3_timer",
+            "_backward_timer",
         ):
             self._cancel_timer(name)
 
@@ -458,10 +649,10 @@ class TareWbWorkflow:
         sm = self.ctx.state_machine
         if not sm or not sm.trigger(Event.ENTRY_SENSOR):
             return
+        self._stop_idle_s2_s3_announcement()
         if self.ctx.transactions:
             self.ctx.transactions.begin()
             self.ctx.transactions.direction = direction
-        self._gmdc_needs_reset = False
         self.ctx.active_rfid_direction = ""
         self._pending_rfid_tags = None
         # Sensor occupied (edge or already active): announce inspection and
@@ -471,7 +662,7 @@ class TareWbWorkflow:
         #if voice:
         #    voice.weighbridge_janch()
         self._announce(MSG_MOVE_FORWARD)
-        self._start_move_forward_announcement(play_immediately=False)
+        self._start_move_forward_announcement()
         self._arm_timer(
             "_pos_timer",
             TIMEOUTS.POSITIONING_SEC,
@@ -486,7 +677,7 @@ class TareWbWorkflow:
         self._ui_status(
             STEP_VEHICLE_ENTERING,
             "info",
-            "Vehicle approaching weighbridge — move forward.",
+            "Vehicle approaching weighbridge - move forward.",
         )
         self._ui_devices()
 
@@ -522,8 +713,16 @@ class TareWbWorkflow:
         sm = self.ctx.state_machine
         if not sm or sm.current_state == State.FREE_PASS:
             return
+        if sm.current_state == State.IDLE:
+            self._maybe_announce_idle_s2_s3()
+            return
         if sm.current_state != State.VEHICLE_POSITIONING:
             return
+        if self._sensor_cut("exit"):
+            logger.info("WB occupied while exit (s3) cut - wait for reverse")
+            self._start_backward_announcement()
+            return
+        self._stop_backward_announcement()
         if not self._worker_lock.acquire(blocking=False):
             return
 
@@ -536,19 +735,27 @@ class TareWbWorkflow:
         threading.Thread(target=_run, name="WeightCycle", daemon=True).start()
 
     def on_exit_occupied(self) -> None:
-        """Bidirectional ENTRY_B approach only. Exit-complete waits for sensor clear."""
+        """Bidirectional ENTRY_B approach, or IDLE s2+s3 error voice."""
         sm = self.ctx.state_machine
         if not sm:
             return
         if sm.current_state == State.FREE_PASS:
             return
-        if self._is_bidirectional() and sm.current_state == State.IDLE:
-            if not self._worker_lock.acquire(blocking=False):
+        if sm.current_state == State.VEHICLE_POSITIONING:
+            logger.info("Exit (s3) cut during positioning - move backward")
+            self._start_backward_announcement()
+            return
+        if sm.current_state == State.IDLE:
+            if self._maybe_announce_idle_s2_s3():
                 return
-            try:
-                self._begin_vehicle_positioning("ENTRY_B")
-            finally:
-                self._worker_lock.release()
+            if self._is_bidirectional():
+                if not self._worker_lock.acquire(blocking=False):
+                    return
+                try:
+                    self._begin_vehicle_positioning("ENTRY_B")
+                finally:
+                    self._worker_lock.release()
+            return
 
     def on_exit_cleared(self) -> None:
         """
@@ -561,8 +768,25 @@ class TareWbWorkflow:
         if sm.current_state == State.FREE_PASS:
             self._complete_lane_exit(
                 "EXIT sensor cleared - free pass complete",
-                success_message="Free pass complete — vehicle exited.",
+                success_message="Free pass complete - vehicle exited.",
             )
+            return
+        if sm.current_state == State.IDLE:
+            self._stop_idle_s2_s3_announcement()
+            return
+        if sm.current_state == State.VEHICLE_POSITIONING:
+            self._stop_backward_announcement(stop_audio=True)
+            if self._sensor_cut("wb"):
+                logger.info("Exit (s3) cleared and platform (s2) occupied - weigh")
+                self.on_wb_occupied()
+            else:
+                self._announce(MSG_MOVE_FORWARD)
+                self._ui_status(
+                    STEP_VEHICLE_ENTERING,
+                    "info",
+                    "Vehicle approaching weighbridge - move forward.",
+                )
+                self._start_move_forward_announcement()
             return
         if sm.current_state not in (State.EXIT_GRANTED, State.WAIT_EXIT):
             return
@@ -579,12 +803,19 @@ class TareWbWorkflow:
     ) -> None:
         logger.info("%s - resetting to IDLE", reason)
         self._ui_position(5)
-        self._ui_status(STEP_EXIT_COMPLETED, "success", success_message)
+        # Keep the failure cascade red until idle reset; do not paint exit green.
+        exit_status = "error" if self._ui_had_flow_failure() else "success"
+        self._ui_status(STEP_EXIT_COMPLETED, exit_status, success_message)
         self._ui_devices()
-        self.force_reset(
-            delay_boom_close=True,
-            notify_gmdc=bool(self._gmdc_needs_reset),
-        )
+        self.force_reset(delay_boom_close=True)
+
+    def _ui_had_flow_failure(self) -> bool:
+        """True when the current cycle already published a red step failure."""
+        fe = self._frontend()
+        if not fe:
+            return False
+        st = getattr(fe, "last_status", None) or {}
+        return str(st.get("status") or "").lower() == "error"
 
     def on_rfid_tags(
         self, id_hexes: List[str], raw_tags: Optional[List[dict]] = None
@@ -626,7 +857,7 @@ class TareWbWorkflow:
         threading.Thread(target=_run, name="RFIDCycle", daemon=True).start()
 
     def on_rfid_from_mobile(self, rfid: str) -> Dict[str, Any]:
-        """Handheld fallback during RFID_READ — validate and continue."""
+        """Handheld fallback during RFID_READ - validate and continue."""
         sm = self.ctx.state_machine
         oci = self.ctx.oci
         settings = self.ctx.settings
@@ -676,19 +907,14 @@ class TareWbWorkflow:
     ) -> None:
         logger.info("Force reset to IDLE")
         if announce_reset:
-            manual = True
-        do_notify = True if manual else (
-            True if notify_gmdc is None else bool(notify_gmdc)
-        )
-        if do_notify:
-            self._notify_gmdc_reset(manual=manual)
-        else:
-            self._gmdc_needs_reset = False
+            self._notify_gmdc_reset(manual=True)
         self._manual_stop.set()
         self._awaiting_rfid = False
         self._pending_rfid_tags = None
         self._cancel_all_timers()
-        self._stop_move_forward_announcement(stop_audio=stop_audio)
+        self._stop_move_forward_announcement(stop_audio=False)
+        self._stop_idle_s2_s3_announcement(stop_audio=False)
+        self._stop_backward_announcement(stop_audio=False)
         sm = self.ctx.state_machine
         if sm:
             sm.trigger(Event.RESET)
@@ -700,15 +926,16 @@ class TareWbWorkflow:
         ):
             self.ctx.sensor_poller.reset_edge_state()
         self.apply_idle_hardware(delay_exit_boom_close=delay_boom_close)
-        if announce_reset:
-            voice = self._voice()
-            if voice:
-                voice.application_reset()
+        voice = self._voice()
+        if announce_reset and voice:
+            voice.application_reset()
+        elif stop_audio and voice:
+            voice.stop()
         self._manual_stop.clear()
 
     def start_free_pass(self) -> None:
         """Open every traffic light and boom; IDLE after exit sensor uncut→cut→uncut."""
-        logger.info("Free pass — opening all traffic lights and boom barriers")
+        logger.info("Free pass - opening all traffic lights and boom barriers")
         self._manual_stop.set()
         self._awaiting_rfid = False
         self._pending_rfid_tags = None
@@ -718,7 +945,6 @@ class TareWbWorkflow:
         sm = self.ctx.state_machine
         if sm:
             sm.force_state(State.FREE_PASS)
-        self._notify_gmdc_reset(manual=False)
         if self.ctx.transactions:
             self.ctx.transactions.clear()
         if self.ctx.sensor_poller and hasattr(
@@ -743,7 +969,7 @@ class TareWbWorkflow:
             fe.publish_status(
                 STEP_EXIT_START,
                 "info",
-                "Free pass — all lights green, all booms open. Waiting for exit sensor.",
+                "Free pass - all lights green, all booms open. Waiting for exit sensor.",
             )
             fe.publish_device_status()
         self._start_move_forward_announcement()
@@ -757,6 +983,7 @@ class TareWbWorkflow:
         if sm and sm.current_state == State.VEHICLE_POSITIONING:
             logger.warning("Positioning timeout - reset IDLE")
             self._stop_move_forward_announcement()
+            self._stop_backward_announcement()
             voice = self._voice()
             if voice:
                 voice.rescan_card_entry_timeout()
@@ -779,7 +1006,10 @@ class TareWbWorkflow:
             voice = self._voice()
             if voice:
                 voice.rfid_not_found()
-            self._enter_rfid_error()
+            self._enter_rfid_error(
+                message=MSG_NO_RFID_READ,
+                step=STEP_RFID_READ,
+            )
 
     def _on_exit_timeout(self) -> None:
         sm = self.ctx.state_machine
@@ -809,10 +1039,11 @@ class TareWbWorkflow:
             return
 
         self._stop_move_forward_announcement()
+        self._stop_backward_announcement()
         self._announce(MSG_WEIGHING)
         self._ui_position(2)
         self._ui_status(
-            STEP_READING_WEIGHT, "info", "Vehicle on platform — capturing weight."
+            STEP_READING_WEIGHT, "info", "Vehicle on platform - capturing weight."
         )
         self._ui_devices()
         voice = self._voice()
@@ -875,15 +1106,22 @@ class TareWbWorkflow:
             )
             self._rfid_and_beyond(id_hexes, raw_tags)
             return
+        collect_sec = float(TIMEOUTS.RFID_COLLECT_TIMEOUT_SEC)
         self._arm_timer(
             "_rfid_timer",
-            TIMEOUTS.RFID_COLLECT_WINDOW_SEC * 12,  # allow multiple reads
+            collect_sec,
             self._on_rfid_timeout,
         )
-        logger.info("RFID_READ - waiting for tags via /rfid_data")
+        logger.info(
+            "RFID_READ - waiting for tags via /rfid_data (timeout=%.0fs)",
+            collect_sec,
+        )
         self._ui_position(0)
         self._ui_status(
-            STEP_RFID_READ, "info", "Reading RFID at platform; present a valid tag."
+            STEP_RFID_READ,
+            "info",
+            "Reading RFID at platform; present a valid tag.",
+            countdown_sec=collect_sec,
         )
 
     # ------------------------------------------------------------------
@@ -904,12 +1142,13 @@ class TareWbWorkflow:
         self._stop_rfid_reader()
 
         txn.tags = list(id_hexes)
-        self._gmdc_needs_reset = True
         valid = False
         service_alert = None
+        last_resp = None
         for tag in id_hexes:
             logger.info("Validating RFID %s", tag)
             resp = oci.validate_rfid(tag, settings.device_ip)
+            last_resp = resp
             if is_api_failure(resp):
                 service_alert = resp
                 break
@@ -942,7 +1181,14 @@ class TareWbWorkflow:
             voice = self._voice()
             if voice:
                 voice.rfid_api_error()
-            self._enter_rfid_error()
+            api_msg = ""
+            if last_resp is not None:
+                api_msg = str(
+                    getattr(last_resp, "operator_message", "")
+                    or extract_api_message(last_resp)
+                    or ""
+                )
+            self._enter_rfid_error(message=api_msg)
             return
 
         sm.trigger(Event.RFID_VALID)
@@ -956,7 +1202,6 @@ class TareWbWorkflow:
         txn.rfid = rfid
         txn.truck_details = truck_details
         txn.vehicle_no = parsed.get("vehicle_no") or ""
-        self._gmdc_needs_reset = True
         logger.info(
             "RFID valid rfid=%s vehicle=%s", txn.rfid, txn.vehicle_no
         )
@@ -970,10 +1215,16 @@ class TareWbWorkflow:
             f"RFID validated: {txn.vehicle_no or txn.rfid}",
         )
 
-    def _enter_rfid_error(self) -> None:
+    def _enter_rfid_error(
+        self,
+        message: str = "",
+        *,
+        step: str = STEP_VALIDATING_RFID,
+    ) -> None:
         self._stop_rfid_reader()
         self._announce(MSG_RFID_ERR)
-        self._ui_status(STEP_RFID_READ, "error", "RFID validation failed.")
+        detail = str(message or "").strip() or "RFID validation failed."
+        self._ui_status(step, "error", detail)
         sm = self.ctx.state_machine
         if sm and sm.current_state != State.RFID_ERROR:
             # Already transitioned via RFID_INVALID / RFID_TIMEOUT
@@ -1001,8 +1252,6 @@ class TareWbWorkflow:
         settings = self.ctx.settings
         txn = self.ctx.transactions
         assert sm and oci and settings and txn
-        if txn.rfid or txn.truck_details:
-            self._gmdc_needs_reset = True
 
         parsed = parse_truck_details(txn.truck_details)
         anpr = oci.anpr_detect(
@@ -1018,7 +1267,7 @@ class TareWbWorkflow:
             )
             voice = self._voice()
             if voice:
-                voice.anpr_error()
+                voice.tech_issue()
             logger.error("ANPR unreachable or server error - grant exit to clear lane")
             self._enter_exit_granted(reason="anpr_unreachable")
             return
@@ -1027,11 +1276,15 @@ class TareWbWorkflow:
         txn.anpr_status = status
         txn.anpr_raw = dict(anpr.raw) if isinstance(anpr.raw, dict) else {}
         logger.info("ANPR detect anpr_status=%s", status)
+        if status in (0, 2):
+            voice = self._voice()
+            if voice:
+                voice.anpr_error()
         self._ui_status(
             STEP_VALIDATING_ANPR, "info", "Validating vehicle number (ANPR)."
         )
 
-        # Status 0 / 1 / 2 — top photo, then branch.
+        # Status 0 / 1 / 2 - top photo, then branch.
         # Same photo name used by invalid-truck (top_image) and weight-details (top_image_name).
         self._capture_top_photo()
         top_photo_name = (txn.top_image or "").strip() or "error.jpg"
@@ -1066,21 +1319,18 @@ class TareWbWorkflow:
             )
             return
 
-        # status 0 or 2 — manual status_check loop (vehicleStatus=1 → like status 1)
+        # status 0 or 2 - manual status_check loop (vehicleStatus=1 → like status 1)
         sm.trigger(Event.ANPR_MISMATCH)
         if status == 2:
             self._announce(MSG_ANPR_ERR_2)
             self._ui_status(
-                STEP_VALIDATING_ANPR, "warning", "ANPR status 2 — waiting for check-status."
+                STEP_VALIDATING_ANPR, "warning", "ANPR Err-2, Number not readable"
             )
         else:
             self._announce(MSG_ANPR_ERR)
             self._ui_status(
-                STEP_VALIDATING_ANPR, "warning", "ANPR mismatch — waiting for check-status."
+                STEP_VALIDATING_ANPR, "warning", "ANPR Err-0, Number plate mismatch"
             )
-        voice = self._voice()
-        if voice:
-            voice.anpr_error()
         if self._manual_update_loop():
             sm.trigger(Event.UPDATE_STATUS_1)
             sm.trigger(Event.MANUAL_OK)
@@ -1203,13 +1453,17 @@ class TareWbWorkflow:
                 anpr_payload=txn.anpr_raw,
             )
             if is_api_failure(resp):
-                if not self._status_check_alerted:
-                    self._status_check_alerted = True
-                    self._ui_api_failure(
-                        STEP_VALIDATING_ANPR,
-                        resp,
-                        fallback="Status-check service not reachable",
-                    )
+                if is_service_alert(resp):
+                    if not self._status_check_alerted:
+                        self._status_check_alerted = True
+                        self._ui_api_failure(
+                            STEP_VALIDATING_ANPR,
+                            resp,
+                            fallback="Status-check service not reachable",
+                        )
+                else:
+                    # Reachable 4xx while vehicleStatus is still 0: keep yellow wait.
+                    self._ui_anpr_waiting(txn)
                 if sm:
                     sm.trigger(Event.UPDATE_STATUS_0)
                 time.sleep(retry_sec)
@@ -1236,6 +1490,7 @@ class TareWbWorkflow:
                 time.sleep(TIMEOUTS.UPDATE_STATUS_2_RESET_SEC)
                 return False
 
+            self._ui_anpr_waiting(txn)
             if sm:
                 sm.trigger(Event.UPDATE_STATUS_0)
             logger.info(
@@ -1244,11 +1499,25 @@ class TareWbWorkflow:
             time.sleep(retry_sec)
         return False
 
+    def _speak_final_weight(self) -> None:
+        """Play intro + ton/kg clips after weight-details HTTP/status 200."""
+        voice = self._voice()
+        txn = self.ctx.transactions
+        if not voice or not txn or txn.weight_kg is None:
+            return
+        parsed = parse_truck_details(txn.truck_details or "")
+        trip = (parsed.get("trip_type") or "").lower()[:1]
+        # Tare intro is tare_final_weight; gross and vadhghat use filled_final_weight.
+        voice.speak_weight("t" if trip == "t" else "g", txn.weight_kg)
+
     def _final_weight_and_details(
         self, *, boom_close_after: Optional[str] = None
     ) -> None:
         """
         Capture current weight → weight_details → optional boom_close → exit.
+
+        Vadhghat (V|) out of RTO band: POST vadhghat_weight_adjustment, then
+        exit without weight-details or boom-close.
 
         boom_close_after:
           "T|…"  → POST boom-close with current transaction truck_details
@@ -1318,19 +1587,31 @@ class TareWbWorkflow:
                 self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
                 voice = self._voice()
                 if voice:
-                    voice.tare_weight_error(7)
+                    voice.weight_out_of_tolerance(trip)
 
                 if not self._weight_confirm_until_in_band():
                     self._enter_exit_granted(reason="weight_confirm_rejected")
                     return
 
-        sm.trigger(Event.WEIGHT_OK)
+        # Vadhghat (V): out of RTO band → weight-adjustment, then exit (no boom-close).
+        if trip == "V":
+            in_band, band_msg = weight_within_rto_tolerance(
+                txn.weight_kg, txn.truck_details or ""
+            )
+            if not in_band:
+                err_msg = weight_type_error_display(trip)
+                logger.warning(
+                    "Vadhghat weight out of tolerance: %s", band_msg
+                )
+                self._announce(err_msg)
+                self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
+                voice = self._voice()
+                if voice:
+                    voice.weight_out_of_tolerance(trip)
+                self._vadhghat_weight_adjustment_and_exit()
+                return
 
-        voice = self._voice()
-        if voice:
-            parsed = parse_truck_details(txn.truck_details or "")
-            trip = (parsed.get("trip_type") or "").lower()[:1]
-            voice.speak_weight("t" if trip == "t" else "g", txn.weight_kg)
+        sm.trigger(Event.WEIGHT_OK)
 
         # Ensure top photo name is set before weight-details (same as invalid-truck).
         if not (txn.top_image or "").strip():
@@ -1384,6 +1665,7 @@ class TareWbWorkflow:
         details_ok = (not skip_second_details) and (
             details.ok or details.status == 200
         )
+        voice = self._voice()
         if skip_second_details or details_ok:
             sm.trigger(Event.DETAILS_OK)
             self._ui_status(
@@ -1391,6 +1673,8 @@ class TareWbWorkflow:
                 "success",
                 "Weight details submitted.",
             )
+            if details_ok:
+                self._speak_final_weight()
         else:
             if is_api_failure(details):
                 self._ui_api_failure(
@@ -1425,8 +1709,6 @@ class TareWbWorkflow:
                     close,
                     fallback="Boom-close rejected.",
                 )
-            else:
-                self._gmdc_needs_reset = False
 
         self._enter_exit_granted(
             reason=(
@@ -1435,6 +1717,49 @@ class TareWbWorkflow:
                 else "details_fail"
             )
         )
+
+    def _vadhghat_weight_adjustment_and_exit(self) -> None:
+        """
+        Vadhghat out-of-tolerance: POST captured weight + o/u, then exit.
+        Does not call weight-details or boom-close.
+        """
+        oci = self.ctx.oci
+        settings = self.ctx.settings
+        txn = self.ctx.transactions
+        assert oci and settings and txn
+        details = txn.truck_details or ""
+        weight_type = under_or_over_type(txn.weight_kg or 0, details)
+        device_ip = str(getattr(settings, "device_ip", "") or "")
+        logger.info(
+            "Vadhghat weight-adjustment weight=%s type=%s device_ip=%s",
+            txn.weight_kg,
+            weight_type,
+            device_ip,
+        )
+        self._ui_status(
+            STEP_VALIDATING_WEIGHT,
+            "info",
+            f"Submitting Vadhghat weight adjustment ({weight_type}).",
+        )
+        resp = oci.vadhghat_weight_adjustment(
+            device_ip=device_ip,
+            truck_details=details,
+            weight=txn.weight_kg or 0,
+            weight_type=weight_type,
+        )
+        if is_api_failure(resp) or not (resp.ok or resp.status == 200):
+            self._ui_api_failure(
+                STEP_VALIDATING_WEIGHT,
+                resp,
+                fallback="Vadhghat weight-adjustment failed",
+            )
+        else:
+            self._ui_status(
+                STEP_VALIDATING_WEIGHT,
+                "success",
+                str(resp.message or "Vadhghat weight adjustment processed."),
+            )
+        self._enter_exit_granted(reason="vadhghat_weight_adjustment")
 
     def _gross_tolerance_confirm_until_ok(self) -> str:
         """
@@ -1469,7 +1794,7 @@ class TareWbWorkflow:
             self._ui_status(
                 STEP_READING_WEIGHT,
                 "warning",
-                "Gross weight outside tolerance — waiting for confirmation.",
+                "Gross weight outside tolerance - waiting for confirmation.",
             )
             resp = oci.gross_tolerance_confirm(
                 current_weight=current_weight,
@@ -1501,7 +1826,7 @@ class TareWbWorkflow:
                 self._ui_status(
                     STEP_READING_WEIGHT,
                     "warning",
-                    "Gross tolerance waived — opening boom.",
+                    "Gross tolerance waived - opening boom.",
                 )
                 return "rejected"
 
@@ -1568,7 +1893,7 @@ class TareWbWorkflow:
             self._ui_status(
                 STEP_READING_WEIGHT,
                 "warning",
-                f"Weight {'under' if weight_type == 'u' else 'over'} — waiting for confirmation.",
+                f"Weight {'under' if weight_type == 'u' else 'over'} - waiting for confirmation.",
             )
             resp = oci.weight_confirm(
                 truck_details=details,
@@ -1615,7 +1940,7 @@ class TareWbWorkflow:
             recapture = digitizer.read_stable_weight()
             recaptured = recapture.get("weight")
             if recaptured is None or not recapture.get("ok"):
-                logger.warning("weight recapture failed after confirm — retrying")
+                logger.warning("weight recapture failed after confirm - retrying")
                 time.sleep(retry_sec)
                 continue
 
@@ -1656,7 +1981,26 @@ class TareWbWorkflow:
 
         logger.info("EXIT_GRANTED reason=%s", reason)
         self._ui_position(4)
-        self._ui_status(STEP_EXIT_START, "success", "Exit granted — proceed.")
+        reason_l = str(reason or "").lower()
+        failure_exit = any(
+            token in reason_l
+            for token in (
+                "error",
+                "fail",
+                "abort",
+                "reject",
+                "unreachable",
+                "adjustment",
+            )
+        )
+        if failure_exit:
+            self._ui_status(
+                STEP_EXIT_START,
+                "error",
+                "Exit after failure - clear the lane.",
+            )
+        else:
+            self._ui_status(STEP_EXIT_START, "success", "Exit granted - proceed.")
         self._announce(MSG_MOVE_FORWARD)
         self._grant_exit_hardware()
         # Continuous move-forward while waiting for exit sensor (legacy)

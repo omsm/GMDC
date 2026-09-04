@@ -1,4 +1,4 @@
-"""Tracking Point workflow orchestrator — PDF checkpoint flow."""
+"""Tracking Point workflow orchestrator - PDF checkpoint flow."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from services.frontend_mqtt import (
 from services.oci_client import OCIResponse, parse_truck_details
 from services.api_errors import (
     KIND_UNREACHABLE,
+    extract_api_message,
     is_api_failure,
     is_service_alert,
     is_transport_failure,
@@ -91,8 +92,8 @@ class TrackingPointWorkflow:
         if oci is None or not hasattr(oci, "reset_checkpoint"):
             return
         device_ip, rfid, details = self._collect_reset_fields()
-        if not manual and not rfid and not details:
-            logger.info("reset_checkpoint skipped - no active transaction")
+        if not rfid and not details:
+            logger.info("reset_checkpoint skipped - no RFID/truck_details")
             return
         if not device_ip:
             logger.warning("reset_checkpoint skipped - device_ip missing")
@@ -119,6 +120,10 @@ class TrackingPointWorkflow:
                 resp,
                 fallback="Reset service not reachable",
             )
+
+    def notify_gmdc_reset(self) -> None:
+        """Startup IDLE: POST reset_checkpoint with device_ip and empty RFID/truck."""
+        self._notify_gmdc_reset(manual=True)
 
     # ------------------------------------------------------------------
     # Hardware reset (PDF step 1 / step 5)
@@ -175,12 +180,33 @@ class TrackingPointWorkflow:
     def _ui_api_failure(
         self, step: str, resp: Any, *, fallback: str = ""
     ) -> None:
-        msg = str(getattr(resp, "operator_message", "") or fallback or "Service failed")
+        msg = str(
+            getattr(resp, "operator_message", "")
+            or extract_api_message(resp)
+            or fallback
+            or "Service failed"
+        )
         popup = is_service_alert(resp)
         title = str(getattr(resp, "popup_title", "") or "")
         if popup and not title:
-            title = msg.upper()
+            title = "SERVICE ERROR"
         self._ui_status(step, "error", msg, popup=popup, popup_title=title)
+
+    def _anpr_wait_message(self, txn: Any) -> str:
+        try:
+            status = int(getattr(txn, "anpr_status", 0) or 0)
+        except (TypeError, ValueError):
+            status = 0
+        if status == 2:
+            return "ANPR Err-2, Number not readable"
+        return "ANPR Err-0, Number plate mismatch"
+
+    def _ui_anpr_waiting(self, txn: Any) -> None:
+        self._ui_status(
+            STEP_VALIDATING_ANPR,
+            "warning",
+            self._anpr_wait_message(txn),
+        )
 
     def _ui_position(self, position: int) -> None:
         fe = self._frontend()
@@ -439,7 +465,7 @@ class TrackingPointWorkflow:
 
     def start_free_pass(self) -> None:
         """Open traffic light and boom; return to IDLE after entry sensor."""
-        logger.info("Free pass — opening traffic light and boom barrier")
+        logger.info("Free pass - opening traffic light and boom barrier")
         self._manual_stop.set()
         self._cancel_crossing_timer()
         self._cancel_boom_close_timer()
@@ -466,7 +492,7 @@ class TrackingPointWorkflow:
             fe.publish_status(
                 STEP_WAIT_CROSSING,
                 "info",
-                "Free pass — traffic light green, boom open. Waiting for entry sensor.",
+                "Free pass - traffic light green, boom open. Waiting for entry sensor.",
             )
             fe.publish_device_status()
 
@@ -551,9 +577,11 @@ class TrackingPointWorkflow:
         # Validate tags one-by-one; first valid wins
         valid = False
         service_alert: Optional[OCIResponse] = None
+        last_resp: Optional[OCIResponse] = None
         for tag in id_hexes:
             logger.info("Validating RFID tag %s", tag)
             resp = oci.validate_rfid(tag, settings.device_ip)
+            last_resp = resp
             if is_api_failure(resp):
                 service_alert = resp
                 break
@@ -563,7 +591,9 @@ class TrackingPointWorkflow:
                 break
             logger.warning("RFID invalid for tag %s: %s", tag, resp.message)
 
-        self._continue_after_rfid_validation(valid, service_alert=service_alert)
+        self._continue_after_rfid_validation(
+            valid, service_alert=service_alert, last_resp=last_resp
+        )
 
     def _apply_rfid_validation(self, txn, tag: str, resp: OCIResponse) -> None:
         parsed = parse_truck_details(resp.truck_details)
@@ -581,7 +611,10 @@ class TrackingPointWorkflow:
         )
 
     def _continue_after_rfid_validation(
-        self, valid: bool, service_alert: Optional[OCIResponse] = None
+        self,
+        valid: bool,
+        service_alert: Optional[OCIResponse] = None,
+        last_resp: Optional[OCIResponse] = None,
     ) -> None:
         sm = self.ctx.state_machine
         txn_store = self.ctx.transactions
@@ -608,7 +641,14 @@ class TrackingPointWorkflow:
 
         if not valid:
             sm.trigger(Event.RFID_INVALID)
-            self._ui_status(STEP_RFID_READ, "error", "RFID validation failed.")
+            detail = "RFID validation failed."
+            if last_resp is not None:
+                detail = str(
+                    getattr(last_resp, "operator_message", "")
+                    or extract_api_message(last_resp)
+                    or detail
+                )
+            self._ui_status(STEP_VALIDATING_RFID, "error", detail)
             self._announce(MSG_RFID_ERR)
             logger.info("RFID ERR 1 - waiting %ss", TIMEOUTS.RFID_ERROR_DISPLAY_SEC)
             time.sleep(TIMEOUTS.RFID_ERROR_DISPLAY_SEC)
@@ -687,14 +727,14 @@ class TrackingPointWorkflow:
             self._ui_status(
                 STEP_VALIDATING_ANPR,
                 "warning",
-                "ANPR Err-2 — waiting for check-status.",
+                "ANPR Err-2, Number not readable",
             )
         else:
             self._announce(MSG_ANPR_ERR)
             self._ui_status(
                 STEP_VALIDATING_ANPR,
                 "warning",
-                "ANPR mismatch — waiting for check-status.",
+                "ANPR Err-0, Number plate mismatch",
             )
         if anpr.status in (0, 2):
             self._manual_update_loop(sm, txn, oci, settings.device_ip)
@@ -784,13 +824,17 @@ class TrackingPointWorkflow:
                 anpr_payload=txn.anpr_raw,
             )
             if is_api_failure(resp):
-                if not self._status_check_alerted:
-                    self._status_check_alerted = True
-                    self._ui_api_failure(
-                        STEP_VALIDATING_ANPR,
-                        resp,
-                        fallback="Status-check service not reachable",
-                    )
+                if is_service_alert(resp):
+                    if not self._status_check_alerted:
+                        self._status_check_alerted = True
+                        self._ui_api_failure(
+                            STEP_VALIDATING_ANPR,
+                            resp,
+                            fallback="Status-check service not reachable",
+                        )
+                else:
+                    # Reachable 4xx while vehicleStatus is still 0: keep yellow wait.
+                    self._ui_anpr_waiting(txn)
                 sm.trigger(Event.UPDATE_STATUS_0)
                 time.sleep(retry_sec)
                 continue
@@ -825,11 +869,21 @@ class TrackingPointWorkflow:
                     "vehicleStatus 2 - wait %ss then reset",
                     TIMEOUTS.UPDATE_STATUS_2_RESET_SEC,
                 )
+                self._ui_status(
+                    STEP_VALIDATING_ANPR,
+                    "error",
+                    str(
+                        resp.raw.get("statusMessage")
+                        or resp.message
+                        or "Check-status rejected this vehicle."
+                    ),
+                )
                 time.sleep(TIMEOUTS.UPDATE_STATUS_2_RESET_SEC)
                 self._reset_to_idle()
                 return
 
             # vehicleStatus == 0 (or unknown): keep retrying
+            self._ui_anpr_waiting(txn)
             sm.trigger(Event.UPDATE_STATUS_0)
             logger.info(
                 "vehicleStatus=0 - retry status_check in %ss", retry_sec

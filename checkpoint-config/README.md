@@ -6,10 +6,10 @@ Common commissioning tool for all GMDC site types (copied from `wb-old/IoT-Confi
 
 | Topic | Choice |
 |-------|--------|
-| Digitizer | **API only** — digitizer-app host/port + `POST /read_stable_weight` |
-| Handheld RFID | **Full device** — make/model/IP/ID + check |
+| Digitizer | **API only** - digitizer-app host/port + `POST /read_stable_weight` |
+| Handheld RFID | **Full device** - make/model/IP/ID + check |
 | Stack | Flask + WebView2/Chrome + vanilla JS |
-| RFID | Zebra **mode=API** — app is HTTP server (`/rfid_data`); Mine-entry pattern |
+| RFID | Zebra **mode=API** - app is HTTP server (`/rfid_data`); Mine-entry pattern |
 
 ## Checkpoint profiles
 

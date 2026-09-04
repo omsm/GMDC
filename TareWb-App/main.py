@@ -1,5 +1,5 @@
 """
-GMDC Tare Weighbridge — IoT checkpoint backend.
+GMDC Tare Weighbridge - IoT checkpoint backend.
 
 Flow (wb_plane.txt):
   Entry sensor → positioning → WB sensor → weight (>5 t) → RFID →
@@ -260,6 +260,7 @@ def bootstrap() -> AppContext:
         reset_checkpoint_url=settings.reset_checkpoint_url,
         weight_confirm_url=settings.weight_confirm_url,
         gross_tolerance_confirm_url=settings.gross_tolerance_confirm_url,
+        vadhghat_weight_adjustment_url=settings.vadhghat_weight_adjustment_url,
         anpr_username=settings.anpr_username,
         anpr_password=settings.anpr_password,
         endpoint_auth=settings.endpoint_auth,
@@ -269,7 +270,7 @@ def bootstrap() -> AppContext:
     )
     if settings.api_debug and settings.api_wait_after_response > 0:
         logger.info(
-            "API_DEBUG on — pause %ss after each GMDC API response (not ANPR)",
+            "API_DEBUG on - pause %ss after each GMDC API response (not ANPR)",
             settings.api_wait_after_response,
         )
 
@@ -361,7 +362,6 @@ def bootstrap() -> AppContext:
         ctx.frontend.republish_snapshot()
     logger.info("RFID cloud idle at boot - login/mode/start deferred until weight OK")
     logger.info("Hardware reset to IDLE (entry green/open, exit red/closed)")
-    ctx.workflow.notify_gmdc_reset()
 
     logger.info(
         "Tare WB bootstrapped demo=%s config=%s state=%s digitizer=%s",
@@ -395,7 +395,7 @@ def main() -> int:
         f"  Waiting for "
         f"{'ENTRY or EXIT sensor' if settings.is_bidirectional() else 'ENTRY sensor'}"
         f"{' (POST /api/simulate-entry or /api/simulate-exit when DEMO_MODE=true)' if settings.demo_mode and settings.is_bidirectional() else ' (POST /api/simulate-entry when DEMO_MODE=true)' if settings.demo_mode else ''}\n"
-        "  Console idle here is normal — check /api/status for liveness.\n"
+        "  Console idle here is normal - check /api/status for liveness.\n"
         "============================================================\n"
     )
     print(banner, flush=True)

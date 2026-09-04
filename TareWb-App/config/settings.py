@@ -59,6 +59,9 @@ class Settings:
     gross_tolerance_confirm_path: str = (
         "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross-tolerance-confirm"
     )
+    vadhghat_weight_adjustment_path: str = (
+        "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment"
+    )
 
     anpr_base_url: str = "http://192.168.25.79:5001"
     anpr_detect_path: str = "/api/detect"
@@ -141,6 +144,10 @@ class Settings:
         return _join_url(self.oci_base_url, self.gross_tolerance_confirm_path)
 
     @property
+    def vadhghat_weight_adjustment_url(self) -> str:
+        return _join_url(self.oci_base_url, self.vadhghat_weight_adjustment_path)
+
+    @property
     def digitizer_url(self) -> str:
         host = self.digitizer_host or "127.0.0.1"
         path = self.digitizer_path or "/read_stable_weight"
@@ -217,6 +224,9 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
 
 def load_settings(config_path: Optional[str] = None) -> Settings:
     load_dotenv(PROJECT_ROOT / ".env")
+    from config.constants import apply_timeouts_from_env
+
+    apply_timeouts_from_env()
 
     path = resolve_config_path(config_path)
     raw: Dict[str, Any] = {}
@@ -308,6 +318,13 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             api_eps.get("weight_details_username") or oci_user,
             api_eps.get("weight_details_password") or oci_pass,
         ),
+        "vadhghat_weight_adjustment": _endpoint_cred(
+            api_eps,
+            "vadhghat_weight_adjustment_username",
+            "vadhghat_weight_adjustment_password",
+            api_eps.get("weight_details_username") or oci_user,
+            api_eps.get("weight_details_password") or oci_pass,
+        ),
     }
 
     dig_port = dig.get("port") or "8100"
@@ -356,6 +373,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         gross_tolerance_confirm_path=api_eps.get(
             "gross_tolerance_confirm_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross-tolerance-confirm",
+        ),
+        vadhghat_weight_adjustment_path=api_eps.get(
+            "vadhghat_weight_adjustment_url",
+            "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment",
         ),
         anpr_base_url=anpr_base.rstrip("/"),
         anpr_detect_path=api_eps.get("anpr_detect_url") or "/api/detect",

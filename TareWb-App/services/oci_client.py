@@ -297,7 +297,7 @@ def build_status_check_payload(
 
 
 def build_boom_close_payload(*, truck_details: str = "") -> Dict[str, Any]:
-    """Tare WB boom-close body — truck_details only."""
+    """Tare WB boom-close body - truck_details only."""
     return {"truck_details": str(truck_details or "")}
 
 
@@ -341,6 +341,33 @@ def build_weight_details_payload(
     }
 
 
+def build_vadhghat_weight_adjustment_payload(
+    *,
+    device_ip: str,
+    truck_details: str,
+    weight: Any,
+    weight_type: str,
+) -> Dict[str, Any]:
+    """
+    POST vadhghat_weight_adjustment when captured weight is outside RTO band.
+
+    weight_type: "o" (over) or "u" (under).
+    """
+    try:
+        weight_val: Any = int(float(weight))
+    except (TypeError, ValueError):
+        weight_val = weight
+    wt = str(weight_type or "").strip().lower()[:1]
+    if wt not in ("o", "u"):
+        wt = "o"
+    return {
+        "device_ip": str(device_ip or ""),
+        "truck_details": str(truck_details or ""),
+        "weight": weight_val,
+        "weight_type": wt,
+    }
+
+
 class OCIClient:
     """HTTP client for OCI weighbridge APIs and pluggable ANPR."""
 
@@ -358,6 +385,7 @@ class OCIClient:
         reset_checkpoint_url: str = "",
         weight_confirm_url: str = "",
         gross_tolerance_confirm_url: str = "",
+        vadhghat_weight_adjustment_url: str = "",
         anpr_username: Optional[str] = None,
         anpr_password: Optional[str] = None,
         endpoint_auth: Optional[Dict[str, Tuple[str, str]]] = None,
@@ -390,6 +418,10 @@ class OCIClient:
             self.base_url
             + "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross-tolerance-confirm"
         )
+        self.vadhghat_weight_adjustment_url = vadhghat_weight_adjustment_url or (
+            self.base_url
+            + "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment"
+        )
         self.timeout = timeout
         self.debug_wait_sec = max(0.0, float(debug_wait_sec or 0.0))
         self._session = requests.Session()
@@ -397,7 +429,10 @@ class OCIClient:
     def _auth_for(
         self, key: str, default: Optional[Tuple[str, str]] = None
     ) -> Tuple[str, str]:
-        return self.endpoint_auth.get(key) or default or self.auth
+        creds = self.endpoint_auth.get(key)
+        if creds and creds[0] and creds[1]:
+            return creds
+        return default or self.auth
 
     def _maybe_debug_wait(self, label: str) -> None:
         """Pause after GMDC OCI calls so request/response logs can be inspected."""
@@ -672,4 +707,36 @@ class OCIClient:
                 resp.status = 0
         else:
             resp.status = 0
+        return resp
+
+    def vadhghat_weight_adjustment(
+        self,
+        *,
+        device_ip: str,
+        truck_details: str,
+        weight: Any,
+        weight_type: str,
+    ) -> OCIResponse:
+        """
+        POST vadhghat_weight_adjustment when Vadhghat weight is out of RTO band.
+        Then the lane exits without boom-close.
+        """
+        payload = build_vadhghat_weight_adjustment_payload(
+            device_ip=device_ip,
+            truck_details=truck_details,
+            weight=weight,
+            weight_type=weight_type,
+        )
+        resp = self._post(
+            self.vadhghat_weight_adjustment_url,
+            payload,
+            "vadhghat-weight-adjustment",
+            auth=self._auth_for("vadhghat_weight_adjustment"),
+        )
+        status_raw = resp.raw.get("status", resp.status)
+        try:
+            resp.status = int(status_raw)
+        except (TypeError, ValueError):
+            resp.status = 0
+        resp.ok = resp.status == 200 or resp.http_status == 200
         return resp

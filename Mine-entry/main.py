@@ -1,5 +1,5 @@
 """
-GMDC Mines Entry — IoT checkpoint backend.
+GMDC Mines Entry - IoT checkpoint backend.
 
 Flow (PDF):
   RFID read → OCI validate → ANPR → manual truck update loop →
@@ -244,7 +244,7 @@ def main() -> int:
         f"  API        : http://127.0.0.1:{settings.api_port}/api/status\n"
         f"  MQTT WS    : ws://<this-pc-ip>:9001\n"
         f"  State      : {ctx.state_machine.current_state.name if ctx.state_machine else '?'}\n"
-        "  Console idle here is normal — check the dashboard for live status.\n"
+        "  Console idle here is normal - check the dashboard for live status.\n"
         "============================================================\n"
     )
     print(banner, flush=True)

@@ -1,7 +1,7 @@
 // E-Rawanna IoT - Device Configuration JavaScript
 // Device configuration page logic
 
-/** Server URL / port — no prefilled defaults; operator must enter both. */
+/** Server URL / port - no prefilled defaults; operator must enter both. */
 function clearServerFormFields() {
     const serverIpEl = document.getElementById('serverIp');
     const serverPortEl = document.getElementById('serverPort');
@@ -1177,7 +1177,7 @@ async function loadConfig() {
 }
 
 function populateFormFields() {
-    // Server URL / Port — always blank until operator enters values
+    // Server URL / Port - always blank until operator enters values
     clearServerFormFields();
     
     // RFID
@@ -1248,7 +1248,7 @@ function populateFormFields() {
         toggleDisplayFields();
     }
     
-    // Digitizer (API — digitizer-app on another PC)
+    // Digitizer (API - digitizer-app on another PC)
     if (config.digitizer) {
         const digitizerHostEl = document.getElementById('digitizerHost');
         const digitizerApiPortEl = document.getElementById('digitizerApiPort');
@@ -2159,7 +2159,7 @@ async function pollRfidTestStatus(ip, port, rfidMake, rfidModel, mode) {
                     if (finalResult.card_read === true) {
                         const tag = finalResult.parsed_tag || finalResult.card_display || finalResult.card_data || '';
                         if (tag) showRfidModalReceivedData(tag);
-                        // Hide status text — only the tag value is shown in modal
+                        // Hide status text - only the tag value is shown in modal
                         const statusEl = document.getElementById('rfidModalStatus');
                         if (statusEl) statusEl.style.display = 'none';
                         updateRfidModalStatus('success', '', true, true, true);
@@ -4455,7 +4455,7 @@ async function cancelHandheldRfidWait() {
     }
     closeHandheldRfidWaitModal();
     showLoading(false);
-    showToast('warning', 'Handheld RFID', 'Wait cancelled — no tick until a valid rfid_data is received');
+    showToast('warning', 'Handheld RFID', 'Wait cancelled - no tick until a valid rfid_data is received');
 }
 
 async function saveHandheldRfidWait() {
@@ -4538,7 +4538,7 @@ async function pollHandheldRfidWait(meta) {
                     setHandheldModalStatus('success', '');
                     const hhStatus = document.getElementById('handheldModalStatus');
                     if (hhStatus) hhStatus.style.display = 'none';
-                    // Keep modal open — Save / Retry / Cancel
+                    // Keep modal open - Save / Retry / Cancel
                     updateHandheldModalActions(true, true, true);
                     showToast('success', 'Handheld RFID', 'RFID tag data received');
                     showLoading(false);
@@ -4580,7 +4580,7 @@ async function pollHandheldRfidWait(meta) {
         if (nav) nav.style.display = 'none';
         if (sec) sec.style.display = 'none';
     }
-    // Checkpoint family: 1 sensor, 1 TL, 1 BB — hide WB/exit hardware cards
+    // Checkpoint family: 1 sensor, 1 TL, 1 BB - hide WB/exit hardware cards
     if (profile.family === 'checkpoint') {
         document.querySelectorAll('.profile-wb-only').forEach((el) => {
             el.style.display = 'none';
@@ -5106,7 +5106,7 @@ function _splitBaseAndPath(fullUrl) {
 
 async function saveApiEndpointsAndContinue() {
     if (!_apiEndpointsAdminPassword) {
-        showToast('error', 'Admin Password', 'Admin session expired — please try again');
+        showToast('error', 'Admin Password', 'Admin session expired - please try again');
         closeApiEndpointsEditModal(false);
         openApiEndpointsPasswordModal();
         return;

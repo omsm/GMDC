@@ -28,7 +28,10 @@ const AppState = {
     ],
     currentPosition: -1,
     currentWeight: 0,
-    displayMessage: 'System Operational'
+    displayMessage: 'System Operational',
+    ioDependentsDisconnected: false,
+    /** First Transaction Flow step that failed; later steps stay red until idle. */
+    failedFromStep: null
 };
 
 // Application version (loaded from backend)
@@ -80,7 +83,7 @@ const SENSOR_LABELS = {
     s3: 'S3 Exit'
 };
 
-/** Idle danger warning is only for platform (WB) and exit — not entry. */
+/** Idle danger warning is only for platform (WB) and exit - not entry. */
 const IDLE_DANGER_SENSORS = ['s2', 's3'];
 
 function isApplicationIdle() {
@@ -326,9 +329,15 @@ async function applyUpdateNow() {
 
 // Reset all steps to default (grey) state
 function resetAllSteps() {
+    AppState.failedFromStep = null;
     AppState.steps.forEach(step => {
         if (step.element) {
-            step.element.classList.remove('state-in-progress', 'state-success');
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-error',
+                'state-warning'
+            );
             step.completed = false;
         }
     });
@@ -365,6 +374,36 @@ function resetAllSteps() {
 }
 
 // Set step state
+function stepIndex(stepId) {
+    return AppState.steps.findIndex((s) => s.id === stepId);
+}
+
+function markFailureCascade(throughStepId) {
+    const fromIdx = stepIndex(AppState.failedFromStep);
+    const throughIdx = stepIndex(throughStepId);
+    if (fromIdx < 0) return;
+    const endIdx = throughIdx >= fromIdx ? throughIdx : AppState.steps.length - 1;
+    for (let i = fromIdx; i <= endIdx; i++) {
+        const step = AppState.steps[i];
+        if (!step || !step.element) continue;
+        step.element.classList.remove(
+            'state-in-progress',
+            'state-success',
+            'state-warning'
+        );
+        step.element.classList.add('state-error');
+        step.completed = false;
+        if (i === fromIdx) continue;
+        const contentElement = step.element.querySelector('.step-content');
+        if (!contentElement) continue;
+        const text = (contentElement.textContent || '').trim();
+        const defaults = DEFAULT_STEP_CONTENT[step.id] || '';
+        if (!text || text === '-' || text === defaults) {
+            contentElement.textContent = 'Skipped due to earlier failure.';
+        }
+    }
+}
+
 function setStepState(stepId, state, data = {}) {
     const step = AppState.steps.find(s => s.id === stepId);
     if (!step) {
@@ -382,19 +421,49 @@ function setStepState(stepId, state, data = {}) {
     // Apply new state
     if (state === 'in_progress') {
         markPriorStepsComplete(stepId);
-        step.element.classList.add('state-in-progress');
-        AppState.currentStep = stepId;
+        if (
+            AppState.failedFromStep &&
+            stepIndex(stepId) >= stepIndex(AppState.failedFromStep)
+        ) {
+            markFailureCascade(stepId);
+            step.element.classList.add('state-error');
+            AppState.currentStep = null;
+        } else {
+            step.element.classList.add('state-in-progress');
+            AppState.currentStep = stepId;
+        }
     } else if (state === 'success') {
         markPriorStepsComplete(stepId);
-        step.element.classList.add('state-success');
-        step.completed = true;
-        AppState.currentStep = null;
+        if (
+            AppState.failedFromStep &&
+            stepIndex(stepId) >= stepIndex(AppState.failedFromStep)
+        ) {
+            markFailureCascade(stepId);
+            step.element.classList.add('state-error');
+            step.completed = false;
+            AppState.currentStep = null;
+        } else {
+            step.element.classList.add('state-success');
+            step.completed = true;
+            AppState.currentStep = null;
+        }
     } else if (state === 'error') {
+        if (
+            !AppState.failedFromStep ||
+            stepIndex(stepId) < stepIndex(AppState.failedFromStep)
+        ) {
+            AppState.failedFromStep = stepId;
+        }
+        // Later steps (exit after failure) paint the cascade red; the first
+        // failure only marks itself.
+        if (stepIndex(stepId) > stepIndex(AppState.failedFromStep)) {
+            markFailureCascade(stepId);
+        }
         step.element.classList.add('state-error');
         AppState.currentStep = null;
     } else if (state === 'warning') {
         step.element.classList.add('state-warning');
-        AppState.currentStep = null;
+        AppState.currentStep = stepId;
     } else {
         // Default state (grey)
         step.element.classList.remove('state-in-progress', 'state-success', 'state-error', 'state-warning');
@@ -437,16 +506,42 @@ function setStepState(stepId, state, data = {}) {
 
 function markPriorStepsComplete(stepId) {
     let reached = false;
+    let failedSeen = false;
     AppState.steps.forEach((step) => {
         if (step.id === stepId) {
             reached = true;
             return;
         }
-        if (!reached && step.element) {
-            step.element.classList.remove('state-in-progress', 'state-error', 'state-warning');
-            step.element.classList.add('state-success');
-            step.completed = true;
+        if (reached || !step.element) return;
+
+        if (
+            step.element.classList.contains('state-error') ||
+            step.id === AppState.failedFromStep
+        ) {
+            failedSeen = true;
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-warning'
+            );
+            step.element.classList.add('state-error');
+            return;
         }
+
+        if (failedSeen || (AppState.failedFromStep && stepIndex(step.id) >= stepIndex(AppState.failedFromStep))) {
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-warning'
+            );
+            step.element.classList.add('state-error');
+            step.completed = false;
+            return;
+        }
+
+        step.element.classList.remove('state-in-progress', 'state-error', 'state-warning');
+        step.element.classList.add('state-success');
+        step.completed = true;
     });
 }
 
@@ -472,6 +567,8 @@ function hideResetModal() {
 }
 
 function applyIdleUi() {
+    stopRfidCountdown();
+    AppState.failedFromStep = null;
     applyDefaultStepContents();
     AppState.currentPosition = -1;
     AppState.currentWeight = 0;
@@ -599,17 +696,7 @@ function executeReset() {
         resetButton.disabled = true;
     }
 
-    let mqttSent = false;
-    if (mqttClient && mqttClient.isConnected && mqttClient.isConnected()) {
-        try {
-            mqttClient.publish('wb_frontend/reset_application', 'reset_application', 0);
-            mqttSent = true;
-            console.log('Reset request sent over MQTT');
-        } catch (error) {
-            console.warn('MQTT reset publish failed:', error);
-        }
-    }
-
+    // HTTP only - MQTT + POST both called force_reset and cut application_reset.wav.
     fetch('/api/reset', { method: 'POST' })
         .then((resp) => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -617,10 +704,6 @@ function executeReset() {
             applyIdleUi();
         })
         .catch((error) => {
-            if (mqttSent) {
-                applyIdleUi();
-                return;
-            }
             console.error('Reset failed:', error);
             alert('Failed to reset the application. Please try again.');
         })
@@ -675,7 +758,7 @@ function handleFreePass() {
 
 function applyFreePassUi() {
     setStepState('exit_start', 'in_progress', {
-        content: 'Free pass — all lights green, all booms open. Waiting for exit sensor.'
+        content: 'Free pass - all lights green, all booms open. Waiting for exit sensor.'
     });
     updateTrafficLightStatus('entry', { color: 'GREEN' });
     updateTrafficLightStatus('exit', { color: 'GREEN' });
@@ -707,7 +790,7 @@ function executeFreePass() {
     fetch('/api/free-pass', { method: 'POST' })
         .then((resp) => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            console.log('Free pass granted — waiting for exit sensor');
+            console.log('Free pass granted - waiting for exit sensor');
             applyFreePassUi();
         })
         .catch((error) => {
@@ -970,6 +1053,45 @@ function onMessageArrived(message) {
 }
 
 // Handle status message from backend
+let rfidCountdownTimer = null;
+let rfidCountdownStepId = null;
+
+function stopRfidCountdown() {
+    if (rfidCountdownTimer) {
+        clearInterval(rfidCountdownTimer);
+        rfidCountdownTimer = null;
+    }
+    rfidCountdownStepId = null;
+}
+
+function startRfidCountdown(stepId, baseMessage, seconds) {
+    stopRfidCountdown();
+    let remaining = Math.max(0, Math.floor(Number(seconds) || 0));
+    rfidCountdownStepId = stepId;
+    const paint = () => {
+        if (rfidCountdownStepId !== stepId) {
+            return;
+        }
+        const msg = remaining > 0
+            ? `${baseMessage} (${remaining}s)`
+            : baseMessage;
+        setStepState(stepId, 'in_progress', { content: msg });
+    };
+    paint();
+    if (remaining <= 0) {
+        return;
+    }
+    rfidCountdownTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+            stopRfidCountdown();
+            setStepState(stepId, 'in_progress', { content: baseMessage });
+            return;
+        }
+        paint();
+    }, 1000);
+}
+
 function handleStatusMessage(statusData) {
     const { step, status, message } = statusData;
     console.log('📨 Handling status message:', step, status, message);
@@ -994,6 +1116,8 @@ function handleStatusMessage(statusData) {
     
     console.log('✅ Updating step:', step, 'to state:', status, 'with message:', message);
 
+    stopRfidCountdown();
+
     if (status === 'error') {
         setStepState(step, 'error', { content: message });
         if (statusData.popup) {
@@ -1003,6 +1127,17 @@ function handleStatusMessage(statusData) {
     }
     if (status === 'info' && (step === 'rfid_read' || step === 'vehicle_entering')) {
         hideApiAlert();
+    }
+
+    const countdown = Number(statusData.countdown_sec);
+    if (
+        Number.isFinite(countdown) &&
+        countdown > 0 &&
+        step === 'rfid_read' &&
+        (status === 'info' || status === 'in_progress')
+    ) {
+        startRfidCountdown(step, message || DEFAULT_STEP_CONTENT.rfid_read, countdown);
+        return;
     }
 
     if (status === 'idle' || status === 'default') {
@@ -1101,12 +1236,22 @@ function handleDeviceStatus(devices) {
     if (devices.io_controller) {
         updateDeviceStatus('io-controller', devices.io_controller);
     }
-    
+    AppState.ioDependentsDisconnected = !!(
+        (devices.io_controller && devices.io_controller.connected === false) ||
+        (devices.sensors && devices.sensors.connected === false)
+    );
+
     // Update Sensors
-    if (devices.sensors) {
-        const s1 = !!(devices.sensors.s1 || devices.sensors.sensor1);
-        const s2 = !!(devices.sensors.s2 || devices.sensors.sensor2);
-        const s3 = !!(devices.sensors.s3 || devices.sensors.sensor3);
+    if (devices.sensors || AppState.ioDependentsDisconnected) {
+        const s1 = AppState.ioDependentsDisconnected
+            ? false
+            : !!(devices.sensors.s1 || devices.sensors.sensor1);
+        const s2 = AppState.ioDependentsDisconnected
+            ? false
+            : !!(devices.sensors.s2 || devices.sensors.sensor2);
+        const s3 = AppState.ioDependentsDisconnected
+            ? false
+            : !!(devices.sensors.s3 || devices.sensors.sensor3);
         AppState.transactionData.sensors = { s1, s2, s3 };
         updateSensorStatus('s1', s1);
         updateSensorStatus('s2', s2);
@@ -1115,19 +1260,29 @@ function handleDeviceStatus(devices) {
     }
     
     // Update Traffic Lights
-    if (devices.traffic_light_entry) {
-        updateTrafficLightStatus('entry', devices.traffic_light_entry);
-    }
-    if (devices.traffic_light_exit) {
-        updateTrafficLightStatus('exit', devices.traffic_light_exit);
+    if (AppState.ioDependentsDisconnected) {
+        updateTrafficLightStatus('entry', { connected: false });
+        updateTrafficLightStatus('exit', { connected: false });
+    } else {
+        if (devices.traffic_light_entry) {
+            updateTrafficLightStatus('entry', devices.traffic_light_entry);
+        }
+        if (devices.traffic_light_exit) {
+            updateTrafficLightStatus('exit', devices.traffic_light_exit);
+        }
     }
     
     // Update Boom Barriers
-    if (devices.boom_barrier_entry) {
-        updateBoomBarrierStatus('entry', devices.boom_barrier_entry);
-    }
-    if (devices.boom_barrier_exit) {
-        updateBoomBarrierStatus('exit', devices.boom_barrier_exit);
+    if (AppState.ioDependentsDisconnected) {
+        updateBoomBarrierStatus('entry', { connected: false });
+        updateBoomBarrierStatus('exit', { connected: false });
+    } else {
+        if (devices.boom_barrier_entry) {
+            updateBoomBarrierStatus('entry', devices.boom_barrier_entry);
+        }
+        if (devices.boom_barrier_exit) {
+            updateBoomBarrierStatus('exit', devices.boom_barrier_exit);
+        }
     }
 }
 
@@ -1216,7 +1371,10 @@ function paintSensorBadge(sensorId, active) {
         if (sensorName && sensorName.textContent.trim().toUpperCase() === sensorId.toUpperCase()) {
             const stateElement = item.querySelector('.sensor-state');
             if (stateElement) {
-                if (active) {
+                if (AppState.ioDependentsDisconnected) {
+                    stateElement.className = 'sensor-state state-disconnected';
+                    stateElement.textContent = 'Disconnected';
+                } else if (active) {
                     const danger = isApplicationIdle() && isIdleDangerSensor(sensorId);
                     stateElement.className = danger
                         ? 'sensor-state state-active state-danger'
@@ -1243,54 +1401,44 @@ function updateSensorStatus(sensorId, active) {
     paintSensorBadge(sensorId, active);
 }
 
+function _writeNamedDeviceStatus(item, className, color, text) {
+    const statusElement = item.querySelector('.device-status');
+    if (!statusElement) return;
+    const indicator = statusElement.querySelector('.status-indicator');
+    let statusTextNode = null;
+    for (let i = statusElement.childNodes.length - 1; i >= 0; i--) {
+        const node = statusElement.childNodes[i];
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+            statusTextNode = node;
+            break;
+        }
+    }
+    statusElement.className = className;
+    if (indicator) indicator.style.backgroundColor = color;
+    if (statusTextNode) {
+        statusTextNode.textContent = text;
+    } else {
+        Array.from(statusElement.childNodes).forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                node.remove();
+            }
+        });
+        statusElement.appendChild(document.createTextNode(text));
+    }
+}
+
 // Update traffic light status
 function updateTrafficLightStatus(type, status) {
     const deviceItems = document.querySelectorAll('.device-item');
     deviceItems.forEach(item => {
         const deviceName = item.querySelector('.device-name');
         if (deviceName && deviceName.textContent.includes(`Traffic Light (${type === 'entry' ? 'Entry' : 'Exit'})`)) {
-            const statusElement = item.querySelector('.device-status');
-            if (statusElement) {
-                const indicator = statusElement.querySelector('.status-indicator');
-                const statusText = statusElement.childNodes[statusElement.childNodes.length - 1];
-                
-                // Find text node
-                let statusTextNode = null;
-                for (let i = statusElement.childNodes.length - 1; i >= 0; i--) {
-                    const node = statusElement.childNodes[i];
-                    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-                        statusTextNode = node;
-                        break;
-                    }
-                }
-                
-                if (status.color === 'GREEN') {
-                    statusElement.className = 'device-status status-active';
-                    if (indicator) indicator.style.backgroundColor = '#28a745';
-                    if (statusTextNode) {
-                        statusTextNode.textContent = 'Green';
-                    } else {
-                        Array.from(statusElement.childNodes).forEach(node => {
-                            if (node.nodeType === Node.TEXT_NODE) {
-                                node.remove();
-                            }
-                        });
-                        statusElement.appendChild(document.createTextNode('Green'));
-                    }
-                } else {
-                    statusElement.className = 'device-status status-inactive';
-                    if (indicator) indicator.style.backgroundColor = '#dc3545';
-                    if (statusTextNode) {
-                        statusTextNode.textContent = 'Red';
-                    } else {
-                        Array.from(statusElement.childNodes).forEach(node => {
-                            if (node.nodeType === Node.TEXT_NODE) {
-                                node.remove();
-                            }
-                        });
-                        statusElement.appendChild(document.createTextNode('Red'));
-                    }
-                }
+            if (status.connected === false || AppState.ioDependentsDisconnected) {
+                _writeNamedDeviceStatus(item, 'device-status status-disconnected', '#dc3545', 'Disconnected');
+            } else if (status.color === 'GREEN') {
+                _writeNamedDeviceStatus(item, 'device-status status-active', '#28a745', 'Green');
+            } else {
+                _writeNamedDeviceStatus(item, 'device-status status-inactive', '#dc3545', 'Red');
             }
         }
     });
@@ -1302,48 +1450,12 @@ function updateBoomBarrierStatus(type, status) {
     deviceItems.forEach(item => {
         const deviceName = item.querySelector('.device-name');
         if (deviceName && deviceName.textContent.includes(`Boom Barrier (${type === 'entry' ? 'Entry' : 'Exit'})`)) {
-            const statusElement = item.querySelector('.device-status');
-            if (statusElement) {
-                const indicator = statusElement.querySelector('.status-indicator');
-                const statusText = statusElement.childNodes[statusElement.childNodes.length - 1];
-                
-                // Find text node
-                let statusTextNode = null;
-                for (let i = statusElement.childNodes.length - 1; i >= 0; i--) {
-                    const node = statusElement.childNodes[i];
-                    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-                        statusTextNode = node;
-                        break;
-                    }
-                }
-                
-                if (status.position === 'Open') {
-                    statusElement.className = 'device-status status-active';
-                    if (indicator) indicator.style.backgroundColor = '#28a745';
-                    if (statusTextNode) {
-                        statusTextNode.textContent = 'Open';
-                    } else {
-                        Array.from(statusElement.childNodes).forEach(node => {
-                            if (node.nodeType === Node.TEXT_NODE) {
-                                node.remove();
-                            }
-                        });
-                        statusElement.appendChild(document.createTextNode('Open'));
-                    }
-                } else {
-                    statusElement.className = 'device-status status-inactive';
-                    if (indicator) indicator.style.backgroundColor = '#dc3545';
-                    if (statusTextNode) {
-                        statusTextNode.textContent = 'Closed';
-                    } else {
-                        Array.from(statusElement.childNodes).forEach(node => {
-                            if (node.nodeType === Node.TEXT_NODE) {
-                                node.remove();
-                            }
-                        });
-                        statusElement.appendChild(document.createTextNode('Closed'));
-                    }
-                }
+            if (status.connected === false || AppState.ioDependentsDisconnected) {
+                _writeNamedDeviceStatus(item, 'device-status status-disconnected', '#dc3545', 'Disconnected');
+            } else if (status.position === 'Open') {
+                _writeNamedDeviceStatus(item, 'device-status status-active', '#28a745', 'Open');
+            } else {
+                _writeNamedDeviceStatus(item, 'device-status status-inactive', '#dc3545', 'Closed');
             }
         }
     });

@@ -1,5 +1,5 @@
 /**
- * Mines Entry operator dashboard — live MQTT updates.
+ * Mines Entry operator dashboard - live MQTT updates.
  */
 
 const AppState = {
@@ -18,7 +18,10 @@ const AppState = {
         { id: 'exit_completed', element: null, completed: false }
     ],
     currentPosition: -1,
-    displayMessage: 'System Operational'
+    displayMessage: 'System Operational',
+    ioDependentsDisconnected: false,
+    /** First Transaction Flow step that failed; later steps stay red until idle. */
+    failedFromStep: null
 };
 
 let APP_VERSION = 'unknown';
@@ -236,9 +239,15 @@ async function applyUpdateNow() {
 }
 
 function resetAllSteps() {
+    AppState.failedFromStep = null;
     AppState.steps.forEach(step => {
         if (step.element) {
-            step.element.classList.remove('state-in-progress', 'state-success');
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-error',
+                'state-warning'
+            );
             step.completed = false;
         }
     });
@@ -262,6 +271,41 @@ function resetAllSteps() {
     if (truckNumberValue) truckNumberValue.textContent = '--';
 }
 
+function stepIndex(stepId) {
+    return AppState.steps.findIndex((s) => s.id === stepId);
+}
+
+function lastStepId() {
+    const last = AppState.steps[AppState.steps.length - 1];
+    return last ? last.id : null;
+}
+
+function markFailureCascade(throughStepId) {
+    const fromIdx = stepIndex(AppState.failedFromStep);
+    const throughIdx = stepIndex(throughStepId);
+    if (fromIdx < 0) return;
+    const endIdx = throughIdx >= fromIdx ? throughIdx : AppState.steps.length - 1;
+    for (let i = fromIdx; i <= endIdx; i++) {
+        const step = AppState.steps[i];
+        if (!step || !step.element) continue;
+        step.element.classList.remove(
+            'state-in-progress',
+            'state-success',
+            'state-warning'
+        );
+        step.element.classList.add('state-error');
+        step.completed = false;
+        if (i === fromIdx) continue;
+        const contentElement = step.element.querySelector('.step-content');
+        if (!contentElement) continue;
+        const text = (contentElement.textContent || '').trim();
+        const defaults = DEFAULT_STEP_CONTENT[step.id] || '';
+        if (!text || text === '-' || text === defaults) {
+            contentElement.textContent = 'Skipped due to earlier failure.';
+        }
+    }
+}
+
 function setStepState(stepId, state, data = {}) {
     const step = AppState.steps.find(s => s.id === stepId);
     if (!step || !step.element) {
@@ -273,18 +317,47 @@ function setStepState(stepId, state, data = {}) {
 
     if (state === 'in_progress') {
         markPriorStepsComplete(stepId);
-        step.element.classList.add('state-in-progress');
-        AppState.currentStep = stepId;
+        if (
+            AppState.failedFromStep &&
+            stepIndex(stepId) >= stepIndex(AppState.failedFromStep)
+        ) {
+            markFailureCascade(stepId);
+            step.element.classList.add('state-error');
+            AppState.currentStep = null;
+        } else {
+            step.element.classList.add('state-in-progress');
+            AppState.currentStep = stepId;
+        }
     } else if (state === 'success') {
-        step.element.classList.add('state-success');
-        step.completed = true;
-        AppState.currentStep = null;
+        if (
+            AppState.failedFromStep &&
+            stepIndex(stepId) >= stepIndex(AppState.failedFromStep)
+        ) {
+            markFailureCascade(stepId);
+            step.element.classList.add('state-error');
+            step.completed = false;
+            AppState.currentStep = null;
+        } else {
+            markPriorStepsComplete(stepId);
+            step.element.classList.add('state-success');
+            step.completed = true;
+            AppState.currentStep = null;
+        }
     } else if (state === 'error') {
+        if (
+            !AppState.failedFromStep ||
+            stepIndex(stepId) < stepIndex(AppState.failedFromStep)
+        ) {
+            AppState.failedFromStep = stepId;
+        }
+        // Checkpoint apps hold the error then reset to IDLE (no exit-grant).
+        // Paint remaining steps red immediately for that display window.
+        markFailureCascade(lastStepId() || stepId);
         step.element.classList.add('state-error');
         AppState.currentStep = null;
     } else if (state === 'warning') {
         step.element.classList.add('state-warning');
-        AppState.currentStep = null;
+        AppState.currentStep = stepId;
     }
 
     const contentElement = step.element.querySelector('.step-content');
@@ -299,16 +372,46 @@ function setStepState(stepId, state, data = {}) {
 
 function markPriorStepsComplete(stepId) {
     let reached = false;
+    let failedSeen = false;
     AppState.steps.forEach((step) => {
         if (step.id === stepId) {
             reached = true;
             return;
         }
-        if (!reached && step.element) {
-            step.element.classList.remove('state-in-progress', 'state-error', 'state-warning');
-            step.element.classList.add('state-success');
-            step.completed = true;
+        if (reached || !step.element) return;
+
+        if (
+            step.element.classList.contains('state-error') ||
+            step.id === AppState.failedFromStep
+        ) {
+            failedSeen = true;
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-warning'
+            );
+            step.element.classList.add('state-error');
+            return;
         }
+
+        if (
+            failedSeen ||
+            (AppState.failedFromStep &&
+                stepIndex(step.id) >= stepIndex(AppState.failedFromStep))
+        ) {
+            step.element.classList.remove(
+                'state-in-progress',
+                'state-success',
+                'state-warning'
+            );
+            step.element.classList.add('state-error');
+            step.completed = false;
+            return;
+        }
+
+        step.element.classList.remove('state-in-progress', 'state-error', 'state-warning');
+        step.element.classList.add('state-success');
+        step.completed = true;
     });
 }
 
@@ -330,6 +433,7 @@ function hideResetModal() {
 }
 
 function applyIdleUi() {
+    AppState.failedFromStep = null;
     applyDefaultStepContents();
     AppState.currentPosition = -1;
     const rfidBox = document.getElementById('rfid-display-box');
@@ -516,7 +620,7 @@ function handleFreePass() {
 
 function applyFreePassUi() {
     setStepState('wait_crossing', 'in_progress', {
-        content: 'Free pass — traffic light green, boom open. Waiting for entry sensor.'
+        content: 'Free pass - traffic light green, boom open. Waiting for entry sensor.'
     });
     updateTrafficLightStatus({ color: 'GREEN' });
     updateBoomBarrierStatus({ position: 'Open' });
@@ -752,8 +856,14 @@ function handlePositionMessage(position) {
 function handleDeviceStatus(devices) {
     if (devices.rfid_reader) updateDeviceStatus('rfid-reader', devices.rfid_reader);
     if (devices.io_controller) updateDeviceStatus('io-controller', devices.io_controller);
-    if (devices.sensors) {
-        const s1 = !!(devices.sensors.s1 || devices.sensors.sensor1);
+    AppState.ioDependentsDisconnected = !!(
+        (devices.io_controller && devices.io_controller.connected === false) ||
+        (devices.sensors && devices.sensors.connected === false)
+    );
+    if (devices.sensors || AppState.ioDependentsDisconnected) {
+        const s1 = AppState.ioDependentsDisconnected
+            ? false
+            : !!(devices.sensors && (devices.sensors.s1 || devices.sensors.sensor1));
         if (!AppState.transactionData.sensors) {
             AppState.transactionData.sensors = { s1: false };
         }
@@ -761,8 +871,13 @@ function handleDeviceStatus(devices) {
         updateSensorStatus('s1', s1);
         updateCheckSensorPopup();
     }
-    if (devices.traffic_light) updateTrafficLightStatus(devices.traffic_light);
-    if (devices.boom_barrier) updateBoomBarrierStatus(devices.boom_barrier);
+    if (AppState.ioDependentsDisconnected) {
+        updateTrafficLightStatus({ connected: false });
+        updateBoomBarrierStatus({ connected: false });
+    } else {
+        if (devices.traffic_light) updateTrafficLightStatus(devices.traffic_light);
+        if (devices.boom_barrier) updateBoomBarrierStatus(devices.boom_barrier);
+    }
 }
 
 function updateDeviceStatus(deviceId, status) {
@@ -813,7 +928,10 @@ function paintSensorBadge(sensorId, active) {
         if (sensorName && sensorName.textContent.trim().toUpperCase() === sensorId.toUpperCase()) {
             const stateElement = item.querySelector('.sensor-state');
             if (!stateElement) return;
-            if (active) {
+            if (AppState.ioDependentsDisconnected) {
+                stateElement.className = 'sensor-state state-disconnected';
+                stateElement.textContent = 'Disconnected';
+            } else if (active) {
                 const danger = isApplicationIdle() && isIdleDangerSensor(sensorId);
                 stateElement.className = danger
                     ? 'sensor-state state-active state-danger'
@@ -852,6 +970,13 @@ function _setNamedDeviceState(deviceLabel, active, activeText, inactiveText) {
                 statusTextNode = node;
                 break;
             }
+        }
+        if (AppState.ioDependentsDisconnected) {
+            statusElement.className = 'device-status status-disconnected';
+            if (indicator) indicator.style.backgroundColor = '#dc3545';
+            if (statusTextNode) statusTextNode.textContent = 'Disconnected';
+            else statusElement.appendChild(document.createTextNode('Disconnected'));
+            return;
         }
         statusElement.className = active ? 'device-status status-active' : 'device-status status-inactive';
         if (indicator) indicator.style.backgroundColor = active ? '#28a745' : '#dc3545';

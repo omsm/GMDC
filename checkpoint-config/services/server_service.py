@@ -25,7 +25,7 @@ class ServerService:
             }
 
         host = str(ip).strip().lower()
-        # Allow full URLs in the field — use hostname only for local check / probe
+        # Allow full URLs in the field - use hostname only for local check / probe
         if "://" in host:
             try:
                 from urllib.parse import urlparse
@@ -37,7 +37,7 @@ class ServerService:
 
         if host in _LOCAL_HOSTS:
             logger.info(
-                "Server check: local host %s:%s — accepting without live probe",
+                "Server check: local host %s:%s - accepting without live probe",
                 ip,
                 port_str,
             )

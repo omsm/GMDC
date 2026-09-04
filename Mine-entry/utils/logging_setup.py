@@ -1,4 +1,4 @@
-"""Mines Entry logging setup — wraps the shared GMDC logger."""
+"""Mines Entry logging setup - wraps the shared GMDC logger."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def setup_logging(level: Optional[int] = None) -> None:
         "app_name": "mine_entry",
         "log_dir": LOG_DIR,
         "log_file": "mine_entry.log",
+        "backup_count": 10,
     }
     if level is not None:
         kwargs["level"] = level

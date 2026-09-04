@@ -277,7 +277,10 @@ class OCIClient:
         self._session = requests.Session()
 
     def _auth_for(self, key: str, default: Optional[Tuple[str, str]] = None) -> Tuple[str, str]:
-        return self.endpoint_auth.get(key) or default or self.auth
+        creds = self.endpoint_auth.get(key)
+        if creds and creds[0] and creds[1]:
+            return creds
+        return default or self.auth
 
     def _post(
         self,
