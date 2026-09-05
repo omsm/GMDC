@@ -21,7 +21,10 @@ const AppState = {
     displayMessage: 'System Operational',
     ioDependentsDisconnected: false,
     /** First Transaction Flow step that failed; later steps stay red until idle. */
-    failedFromStep: null
+    failedFromStep: null,
+    /** True while ANPR status_check loop is active (anpr_status 0/2). */
+    anprUpdateActive: false,
+    uiResetTimer: null
 };
 
 let APP_VERSION = 'unknown';
@@ -52,6 +55,147 @@ const DEFAULT_STEP_CONTENT = {
 
 function stepElementId(stepId) {
     return 'step-' + String(stepId || '').replace(/_/g, '-');
+}
+
+function stepDomState(stepId) {
+    const step = AppState.steps.find((s) => s.id === stepId);
+    if (!step || !step.element) return 'idle';
+    const el = step.element;
+    if (el.classList.contains('state-error')) return 'error';
+    if (el.classList.contains('state-in-progress') || el.classList.contains('state-warning')) {
+        return 'loading';
+    }
+    if (el.classList.contains('state-success')) return 'success';
+    return 'idle';
+}
+
+function setFlowIcon(iconId, state) {
+    const el = document.querySelector(`.flow-icon-item[data-icon="${iconId}"]`);
+    if (!el) return;
+    el.setAttribute('data-state', state || 'idle');
+}
+
+function resetFlowIcons() {
+    document.querySelectorAll('.flow-icon-item[data-icon]').forEach((el) => {
+        el.setAttribute('data-state', 'idle');
+    });
+    AppState.anprUpdateActive = false;
+}
+
+function clearUiResetTimer() {
+    if (AppState.uiResetTimer) {
+        clearTimeout(AppState.uiResetTimer);
+        AppState.uiResetTimer = null;
+    }
+}
+
+function scheduleUiResetAfterExit() {
+    clearUiResetTimer();
+    AppState.uiResetTimer = setTimeout(() => {
+        AppState.uiResetTimer = null;
+        applyIdleUi();
+    }, 2000);
+}
+
+function syncFlowIcons(stepId, state, message) {
+    const msg = String(message || '');
+
+    if (stepId === 'rfid_read') {
+        setFlowIcon('rfid_read', stepDomState('rfid_read'));
+    }
+    if (stepId === 'validating_rfid') {
+        setFlowIcon('rfid_validation', stepDomState('validating_rfid'));
+        if (state === 'in_progress' || state === 'success') {
+            if (stepDomState('rfid_read') === 'idle') {
+                setFlowIcon('rfid_read', 'success');
+            }
+        }
+    }
+
+    if (stepId === 'validating_anpr') {
+        if (state === 'in_progress') {
+            setFlowIcon('anpr_read', 'loading');
+        } else if (state === 'warning' || state === 'error') {
+            setFlowIcon('anpr_read', 'error');
+            setFlowIcon('anpr_update', 'loading');
+            AppState.anprUpdateActive = true;
+        } else if (state === 'success') {
+            setFlowIcon('anpr_read', 'success');
+            if (AppState.anprUpdateActive) {
+                setFlowIcon('anpr_update', 'success');
+            } else {
+                setFlowIcon('anpr_update', 'skipped');
+            }
+        } else if (/Err-0|Err-2|mismatch|not readable/i.test(msg)) {
+            setFlowIcon('anpr_read', 'error');
+            setFlowIcon('anpr_update', 'loading');
+            AppState.anprUpdateActive = true;
+        }
+    }
+
+    if (stepId === 'entry_granted') {
+        const st = stepDomState('entry_granted');
+        setFlowIcon('vehicle_exit', st);
+        if (AppState.anprUpdateActive && (state === 'success' || state === 'in_progress')) {
+            setFlowIcon('anpr_update', state === 'success' ? 'success' : 'loading');
+            if (stepDomState('anpr_read') === 'idle') {
+                setFlowIcon('anpr_read', 'error');
+            }
+        } else if (state === 'success' && !AppState.anprUpdateActive) {
+            if (stepDomState('anpr_read') === 'idle' || document.querySelector('[data-icon="anpr_read"]')?.getAttribute('data-state') === 'idle') {
+                // ANPR matched path may skip update icon if not set yet
+                const anprEl = document.querySelector('[data-icon="anpr_update"]');
+                if (anprEl && anprEl.getAttribute('data-state') === 'idle') {
+                    setFlowIcon('anpr_update', 'skipped');
+                }
+            }
+        }
+    }
+
+    if (stepId === 'wait_crossing') {
+        setFlowIcon('truck_exited', state === 'error' ? 'error' : 'loading');
+        if (state === 'in_progress' || state === 'success') {
+            if (document.querySelector('[data-icon="vehicle_exit"]')?.getAttribute('data-state') === 'idle') {
+                setFlowIcon('vehicle_exit', 'success');
+            }
+        }
+    }
+
+    if (stepId === 'exit_completed') {
+        if (state === 'success' || state === 'in_progress') {
+            setFlowIcon('truck_exited', 'success');
+            scheduleUiResetAfterExit();
+        } else if (state === 'error') {
+            setFlowIcon('truck_exited', 'error');
+        }
+    }
+}
+
+function openFlowDetailsModal() {
+    const modal = document.getElementById('flow-details-modal');
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeFlowDetailsModal() {
+    const modal = document.getElementById('flow-details-modal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function initFlowDetailsUi() {
+    const openBtn = document.getElementById('flow-details-btn');
+    const closeBtn = document.getElementById('flow-details-close');
+    const modal = document.getElementById('flow-details-modal');
+    if (openBtn) openBtn.addEventListener('click', openFlowDetailsModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeFlowDetailsModal);
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeFlowDetailsModal();
+        });
+    }
 }
 
 const SENSOR_LABELS = {
@@ -265,7 +409,6 @@ function resetAllSteps() {
     const truckNumberValue = document.getElementById('truck-number-value');
     if (rfidBox) {
         rfidBox.classList.remove('has-rfid', 'has-truck');
-        rfidBox.style.display = 'none';
     }
     if (rfidValue) rfidValue.textContent = '--';
     if (truckNumberValue) truckNumberValue.textContent = '--';
@@ -368,6 +511,7 @@ function setStepState(stepId, state, data = {}) {
         contentElement.textContent = `Truck No: ${data.truckNumber}`;
         AppState.transactionData.truckNumber = data.truckNumber;
     }
+    syncFlowIcons(stepId, state, data.content);
 }
 
 function markPriorStepsComplete(stepId) {
@@ -433,11 +577,12 @@ function hideResetModal() {
 }
 
 function applyIdleUi() {
+    clearUiResetTimer();
     AppState.failedFromStep = null;
     applyDefaultStepContents();
     AppState.currentPosition = -1;
-    const rfidBox = document.getElementById('rfid-display-box');
-    if (rfidBox) rfidBox.style.display = 'none';
+    resetFlowIcons();
+    closeFlowDetailsModal();
     updateCheckSensorPopup();
 }
 
@@ -1003,7 +1148,6 @@ function handleRfidData(rfidData) {
         rfidValue.textContent = rfidData.rfid;
         rfidBox.classList.add('has-rfid');
         AppState.transactionData.rfid = rfidData.rfid;
-        rfidBox.style.display = 'block';
     }
     if (rfidData.truck_number) {
         truckNumberValue.textContent = rfidData.truck_number;
@@ -1026,6 +1170,7 @@ function updateSystemStatus(message, connected) {
 
 document.addEventListener('DOMContentLoaded', () => {
     init();
+    initFlowDetailsUi();
     updateTimestamp();
     setInterval(updateTimestamp, 1000);
 });

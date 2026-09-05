@@ -76,12 +76,27 @@ def find_chrome_executable(custom_path=""):
         return custom_path
 
     candidates = []
-    for env_key in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
-        base = os.environ.get(env_key)
-        if base:
-            candidates.append(
-                os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
-            )
+    if sys.platform == "darwin":
+        candidates.extend(
+            [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                os.path.expanduser(
+                    "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                ),
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                os.path.expanduser(
+                    "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+                ),
+            ]
+        )
+    else:
+        for env_key in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(env_key)
+            if base:
+                candidates.append(
+                    os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
+                )
 
     for path in candidates:
         if os.path.isfile(path):
@@ -106,7 +121,12 @@ def is_window_visible(title):
 
 
 def wait_for_webview_window(title, timeout_sec):
-    """Poll until a window with title is visible or timeout expires. Returns True if visible."""
+    """
+    Poll until a window with title is visible or timeout expires.
+    Windows-only; on macOS/Linux always returns True (native window APIs differ).
+    """
+    if sys.platform != "win32":
+        return True
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         if is_window_visible(title):
@@ -608,6 +628,65 @@ def force_native_window_fullscreen(title, timeout_sec=12.0):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _chrome_user_data_dir():
+    import tempfile
+
+    return os.path.join(tempfile.gettempdir(), "gmdc-checkpoint-config-chrome")
+
+
+def _chrome_profile_still_running(user_data_dir):
+    """True if any Chrome/Chromium process still uses our dedicated profile dir."""
+    if not user_data_dir:
+        return False
+    marker = user_data_dir
+    try:
+        if sys.platform == "darwin":
+            # pgrep -f matches full command line
+            result = subprocess.run(
+                ["pgrep", "-f", marker],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return result.returncode == 0
+        if sys.platform == "win32":
+            # Parent Popen handle is usually enough on Windows with dedicated profile
+            return False
+        result = subprocess.run(
+            ["pgrep", "-f", marker],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def wait_for_chrome_session(proc, user_data_dir=None):
+    """
+    Block until the Chrome app-mode session ends.
+
+    Chrome often re-execs / hands off so the initial Popen pid can exit while
+    the app window keeps running — especially on macOS. After the launcher
+    process exits, keep polling for processes that still use our profile dir.
+    """
+    if proc is None:
+        return
+    data_dir = user_data_dir or _chrome_user_data_dir()
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        raise
+
+    # If Chrome handed off to another process, wait until profile is unused
+    deadline = time.time() + 86400  # safety cap (1 day)
+    while time.time() < deadline:
+        if not _chrome_profile_still_running(data_dir):
+            return
+        time.sleep(1.0)
+
+
 def launch_chromium_app_mode(url, chrome_path):
     """Open URL in Google Chrome app mode, then force fullscreen (Esc restores window)."""
     global _chrome_process
@@ -617,10 +696,8 @@ def launch_chromium_app_mode(url, chrome_path):
         return None
 
     try:
-        import tempfile
-
         # Dedicated profile so this session does not touch the user's main Chrome
-        user_data = os.path.join(tempfile.gettempdir(), "gmdc-checkpoint-config-chrome")
+        user_data = _chrome_user_data_dir()
         os.makedirs(user_data, exist_ok=True)
 
         width, height = _get_primary_screen_size()
@@ -758,27 +835,38 @@ def run_webview_start(app_name, timeout_sec, debug=False, gui=None):
     """
     Call webview.start() with a visibility monitor (window must be created first).
     Returns True if the session ended without a visibility-timeout fallback signal.
+
+    On Windows, a background monitor kills the webview if the HWND never appears
+    (so auto-mode can fall back to Chrome). On macOS/Linux that HWND check is not
+    available — do not destroy the window; let webview.start() block until close.
     """
     import webview
 
     fallback_reason = {"value": None}
+    use_visibility_monitor = sys.platform == "win32"
 
-    def monitor():
-        if wait_for_webview_window(app_name, timeout_sec):
-            return
-        fallback_reason["value"] = "timeout"
-        logger.warning(
-            "WebView window not ready within %ss; closing webview for fallback",
-            timeout_sec,
+    if use_visibility_monitor:
+        def monitor():
+            if wait_for_webview_window(app_name, timeout_sec):
+                return
+            fallback_reason["value"] = "timeout"
+            logger.warning(
+                "WebView window not ready within %ss; closing webview for fallback",
+                timeout_sec,
+            )
+            try:
+                from utils.webview_stderr import destroy_webview_window_quietly
+                destroy_webview_window_quietly()
+            except Exception as exc:
+                logger.debug("destroy_window during monitor: %s", exc)
+
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
+    else:
+        logger.info(
+            "Starting native webview on %s (no Windows HWND monitor)",
+            sys.platform,
         )
-        try:
-            from utils.webview_stderr import destroy_webview_window_quietly
-            destroy_webview_window_quietly()
-        except Exception as exc:
-            logger.debug("destroy_window during monitor: %s", exc)
-
-    monitor_thread = threading.Thread(target=monitor, daemon=True)
-    monitor_thread.start()
 
     start_kwargs = {"debug": debug}
     if gui:
@@ -822,10 +910,6 @@ def run_ui_with_auto_fallback(
         logger.warning("Unknown APPLICATION_UI_MODE %r; using auto", ui_mode)
         mode = "auto"
 
-    def _wait_flask():
-        if flask_thread and flask_thread.is_alive():
-            flask_thread.join()
-
     def _cleanup():
         if cleanup_callback:
             try:
@@ -833,17 +917,42 @@ def run_ui_with_auto_fallback(
             except Exception as exc:
                 logger.warning("Cleanup callback error: %s", exc)
 
+    def _stop_process():
+        """Stop Flask by exiting the process (daemon thread cannot be joined cleanly)."""
+        _cleanup()
+        try:
+            terminate_chrome_process()
+        except Exception:
+            pass
+        os._exit(0)
+
     def _try_chrome():
         chrome = find_chrome_executable(chrome_executable_path)
         proc = launch_chromium_app_mode(url, chrome)
         if proc is not None:
-            _wait_flask()
+            logger.info("Waiting for Chrome app window to close...")
+            try:
+                wait_for_chrome_session(proc)
+            except KeyboardInterrupt:
+                logger.info("Interrupted while Chrome app was open")
+            finally:
+                _stop_process()
             return "chromium_app"
         return None
 
     def _try_browser():
         launch_default_browser(url)
-        _wait_flask()
+        logger.info(
+            "Opened default browser. Closing the browser tab does not stop the app; "
+            "press Ctrl+C in this terminal to exit."
+        )
+        try:
+            while flask_thread and flask_thread.is_alive():
+                flask_thread.join(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.info("Interrupted - shutting down")
+        finally:
+            _stop_process()
         return "browser"
 
     if mode == "browser":
@@ -862,7 +971,7 @@ def run_ui_with_auto_fallback(
         logger.info("UI mode: webview (native window only)")
         try:
             if setup_and_run_webview():
-                _cleanup()
+                _stop_process()
                 return "webview"
         except ImportError:
             logger.error("pywebview not installed; cannot use webview mode")
@@ -875,7 +984,7 @@ def run_ui_with_auto_fallback(
     if is_webview2_runtime_available():
         try:
             if setup_and_run_webview():
-                _cleanup()
+                _stop_process()
                 return "webview"
         except ImportError:
             logger.info("pywebview not available; skipping native window")
@@ -888,10 +997,7 @@ def run_ui_with_auto_fallback(
 
     result = _try_chrome()
     if result:
-        _cleanup()
         return result
 
     logger.info("Chrome not available; opening default browser")
-    result = _try_browser()
-    _cleanup()
-    return result
+    return _try_browser()

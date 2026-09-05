@@ -48,10 +48,12 @@ def ensure_mosquitto_ready():
     
     logger.info(f"App data path: {app_data_path}")
     
-    # Create progress window if available
+    # Create progress window if available (skip Tk UI on macOS — main-thread only).
     progress_window = None
     logger.info("Creating Mosquitto progress window...")
-    if PROGRESS_UI_AVAILABLE and MosquittoProgressWindow:
+    if sys.platform == "darwin":
+        logger.info("Skipping Mosquitto progress UI on macOS (Tk main-thread restriction)")
+    elif PROGRESS_UI_AVAILABLE and MosquittoProgressWindow:
         try:
             logger.info("MosquittoProgressWindow class available, creating instance...")
             # Small delay before creating new tkinter window to avoid conflicts

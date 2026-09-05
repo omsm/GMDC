@@ -146,7 +146,10 @@ class FrontendMqtt:
         try:
             ws_ok = bool(self._ws_broker and self._ws_broker.start())
             if ws_ok:
-                logger.info("Browser MQTT WebSocket ready on port %s", self._ws_broker.port)
+                logger.info(
+                    "Browser MQTT WebSocket ready on port %s (in-app broker)",
+                    self._ws_broker.port,
+                )
                 self.republish_snapshot()
         except Exception as e:
             logger.warning("MQTT WebSocket broker failed to start: %s", e)
@@ -155,7 +158,7 @@ class FrontendMqtt:
             return ws_ok
         try:
             logger.info(
-                "Optional MQTT TCP %s:%s (dashboard uses ws://<pc-ip>:9001)",
+                "MQTT TCP %s:%s (browser dashboard uses ws://<pc-ip>:9001)",
                 self.broker,
                 self.port,
             )
@@ -165,12 +168,39 @@ class FrontendMqtt:
                 if self._connected:
                     break
                 time.sleep(0.2)
-            if not self._connected:
-                logger.info("External MQTT TCP not available - using in-app WebSocket broker")
-            return ws_ok or self._connected
+            if self._connected:
+                if not ws_ok:
+                    logger.info(
+                        "Using external MQTT broker: TCP %s:%s + WebSocket :9001 "
+                        "(in-app WS skipped — port already bound)",
+                        self.broker,
+                        self.port,
+                    )
+                return True
+            if ws_ok:
+                logger.info(
+                    "External MQTT TCP not available — using in-app WebSocket broker only"
+                )
+                return True
+            logger.error(
+                "MQTT unavailable: WebSocket :9001 bind failed and TCP %s:%s "
+                "did not connect. Start Mosquitto or free port 9001.",
+                self.broker,
+                self.port,
+            )
+            return False
         except Exception as e:
-            logger.info("MQTT TCP skipped (%s) - using in-app WebSocket broker", e)
-            return ws_ok
+            if ws_ok:
+                logger.info(
+                    "MQTT TCP skipped (%s) — using in-app WebSocket broker", e
+                )
+                return True
+            logger.error(
+                "MQTT unavailable: WebSocket :9001 bind failed and TCP connect "
+                "failed (%s). Start Mosquitto (1883+9001) or free port 9001.",
+                e,
+            )
+            return False
 
     def disconnect(self) -> None:
         self._stop.set()
@@ -454,8 +484,8 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "position": 3,
         "step": STEP_VALIDATING_WEIGHT,
         "status": "info",
-        "message": "Submitting weight details.",
-        "display": "WEIGHING",
+        "message": "Validating weight with OCI.",
+        "display": "WEIGHT VALIDATION",
     },
     "EXIT_GRANTED": {
         "position": 4,

@@ -4,13 +4,15 @@ Minimal MQTT 3.1.1 broker over WebSocket (port 9001).
 Paho JS in the dashboard connects here:
   ws://<weighbridge-ip>:9001/  (also /mqtt and /ws)
 
-No Mosquitto required. Python FrontendMqtt publishes into this hub
-and optionally also to an external MQTT TCP broker.
+If Mosquitto (or another process) already owns :9001, the in-app broker
+skips binding and FrontendMqtt publishes over MQTT TCP :1883 instead —
+the browser still uses ws://<pc-ip>:9001 on Mosquitto.
 """
 
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import logging
 import socket
@@ -212,6 +214,7 @@ class MqttWebSocketBroker:
         self._thread: Optional[threading.Thread] = None
         self._on_incoming: Optional[Callable[[str, str], None]] = None
         self._pid = 0
+        self._running = False
 
     def set_incoming_handler(self, handler: Callable[[str, str], None]) -> None:
         self._on_incoming = handler
@@ -220,8 +223,12 @@ class MqttWebSocketBroker:
         self._pid = (self._pid % 65535) + 1
         return self._pid
 
+    @property
+    def running(self) -> bool:
+        return bool(self._running and self._thread and self._thread.is_alive())
+
     def start(self) -> bool:
-        if self._thread and self._thread.is_alive():
+        if self.running:
             return True
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -231,9 +238,27 @@ class MqttWebSocketBroker:
             sock.settimeout(1.0)
             self._sock = sock
         except OSError as e:
-            logger.error("MQTT WebSocket bind %s:%s failed: %s", self.host, self.port, e)
+            in_use = getattr(e, "errno", None) in (
+                getattr(errno, "EADDRINUSE", 48),
+                48,
+                98,
+            ) or "Address already in use" in str(e)
+            if in_use:
+                logger.info(
+                    "MQTT WebSocket port %s already in use (Mosquitto or another "
+                    "broker) — skipping in-app broker. Browser keeps using "
+                    "ws://<pc-ip>:%s; this app publishes over MQTT TCP :1883.",
+                    self.port,
+                    self.port,
+                )
+            else:
+                logger.error(
+                    "MQTT WebSocket bind %s:%s failed: %s", self.host, self.port, e
+                )
+            self._running = False
             return False
         self._stop.clear()
+        self._running = True
         self._thread = threading.Thread(target=self._accept_loop, name="MqttWS", daemon=True)
         self._thread.start()
         logger.info(
@@ -244,6 +269,7 @@ class MqttWebSocketBroker:
         return True
 
     def stop(self) -> None:
+        self._running = False
         self._stop.set()
         if self._sock:
             try:
@@ -259,6 +285,8 @@ class MqttWebSocketBroker:
                 pass
 
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = True) -> bool:
+        if not self.running:
+            return False
         data = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload or b"")
         qos_i = 0
         keep = retain and not topic.endswith(

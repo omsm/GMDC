@@ -956,7 +956,8 @@ def test_audio():
     """
     Test system audio playback using the local PC audio system.
 
-    Uses AudioService (winsound on Windows) to play the configured test file.
+    Uses AudioService (winsound on Windows, afplay on macOS, aplay on Linux)
+    to play the configured test file.
     If audio cannot be played due to missing driver/device, returns 500 so
     the frontend can show a clear error message.
     """
@@ -2008,7 +2009,11 @@ if __name__ == '__main__':
 
                 threading.Thread(target=set_window_icon, daemon=True).start()
 
-            gui = 'edgechromium' if sys.platform == 'win32' else None
+            gui = None
+            if sys.platform == 'win32':
+                gui = 'edgechromium'
+            elif sys.platform == 'darwin':
+                gui = 'cocoa'
             return run_webview_start(
                 APP_NAME,
                 WEBVIEW_WINDOW_READY_TIMEOUT,

@@ -151,26 +151,33 @@ def run_elevated(file_path, arguments="", wait=True):
 
 def diagnose_mosquitto_startup(install_path):
     """
-    Try to run mosquitto.exe directly to diagnose why it fails to start.
+    Try to run mosquitto directly to diagnose why it fails to start.
     This captures the actual error message.
     """
     try:
-        mosquitto_exe = os.path.join(install_path, "mosquitto.exe")
-        config_path = os.path.join(install_path, "mosquitto.conf")
+        if IS_WINDOWS:
+            mosquitto_exe = os.path.join(install_path, "mosquitto.exe")
+        else:
+            mosquitto_exe = os.path.join(install_path, "mosquitto")
+            if not os.path.exists(mosquitto_exe):
+                mosquitto_exe = shutil.which("mosquitto") or mosquitto_exe
+        config_path = find_mosquitto_config_path(install_path)
         
         if not os.path.exists(mosquitto_exe):
-            return "mosquitto.exe not found"
+            return "mosquitto binary not found"
         
-        logger.info("Running mosquitto.exe directly to diagnose startup issues...")
+        logger.info("Running mosquitto directly to diagnose startup issues...")
         
-        # Try to run mosquitto with -v (verbose) to get error messages
+        cmd = [mosquitto_exe, "-v"]
+        if config_path and os.path.exists(config_path):
+            cmd.extend(["-c", config_path])
         result = subprocess.run(
-            [mosquitto_exe, "-c", config_path, "-v"],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=5,  # Short timeout - we just want to see if it starts
-            cwd=install_path,
-            creationflags=0x08000000
+            cwd=install_path if install_path and os.path.isdir(install_path) else None,
+            **_subprocess_kwargs(),
         )
         
         output = result.stdout.decode('utf-8', errors='ignore')
@@ -275,9 +282,12 @@ echo EXIT_CODE=%errorlevel% >> "{result_file}"
         return False, str(e)
 
 
-# Mosquitto version to install
+# Mosquitto version to install (Windows installer pin)
 MOSQUITTO_VERSION = "2.0.18"
 MOSQUITTO_INSTALLER_URL = f"https://mosquitto.org/files/binary/win64/mosquitto-{MOSQUITTO_VERSION}-install-windows-x64.exe"
+
+IS_WINDOWS = sys.platform == "win32"
+IS_DARWIN = sys.platform == "darwin"
 
 # Common Windows installation paths
 COMMON_PATHS = [
@@ -285,8 +295,67 @@ COMMON_PATHS = [
     r"C:\Program Files (x86)\mosquitto",
 ]
 
+# Common macOS Homebrew locations (Apple Silicon + Intel)
+# Newer Homebrew Mosquitto packages ship the broker under sbin/, not bin/.
+MAC_MOSQUITTO_BINS = [
+    "/opt/homebrew/sbin/mosquitto",
+    "/opt/homebrew/bin/mosquitto",
+    "/opt/homebrew/opt/mosquitto/sbin/mosquitto",
+    "/usr/local/sbin/mosquitto",
+    "/usr/local/bin/mosquitto",
+    "/usr/local/opt/mosquitto/sbin/mosquitto",
+]
+MAC_MOSQUITTO_CONFIGS = [
+    "/opt/homebrew/etc/mosquitto/mosquitto.conf",
+    "/usr/local/etc/mosquitto/mosquitto.conf",
+    "/opt/homebrew/etc/mosquitto.conf",
+    "/usr/local/etc/mosquitto.conf",
+]
+MAC_BREW_CANDIDATES = [
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+]
+
 # Service name
 MOSQUITTO_SERVICE_NAME = "mosquitto"
+
+
+def _subprocess_kwargs():
+    """Platform-safe subprocess kwargs (hide console on Windows only)."""
+    kwargs = {}
+    if IS_WINDOWS:
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    return kwargs
+
+
+def find_homebrew():
+    """Return path to brew executable, or None."""
+    brew = shutil.which("brew")
+    if brew:
+        return brew
+    for path in MAC_BREW_CANDIDATES:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def _brew_prefix(brew_path=None):
+    brew = brew_path or find_homebrew()
+    if not brew:
+        return None
+    try:
+        result = subprocess.run(
+            [brew, "--prefix"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            text=True,
+        )
+        if result.returncode == 0:
+            return (result.stdout or "").strip() or None
+    except Exception as e:
+        logger.debug("brew --prefix failed: %s", e)
+    return None
 
 
 def check_mosquitto_installed():
@@ -297,38 +366,269 @@ def check_mosquitto_installed():
         tuple: (is_installed: bool, install_path: str or None)
     """
     try:
-        # First, check if mosquitto.exe is in PATH
         mosquitto_path = shutil.which("mosquitto")
-        if mosquitto_path:
-            install_dir = os.path.dirname(mosquitto_path)
-            logger.info(f"Mosquitto found in PATH at: {mosquitto_path}")
+        if mosquitto_path and os.path.isfile(mosquitto_path):
+            install_dir = os.path.dirname(os.path.realpath(mosquitto_path))
+            logger.info("Mosquitto found in PATH at: %s", mosquitto_path)
             return True, install_dir
-        
-        # Check common installation directories
-        for path in COMMON_PATHS:
-            mosquitto_exe = os.path.join(path, "mosquitto.exe")
-            if os.path.exists(mosquitto_exe):
-                logger.info(f"Mosquitto found at: {mosquitto_exe}")
-                return True, path
-        
+
+        if IS_DARWIN:
+            for path in MAC_MOSQUITTO_BINS:
+                if os.path.isfile(path):
+                    install_dir = os.path.dirname(os.path.realpath(path))
+                    logger.info("Mosquitto found at: %s", path)
+                    return True, install_dir
+            brew = find_homebrew()
+            if brew:
+                formula_prefix = ""
+                try:
+                    result = subprocess.run(
+                        [brew, "--prefix", "mosquitto"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=30,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        formula_prefix = (result.stdout or "").strip()
+                except Exception:
+                    formula_prefix = ""
+                roots = [p for p in (formula_prefix, _brew_prefix(brew)) if p]
+                candidates = []
+                for root in roots:
+                    candidates.extend(
+                        [
+                            os.path.join(root, "sbin", "mosquitto"),
+                            os.path.join(root, "bin", "mosquitto"),
+                        ]
+                    )
+                    if os.path.basename(root.rstrip(os.sep)) != "mosquitto":
+                        candidates.extend(
+                            [
+                                os.path.join(root, "opt", "mosquitto", "sbin", "mosquitto"),
+                                os.path.join(root, "opt", "mosquitto", "bin", "mosquitto"),
+                            ]
+                        )
+                for candidate in candidates:
+                    if os.path.isfile(candidate):
+                        logger.info("Mosquitto found via brew prefix: %s", candidate)
+                        return True, os.path.dirname(candidate)
+
+        if IS_WINDOWS:
+            for path in COMMON_PATHS:
+                mosquitto_exe = os.path.join(path, "mosquitto.exe")
+                if os.path.exists(mosquitto_exe):
+                    logger.info("Mosquitto found at: %s", mosquitto_exe)
+                    return True, path
+
         logger.info("Mosquitto not found on system")
         return False, None
-        
+
     except Exception as e:
-        logger.error(f"Error checking for Mosquitto installation: {e}")
+        logger.error("Error checking for Mosquitto installation: %s", e)
         return False, None
+
+
+def install_mosquitto_macos(progress_callback=None):
+    """
+    Install Mosquitto on macOS via Homebrew.
+
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    def _progress(percent, message):
+        if progress_callback:
+            progress_callback(percent, message)
+
+    brew = find_homebrew()
+    if not brew:
+        msg = (
+            "Homebrew is not installed. Install it from https://brew.sh "
+            "then re-run, or run: brew install mosquitto"
+        )
+        logger.error(msg)
+        return False, msg
+
+    logger.info("Using Homebrew at: %s", brew)
+    _progress(10, "Checking Homebrew Mosquitto formula...")
+
+    try:
+        # Already linked?
+        list_result = subprocess.run(
+            [brew, "list", "--versions", "mosquitto"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            text=True,
+        )
+        if list_result.returncode == 0 and (list_result.stdout or "").strip():
+            logger.info("Mosquitto already installed via brew: %s", list_result.stdout.strip())
+            _progress(80, "Mosquitto already installed via Homebrew")
+            return True, "already_installed"
+
+        _progress(20, "Installing Mosquitto with Homebrew (may take a few minutes)...")
+        logger.info("Running: brew install mosquitto")
+        result = subprocess.run(
+            [brew, "install", "mosquitto"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=900,
+            text=True,
+        )
+        if result.stdout:
+            logger.info("brew install stdout:\n%s", result.stdout[-4000:])
+        if result.stderr:
+            logger.info("brew install stderr:\n%s", result.stderr[-4000:])
+
+        if result.returncode != 0:
+            msg = f"brew install mosquitto failed (code {result.returncode})"
+            logger.error(msg)
+            return False, msg
+
+        # Ensure binary is present (Homebrew places broker in sbin/)
+        is_installed, install_path = check_mosquitto_installed()
+        if not is_installed:
+            msg = "brew install finished but mosquitto binary was not found"
+            logger.error(msg)
+            return False, msg
+
+        logger.info("Mosquitto installed via Homebrew at %s", install_path)
+        _progress(80, "Mosquitto installed via Homebrew")
+        return True, "installed"
+    except subprocess.TimeoutExpired:
+        msg = "brew install mosquitto timed out"
+        logger.error(msg)
+        return False, msg
+    except Exception as e:
+        msg = f"macOS Mosquitto install failed: {e}"
+        logger.error(msg, exc_info=True)
+        return False, msg
+
+
+def resolve_mosquitto_binary(install_path=None):
+    """Return absolute path to mosquitto broker binary, or None."""
+    found, path = check_mosquitto_installed()
+    if found and path:
+        for name in ("mosquitto", "mosquitto.exe"):
+            candidate = os.path.join(path, name)
+            if os.path.isfile(candidate):
+                return candidate
+    which = shutil.which("mosquitto")
+    if which and os.path.isfile(which):
+        return which
+    if install_path:
+        for name in ("mosquitto", "mosquitto.exe"):
+            candidate = os.path.join(install_path, name)
+            if os.path.isfile(candidate):
+                return candidate
+    for path in MAC_MOSQUITTO_BINS:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def check_mosquitto_running_macos():
+    """Return True if a mosquitto process appears to be running."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "mosquitto"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def start_mosquitto_macos(install_path=None, config_path=None, app_data_path=None):
+    """
+    Start Mosquitto on macOS. Prefer app-local config + daemon so listeners match
+    the checkpoint UI (1883 MQTT + 9001 websockets). Fall back to brew services.
+    """
+    if check_mosquitto_running_macos():
+        logger.info("Mosquitto process already running")
+        return True
+
+    local_cfg = None
+    if app_data_path:
+        candidate = os.path.join(app_data_path, "mosquitto", "mosquitto.conf")
+        if os.path.isfile(candidate):
+            local_cfg = candidate
+    cfg = local_cfg or config_path or find_mosquitto_config_path(install_path)
+
+    mosquitto_bin = resolve_mosquitto_binary(install_path)
+
+    if mosquitto_bin and cfg and os.path.isfile(cfg):
+        try:
+            cmd = [mosquitto_bin, "-c", cfg, "-d"]
+            logger.info("Starting Mosquitto daemon: %s", " ".join(cmd))
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            time.sleep(1.0)
+            if check_mosquitto_running_macos():
+                logger.info("Mosquitto daemon started with config %s", cfg)
+                return True
+            logger.warning("Daemon start attempted but process not found; trying brew services")
+        except Exception as e:
+            logger.warning("Failed to start Mosquitto daemon: %s", e)
+
+    brew = find_homebrew()
+    if brew:
+        try:
+            logger.info("Starting Mosquitto via brew services...")
+            result = subprocess.run(
+                [brew, "services", "start", "mosquitto"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                text=True,
+            )
+            if result.stdout:
+                logger.info("brew services stdout: %s", result.stdout.strip())
+            if result.stderr:
+                logger.info("brew services stderr: %s", result.stderr.strip())
+            time.sleep(1.5)
+            if check_mosquitto_running_macos() or result.returncode == 0:
+                logger.info("Mosquitto started via brew services")
+                return True
+            logger.warning("brew services start returned %s", result.returncode)
+        except Exception as e:
+            logger.warning("brew services start failed: %s", e)
+
+    if not mosquitto_bin:
+        logger.error("Cannot start Mosquitto: binary not found")
+        return False
+
+    cmd = [mosquitto_bin, "-d"]
+    if cfg and os.path.isfile(cfg):
+        cmd.extend(["-c", cfg])
+    try:
+        logger.info("Starting Mosquitto daemon (fallback): %s", " ".join(cmd))
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        time.sleep(1.0)
+        if check_mosquitto_running_macos():
+            logger.info("Mosquitto daemon started")
+            return True
+        logger.error("Mosquitto daemon start attempted but process not found")
+        return False
+    except Exception as e:
+        logger.error("Failed to start Mosquitto daemon: %s", e)
+        return False
 
 
 def download_mosquitto_installer(download_path, progress_callback=None):
     """
-    Download Mosquitto installer from official source.
-    
-    Args:
-        download_path: Path where installer should be saved
-        progress_callback: Optional callback function(percent, message) for progress updates
-        
-    Returns:
-        bool: True if download successful, False otherwise
+    Download Mosquitto Windows installer from official source.
     """
     try:
         logger.info(f"Downloading Mosquitto {MOSQUITTO_VERSION} installer...")
@@ -379,15 +679,12 @@ def download_mosquitto_installer(download_path, progress_callback=None):
 
 def install_mosquitto(installer_path):
     """
-    Install Mosquitto using the downloaded installer.
+    Install Mosquitto using the downloaded Windows installer.
     Will automatically request admin privileges via UAC if needed.
-    
-    Args:
-        installer_path: Path to the installer executable
-        
-    Returns:
-        bool: True if installation successful, False otherwise
     """
+    if not IS_WINDOWS:
+        logger.error("install_mosquitto(installer) is Windows-only")
+        return False
     try:
         logger.info("Starting Mosquitto installation (silent mode)...")
         
@@ -402,7 +699,7 @@ def install_mosquitto(installer_path):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=300,  # 5 minute timeout
-                creationflags=0x08000000  # CREATE_NO_WINDOW flag for Windows
+                **_subprocess_kwargs(),
             )
             
             if result.returncode == 0:
@@ -453,46 +750,52 @@ def install_mosquitto(installer_path):
 def find_mosquitto_config_path(install_path=None):
     """
     Find the path to mosquitto.conf file.
-    
-    Args:
-        install_path: Installation directory (optional)
-        
-    Returns:
-        str: Path to mosquitto.conf, or None if not found
     """
     try:
-        # If install path provided, check there first
         if install_path:
             config_path = os.path.join(install_path, "mosquitto.conf")
             if os.path.exists(config_path):
                 return config_path
-        
-        # Check common installation paths
-        for path in COMMON_PATHS:
-            config_path = os.path.join(path, "mosquitto.conf")
-            if os.path.exists(config_path):
-                return config_path
-        
-        # If config doesn't exist, use default location (create new one)
-        # Default is usually in Program Files
-        default_path = r"C:\Program Files\mosquitto\mosquitto.conf"
-        # Check if directory exists
-        default_dir = os.path.dirname(default_path)
-        if os.path.exists(default_dir):
-            return default_path
-        
-        # Fallback: try to find from mosquitto.exe location
+            brew_cfg = os.path.abspath(
+                os.path.join(install_path, "..", "etc", "mosquitto", "mosquitto.conf")
+            )
+            if os.path.exists(brew_cfg):
+                return brew_cfg
+
+        if IS_DARWIN:
+            for config_path in MAC_MOSQUITTO_CONFIGS:
+                if os.path.exists(config_path):
+                    return config_path
+            brew = find_homebrew()
+            prefix = _brew_prefix(brew) if brew else None
+            if prefix:
+                return os.path.join(prefix, "etc", "mosquitto", "mosquitto.conf")
+            return MAC_MOSQUITTO_CONFIGS[0]
+
+        if IS_WINDOWS:
+            for path in COMMON_PATHS:
+                config_path = os.path.join(path, "mosquitto.conf")
+                if os.path.exists(config_path):
+                    return config_path
+            default_path = r"C:\Program Files\mosquitto\mosquitto.conf"
+            if os.path.exists(os.path.dirname(default_path)):
+                return default_path
+
         mosquitto_path = shutil.which("mosquitto")
         if mosquitto_path:
             install_dir = os.path.dirname(mosquitto_path)
             config_path = os.path.join(install_dir, "mosquitto.conf")
-            return config_path
-        
-        # Last resort: use first common path
+            if os.path.exists(config_path):
+                return config_path
+            brew_cfg = os.path.abspath(
+                os.path.join(install_dir, "..", "etc", "mosquitto", "mosquitto.conf")
+            )
+            return brew_cfg
+
         return os.path.join(COMMON_PATHS[0], "mosquitto.conf")
-        
+
     except Exception as e:
-        logger.error(f"Error finding mosquitto.conf path: {e}")
+        logger.error("Error finding mosquitto.conf path: %s", e)
         return None
 
 
@@ -519,12 +822,22 @@ def create_mosquitto_config(install_path=None, app_data_path=None):
         # Ensure log directory exists
         if app_data_path:
             log_dir = os.path.join(app_data_path, 'configuration_logs')
-        else:
+        elif IS_WINDOWS:
             # Fallback to default location
             log_dir = r"C:\MyAppData\DeviceConfiguration"
+        else:
+            log_dir = os.path.join(os.path.expanduser("~"), "Library", "Logs", "GMDC-Checkpoint-Config")
         os.makedirs(log_dir, exist_ok=True)
         log_file_path = os.path.join(log_dir, "mosquitto.log")
-        
+
+        # On macOS prefer an app-local config if system/brew path is not writable.
+        if IS_DARWIN and app_data_path:
+            local_cfg_dir = os.path.join(app_data_path, "mosquitto")
+            os.makedirs(local_cfg_dir, exist_ok=True)
+            local_cfg = os.path.join(local_cfg_dir, "mosquitto.conf")
+            logger.info("Using app-local Mosquitto config on macOS: %s", local_cfg)
+            config_path = local_cfg
+
         # Required configuration for Mosquitto 2.x
         # Note: log_dest file requires the path on the same line
         config_content = f"""# Mosquitto MQTT Broker Configuration
@@ -592,7 +905,7 @@ socket_domain ipv4
                     logger.info("mosquitto.conf created/updated successfully")
                     return True
                 except PermissionError:
-                    logger.warning(f"Permission denied writing to {config_path}. Requesting admin rights...")
+                    logger.warning(f"Permission denied writing to {config_path}. Falling back...")
                     
                     # Write config to temp file first
                     temp_config = os.path.join(tempfile.gettempdir(), "mosquitto_temp.conf")
@@ -605,25 +918,30 @@ socket_domain ipv4
                             else:
                                 f.write(config_content)
                         
-                        # Use elevated copy to move temp config to target location
-                        logger.info("Requesting admin privileges to write config file...")
-                        success, error = run_elevated("cmd.exe", f'/c copy /Y "{temp_config}" "{config_path}"')
-                        
-                        if success:
-                            logger.info("Config file written with elevated privileges")
-                            # Clean up temp file
-                            try:
-                                os.remove(temp_config)
-                            except Exception:
-                                pass
-                            return True
-                        else:
+                        if IS_WINDOWS:
+                            logger.info("Requesting admin privileges to write config file...")
+                            success, error = run_elevated("cmd.exe", f'/c copy /Y "{temp_config}" "{config_path}"')
+                            if success:
+                                logger.info("Config file written with elevated privileges")
+                                try:
+                                    os.remove(temp_config)
+                                except Exception:
+                                    pass
+                                return True
                             logger.error(f"Failed to write config with elevated privileges: {error}")
-                            # Fallback: keep config in user directory
-                            alt_path = os.path.join(os.path.expanduser("~"), "mosquitto.conf")
-                            shutil.copy2(temp_config, alt_path)
-                            logger.warning(f"Config saved to {alt_path}. You may need to copy it to {config_path} manually.")
-                            return True
+
+                        alt_path = os.path.join(os.path.expanduser("~"), "mosquitto.conf")
+                        if IS_DARWIN and app_data_path:
+                            alt_dir = os.path.join(app_data_path, "mosquitto")
+                            os.makedirs(alt_dir, exist_ok=True)
+                            alt_path = os.path.join(alt_dir, "mosquitto.conf")
+                        shutil.copy2(temp_config, alt_path)
+                        logger.warning(
+                            "Config saved to %s. You may need to copy it to %s manually.",
+                            alt_path,
+                            config_path,
+                        )
+                        return True
                             
                     except Exception as e:
                         logger.error(f"Could not write config: {e}")
@@ -642,11 +960,18 @@ socket_domain ipv4
 
 def check_mosquitto_service():
     """
-    Check if Mosquitto Windows service exists and is running.
+    Check if Mosquitto service/process exists and is running.
     
     Returns:
         tuple: (service_exists: bool, is_running: bool)
     """
+    if IS_DARWIN:
+        running = check_mosquitto_running_macos()
+        # brew services counts as "exists" when formula is installed
+        exists = check_mosquitto_installed()[0] or running
+        logger.info("macOS Mosquitto process running=%s", running)
+        return exists, running
+
     try:
         # Query service status
         result = subprocess.run(
@@ -654,7 +979,7 @@ def check_mosquitto_service():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=10,
-            creationflags=0x08000000
+            **_subprocess_kwargs(),
         )
         
         if result.returncode == 0:
@@ -671,14 +996,19 @@ def check_mosquitto_service():
         return False, False
 
 
-def start_mosquitto_service():
+def start_mosquitto_service(app_data_path=None):
     """
-    Start the Mosquitto Windows service.
-    Will automatically request admin privileges via UAC if needed.
-    
-    Returns:
-        bool: True if service started successfully, False otherwise
+    Start the Mosquitto service (Windows service or macOS brew/daemon).
     """
+    if IS_DARWIN:
+        is_installed, install_path = check_mosquitto_installed()
+        cfg = find_mosquitto_config_path(install_path) if is_installed else None
+        return start_mosquitto_macos(
+            install_path=install_path,
+            config_path=cfg,
+            app_data_path=app_data_path,
+        )
+
     try:
         service_exists, is_running = check_mosquitto_service()
         
@@ -699,7 +1029,7 @@ def start_mosquitto_service():
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=30,
-                creationflags=0x08000000
+                **_subprocess_kwargs(),
             )
             
             if result.returncode == 0:
@@ -716,7 +1046,7 @@ def start_mosquitto_service():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-            creationflags=0x08000000
+            **_subprocess_kwargs(),
         )
         
         if result.returncode == 0:
@@ -733,7 +1063,7 @@ def start_mosquitto_service():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-            creationflags=0x08000000
+            **_subprocess_kwargs(),
         )
         
         if result2.returncode == 0:
@@ -816,8 +1146,20 @@ def setup_mosquitto(progress_callback=None, app_data_path=None):
             logger.info("Mosquitto is already installed. Skipping installation.")
             status["installed"] = True
             update_progress(80, "Mosquitto already installed")
-        else:
-            # Step 2: Download installer
+        elif IS_DARWIN:
+            logger.info("Mosquitto not found. Installing via Homebrew...")
+            update_progress(5, "Installing Mosquitto via Homebrew...")
+            ok, detail = install_mosquitto_macos(update_progress)
+            if not ok:
+                status["message"] = detail or "Failed to install Mosquitto via Homebrew"
+                logger.error(status["message"])
+                return status
+            status["installed"] = True
+            update_progress(80, "Mosquitto installed successfully")
+            time.sleep(1)
+            is_installed, install_path = check_mosquitto_installed()
+        elif IS_WINDOWS:
+            # Step 2: Download Windows installer
             temp_dir = tempfile.gettempdir()
             installer_filename = f"mosquitto-{MOSQUITTO_VERSION}-installer.exe"
             installer_path = os.path.join(temp_dir, installer_filename)
@@ -867,6 +1209,13 @@ def setup_mosquitto(progress_callback=None, app_data_path=None):
             
             # Re-check install path after installation
             is_installed, install_path = check_mosquitto_installed()
+        else:
+            status["message"] = (
+                f"Automatic Mosquitto install is not supported on this platform ({sys.platform}). "
+                "Install mosquitto manually and ensure it is on PATH."
+            )
+            logger.error(status["message"])
+            return status
         
         # Step 4: Create/update configuration (81-90% of overall)
         update_progress(81, "Configuring Mosquitto...")
@@ -885,7 +1234,7 @@ def setup_mosquitto(progress_callback=None, app_data_path=None):
         
         # Step 5: Start service (91-100% of overall)
         update_progress(91, "Starting Mosquitto service...")
-        if start_mosquitto_service():
+        if start_mosquitto_service(app_data_path=app_data_path):
             status["service_started"] = True
             logger.info("Mosquitto service started")
             update_progress(100, "Mosquitto service running!")

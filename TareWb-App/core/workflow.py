@@ -1623,7 +1623,7 @@ class TareWbWorkflow:
             sm.force_state(State.IMAGE_CAPTURE)
         sm.trigger(Event.DETAILS_OK)  # IMAGE_CAPTURE → WEIGHT_DETAILS
         self._ui_status(
-            STEP_VALIDATING_WEIGHT, "info", "Submitting weight details."
+            STEP_VALIDATING_WEIGHT, "info", "Validating weight with OCI."
         )
 
         logger.info(
@@ -1671,7 +1671,7 @@ class TareWbWorkflow:
             self._ui_status(
                 STEP_VALIDATING_WEIGHT,
                 "success",
-                "Weight details submitted.",
+                "Weight validation successful.",
             )
             if details_ok:
                 self._speak_final_weight()
@@ -1686,7 +1686,7 @@ class TareWbWorkflow:
                 self._ui_status(
                     STEP_VALIDATING_WEIGHT,
                     "error",
-                    "Weight details failed.",
+                    "Weight validation failed.",
                 )
             if voice:
                 voice.weight_submit_error_by_status(

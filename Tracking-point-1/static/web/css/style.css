@@ -1223,3 +1223,221 @@ body {
     font-size: 14px;
     margin: 0;
 }
+
+/* ===== Operator flow icons + Flow Details modal ===== */
+.flow-icons-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 12px 8px;
+}
+
+.flow-icons-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 8px 4px;
+    width: 100%;
+}
+
+.flow-icon-item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 72px;
+    max-width: 100px;
+}
+
+.flow-icon-circle {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #eef2f6;
+    border: 2px solid #c5d0db;
+    color: #4a5d73;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.flow-icon-circle svg {
+    width: 28px;
+    height: 28px;
+}
+
+.flow-icon-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #334155;
+    text-align: center;
+    line-height: 1.25;
+}
+
+.flow-icon-badge {
+    position: absolute;
+    top: -2px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    background: #94a3b8;
+}
+
+.flow-icon-badge::before {
+    content: '';
+}
+
+.flow-icon-item[data-state="loading"] .flow-icon-badge,
+.flow-icon-item[data-state="success"] .flow-icon-badge,
+.flow-icon-item[data-state="error"] .flow-icon-badge,
+.flow-icon-item[data-state="skipped"] .flow-icon-badge {
+    display: flex;
+}
+
+.flow-icon-item[data-state="loading"] .flow-icon-badge {
+    background: #2563eb;
+}
+
+.flow-icon-item[data-state="loading"] .flow-icon-badge::before {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: flow-icon-spin 0.8s linear infinite;
+}
+
+.flow-icon-item[data-state="success"] .flow-icon-badge {
+    background: #16a34a;
+}
+
+.flow-icon-item[data-state="success"] .flow-icon-badge::before {
+    content: '';
+    width: 6px;
+    height: 10px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.flow-icon-item[data-state="error"] .flow-icon-badge {
+    background: #dc2626;
+}
+
+.flow-icon-item[data-state="error"] .flow-icon-badge::before {
+    content: '×';
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.flow-icon-item[data-state="skipped"] .flow-icon-badge {
+    background: #94a3b8;
+}
+
+.flow-icon-item[data-state="skipped"] .flow-icon-badge::before {
+    content: '–';
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.flow-icon-item[data-state="loading"] .flow-icon-circle {
+    border-color: #2563eb;
+    color: #2563eb;
+    background: #eff6ff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.flow-icon-item[data-state="success"] .flow-icon-circle {
+    border-color: #16a34a;
+    color: #16a34a;
+    background: #f0fdf4;
+}
+
+.flow-icon-item[data-state="error"] .flow-icon-circle {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: #fef2f2;
+}
+
+.flow-icon-item[data-state="skipped"] .flow-icon-circle {
+    border-color: #94a3b8;
+    color: #64748b;
+    background: #f8fafc;
+    opacity: 0.85;
+}
+
+.flow-icon-connector {
+    width: 28px;
+    height: 2px;
+    margin-top: 31px;
+    background: #cbd5e1;
+    flex-shrink: 0;
+}
+
+.flow-details-btn {
+    appearance: none;
+    border: 1px solid #94a3b8;
+    background: #fff;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.flow-details-btn:hover {
+    background: #f1f5f9;
+    border-color: #64748b;
+}
+
+.flow-details-modal-content {
+    max-width: 720px;
+    width: min(720px, 94vw);
+    max-height: 90vh;
+}
+
+.flow-details-modal-content .camera-modal-body {
+    max-height: calc(90vh - 72px);
+    overflow: auto;
+    background: #f8fafc;
+    padding: 16px;
+}
+
+.flow-details-modal-content .flow-container {
+    max-height: none;
+}
+
+@keyframes flow-icon-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+    .flow-icon-connector {
+        display: none;
+    }
+    .flow-icon-item {
+        min-width: 64px;
+    }
+    .flow-icon-circle {
+        width: 56px;
+        height: 56px;
+    }
+}

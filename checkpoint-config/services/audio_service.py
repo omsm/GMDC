@@ -1,20 +1,27 @@
 import logging
 import os
-import sys
 import platform
-from typing import Dict, Any
+import shutil
+import subprocess
+import sys
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Platform-specific audio playback (same approach as Weighbridge-App)
-if platform.system() == "Windows":
+_SYSTEM = platform.system()
+
+# Platform backends:
+# - Windows: winsound
+# - macOS: afplay (built-in)
+# - Linux: aplay (alsa-utils) when available
+WINSOUND_AVAILABLE = False
+if _SYSTEM == "Windows":
     try:
         import winsound  # type: ignore
+
         WINSOUND_AVAILABLE = True
     except ImportError:
         WINSOUND_AVAILABLE = False
-else:
-    WINSOUND_AVAILABLE = False
 
 
 def _get_app_base_path() -> str:
@@ -27,40 +34,49 @@ def _get_app_base_path() -> str:
     """
     try:
         if getattr(sys, "frozen", False):
-            # Running as compiled executable - use PyInstaller temp folder for bundled files
             base_path = getattr(sys, "_MEIPASS", None)
             if base_path:
                 return base_path
-            # Fallback (should be rare): use exe directory
             return os.path.dirname(sys.executable)
-        # Running as script - use project root (parent of services/)
         services_dir = os.path.dirname(os.path.abspath(__file__))
         return os.path.dirname(services_dir)
     except Exception as e:
-        logger.error(f"[AudioService] Error resolving app base path: {e}")
+        logger.error("[AudioService] Error resolving app base path: %s", e)
         return os.path.abspath(".")
+
+
+def _resolve_audio_backend() -> Optional[str]:
+    if _SYSTEM == "Windows" and WINSOUND_AVAILABLE:
+        return "winsound"
+    if _SYSTEM == "Darwin" and shutil.which("afplay"):
+        return "afplay"
+    if _SYSTEM == "Linux" and shutil.which("aplay"):
+        return "aplay"
+    return None
 
 
 class AudioService:
     """
     Simple audio test service for IoT-Configuration.
 
-    Uses Windows winsound (like Weighbridge-App) to play a test WAV file
-    on the configuration PC. This helps verify that the announcement
-    system / audio driver is available.
+    Plays a test WAV on the configuration PC so operators can confirm the
+    announcement / speaker path works (Windows winsound, macOS afplay, Linux aplay).
     """
 
-    def __init__(self, test_relative_path: str = os.path.join("static", "audio", "test_audio.wav")):
+    def __init__(
+        self, test_relative_path: str = os.path.join("static", "audio", "test_audio.wav")
+    ):
         self.base_dir = _get_app_base_path()
+        self.backend = _resolve_audio_backend()
 
-        # Prefer bundled static assets path in PyInstaller ONEFILE mode (sys._MEIPASS/static/...)
         bundled_path = os.path.join(self.base_dir, test_relative_path)
-
-        # Allow optional external override next to exe (useful if site wants to replace the WAV)
-        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else self.base_dir
+        exe_dir = (
+            os.path.dirname(sys.executable)
+            if getattr(sys, "frozen", False)
+            else self.base_dir
+        )
         external_path = os.path.join(exe_dir, test_relative_path)
 
-        # Choose the first existing path; otherwise keep bundled_path for clearer error message
         if os.path.exists(bundled_path):
             self.test_audio_path = bundled_path
             source = "bundled"
@@ -71,7 +87,49 @@ class AudioService:
             self.test_audio_path = bundled_path
             source = "missing"
 
-        logger.info(f"[AudioService] Initialized ({source}) with test file: {self.test_audio_path}")
+        logger.info(
+            "[AudioService] Initialized (%s, backend=%s) with test file: %s",
+            source,
+            self.backend or "none",
+            self.test_audio_path,
+        )
+
+    def _play_with_backend(self, file_path: str) -> None:
+        if self.backend == "winsound":
+            import winsound  # type: ignore
+
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+            return
+
+        if self.backend == "afplay":
+            cmd = [shutil.which("afplay") or "afplay", file_path]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False,
+            )
+            if result.returncode != 0:
+                err = (result.stderr or b"").decode("utf-8", errors="ignore").strip()
+                raise RuntimeError(err or f"afplay exited with code {result.returncode}")
+            return
+
+        if self.backend == "aplay":
+            cmd = [shutil.which("aplay") or "aplay", file_path]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False,
+            )
+            if result.returncode != 0:
+                err = (result.stderr or b"").decode("utf-8", errors="ignore").strip()
+                raise RuntimeError(err or f"aplay exited with code {result.returncode}")
+            return
+
+        raise RuntimeError("No audio backend available")
 
     def _play_safe(self, file_path: str) -> Dict[str, Any]:
         """
@@ -84,22 +142,26 @@ class AudioService:
         """
         if not os.path.exists(file_path):
             msg = f"Audio file not found: {file_path}"
-            logger.error(f"[AudioService] {msg}")
+            logger.error("[AudioService] %s", msg)
             return {"success": False, "reason": "FILE_NOT_FOUND", "message": msg}
 
-        if not WINSOUND_AVAILABLE:
-            # Matches the behavior in Weighbridge-App when winsound is unavailable
-            msg = "Failed to play audio: Windows audio system not available (winsound missing)"
-            logger.error(f"[AudioService] {msg}")
+        if not self.backend:
+            msg = (
+                f"Failed to play audio: no audio backend on {platform.system()} "
+                "(need winsound / afplay / aplay)"
+            )
+            logger.error("[AudioService] %s", msg)
             return {"success": False, "reason": "NO_AUDIO_DRIVER", "message": msg}
 
         try:
-            winsound.PlaySound(file_path, winsound.SND_FILENAME)  # type: ignore[name-defined]
-            logger.info(f"[AudioService] Played test audio: {file_path}")
+            self._play_with_backend(file_path)
+            logger.info(
+                "[AudioService] Played test audio via %s: %s", self.backend, file_path
+            )
             return {"success": True, "message": "Audio played successfully"}
         except Exception as e:
-            msg = f"Please connect audio device and try again."
-            logger.error(f"[AudioService] Error: {str(e)}")
+            msg = "Please connect audio device and try again."
+            logger.error("[AudioService] Playback error via %s: %s", self.backend, e)
             return {"success": False, "reason": "PLAYBACK_ERROR", "message": msg}
 
     def play_test_audio(self) -> Dict[str, Any]:
@@ -108,6 +170,7 @@ class AudioService:
 
         This is used by the /api/audio/test endpoint.
         """
-        logger.debug(f"[AudioService] Attempting to play test audio at: {self.test_audio_path}")
+        logger.debug(
+            "[AudioService] Attempting to play test audio at: %s", self.test_audio_path
+        )
         return self._play_safe(self.test_audio_path)
-

@@ -31,7 +31,10 @@ const AppState = {
     displayMessage: 'System Operational',
     ioDependentsDisconnected: false,
     /** First Transaction Flow step that failed; later steps stay red until idle. */
-    failedFromStep: null
+    failedFromStep: null,
+    /** True while ANPR status_check loop is active (anpr_status 0/2). */
+    anprUpdateActive: false,
+    uiResetTimer: null
 };
 
 // Application version (loaded from backend)
@@ -60,13 +63,183 @@ const DEFAULT_STEP_CONTENT = {
     rfid_read: 'Waiting for RFID scan...',
     validating_rfid: 'Waiting for validation...',
     validating_anpr: 'Waiting for ANPR...',
-    validating_weight: 'Waiting for weight details...',
+    validating_weight: 'Waiting for weight validation...',
     exit_start: '',
     exit_completed: 'Waiting for next transaction...'
 };
 
 function stepElementId(stepId) {
     return 'step-' + String(stepId || '').replace(/_/g, '-');
+}
+
+function stepDomState(stepId) {
+    const step = AppState.steps.find((s) => s.id === stepId);
+    if (!step || !step.element) return 'idle';
+    const el = step.element;
+    if (el.classList.contains('state-error')) return 'error';
+    if (el.classList.contains('state-in-progress') || el.classList.contains('state-warning')) {
+        return 'loading';
+    }
+    if (el.classList.contains('state-success')) return 'success';
+    return 'idle';
+}
+
+function setFlowIcon(iconId, state) {
+    const el = document.querySelector(`.flow-icon-item[data-icon="${iconId}"]`);
+    if (!el) return;
+    el.setAttribute('data-state', state || 'idle');
+}
+
+function resetFlowIcons() {
+    document.querySelectorAll('.flow-icon-item[data-icon]').forEach((el) => {
+        el.setAttribute('data-state', 'idle');
+    });
+    AppState.anprUpdateActive = false;
+}
+
+function clearUiResetTimer() {
+    if (AppState.uiResetTimer) {
+        clearTimeout(AppState.uiResetTimer);
+        AppState.uiResetTimer = null;
+    }
+}
+
+function scheduleUiResetAfterExit() {
+    clearUiResetTimer();
+    AppState.uiResetTimer = setTimeout(() => {
+        AppState.uiResetTimer = null;
+        applyIdleUi();
+    }, 2000);
+}
+
+function syncFlowIcons(stepId, state, message) {
+    const msg = String(message || '');
+    const iconState = (iconId) =>
+        document.querySelector(`[data-icon="${iconId}"]`)?.getAttribute('data-state') || 'idle';
+
+    if (stepId === 'reading_weight') {
+        setFlowIcon('weight_read', stepDomState('reading_weight'));
+    }
+
+    if (stepId === 'rfid_read') {
+        setFlowIcon('rfid_read', stepDomState('rfid_read'));
+        if ((state === 'in_progress' || state === 'success') && stepDomState('reading_weight') === 'success') {
+            setFlowIcon('weight_read', 'success');
+        }
+    }
+
+    if (stepId === 'validating_rfid') {
+        setFlowIcon('rfid_validation', stepDomState('validating_rfid'));
+        if (state === 'in_progress' || state === 'success') {
+            if (stepDomState('rfid_read') === 'idle') {
+                setFlowIcon('rfid_read', 'success');
+            }
+        }
+    }
+
+    if (stepId === 'validating_anpr') {
+        if (state === 'in_progress') {
+            setFlowIcon('anpr_read', 'loading');
+        } else if (state === 'warning' || state === 'error') {
+            setFlowIcon('anpr_read', 'error');
+            setFlowIcon('anpr_update', 'loading');
+            AppState.anprUpdateActive = true;
+        } else if (state === 'success') {
+            setFlowIcon('anpr_read', 'success');
+            if (AppState.anprUpdateActive) {
+                setFlowIcon('anpr_update', 'success');
+            } else {
+                setFlowIcon('anpr_update', 'skipped');
+            }
+        } else if (/Err-0|Err-2|mismatch|not readable/i.test(msg)) {
+            setFlowIcon('anpr_read', 'error');
+            setFlowIcon('anpr_update', 'loading');
+            AppState.anprUpdateActive = true;
+        }
+    }
+
+    if (stepId === 'validating_weight') {
+        setFlowIcon('weight_validation', stepDomState('validating_weight'));
+        if (state === 'in_progress' || state === 'success' || state === 'error' || state === 'warning') {
+            if (iconState('weight_read') === 'idle' || stepDomState('reading_weight') === 'success') {
+                if (stepDomState('reading_weight') !== 'error') {
+                    setFlowIcon('weight_read', 'success');
+                }
+            }
+            if (AppState.anprUpdateActive) {
+                if (iconState('anpr_update') === 'loading') {
+                    setFlowIcon('anpr_update', 'success');
+                }
+            } else if (iconState('anpr_update') === 'idle') {
+                setFlowIcon('anpr_update', 'skipped');
+            }
+            if (stepDomState('anpr_read') === 'idle' && iconState('anpr_read') === 'idle') {
+                setFlowIcon('anpr_read', 'success');
+            }
+        }
+    }
+
+    if (stepId === 'exit_start') {
+        setFlowIcon('vehicle_exit', stepDomState('exit_start'));
+        if (state === 'in_progress' || state === 'success') {
+            if (iconState('weight_read') === 'idle' && stepDomState('reading_weight') === 'success') {
+                setFlowIcon('weight_read', 'success');
+            }
+            if (
+                iconState('weight_validation') === 'idle' &&
+                stepDomState('validating_weight') === 'success'
+            ) {
+                setFlowIcon('weight_validation', 'success');
+            }
+            if (AppState.anprUpdateActive) {
+                if (iconState('anpr_update') === 'loading') {
+                    setFlowIcon('anpr_update', 'success');
+                }
+            } else if (iconState('anpr_update') === 'idle') {
+                setFlowIcon('anpr_update', 'skipped');
+            }
+        }
+    }
+
+    if (stepId === 'exit_completed') {
+        if (state === 'success' || state === 'in_progress') {
+            setFlowIcon('truck_exited', 'success');
+            if (iconState('vehicle_exit') === 'idle') {
+                setFlowIcon('vehicle_exit', 'success');
+            }
+            scheduleUiResetAfterExit();
+        } else if (state === 'error') {
+            setFlowIcon('truck_exited', 'error');
+        }
+    }
+}
+
+function openFlowDetailsModal() {
+    const modal = document.getElementById('flow-details-modal');
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeFlowDetailsModal() {
+    const modal = document.getElementById('flow-details-modal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function initFlowDetailsUi() {
+    const openBtn = document.getElementById('flow-details-btn');
+    const closeBtn = document.getElementById('flow-details-close');
+    const modal = document.getElementById('flow-details-modal');
+    if (openBtn) openBtn.addEventListener('click', openFlowDetailsModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeFlowDetailsModal);
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeFlowDetailsModal();
+        });
+    }
+    syncFlowIcons();
 }
 
 function formatSensorCuts(sensors) {
@@ -359,7 +532,6 @@ function resetAllSteps() {
     
     if (rfidBox) {
         rfidBox.classList.remove('has-rfid', 'has-truck', 'has-weight');
-        rfidBox.style.display = 'none';
     }
     if (rfidValue) {
         rfidValue.textContent = '--';
@@ -473,6 +645,7 @@ function setStepState(stepId, state, data = {}) {
     const contentElement = step.element.querySelector('.step-content');
     if (!contentElement) {
         console.error(`❌ Content element not found for step: ${stepId}`);
+        syncFlowIcons(stepId, state, data.content);
         return;
     }
     
@@ -502,6 +675,7 @@ function setStepState(stepId, state, data = {}) {
     }
     
     console.log(`Step ${stepId} set to ${state}`, data);
+    syncFlowIcons(stepId, state, data.content);
 }
 
 function markPriorStepsComplete(stepId) {
@@ -567,15 +741,14 @@ function hideResetModal() {
 }
 
 function applyIdleUi() {
+    clearUiResetTimer();
     stopRfidCountdown();
     AppState.failedFromStep = null;
     applyDefaultStepContents();
     AppState.currentPosition = -1;
     AppState.currentWeight = 0;
-    const rfidBox = document.getElementById('rfid-display-box');
-    if (rfidBox) {
-        rfidBox.style.display = 'none';
-    }
+    resetFlowIcons();
+    closeFlowDetailsModal();
     updateCheckSensorPopup();
 }
 
@@ -1179,10 +1352,7 @@ function formatWeightTonKg(weightKg) {
 }
 
 function showTransactionInfoBox() {
-    const rfidBox = document.getElementById('rfid-display-box');
-    if (rfidBox) {
-        rfidBox.style.display = 'block';
-    }
+    // RFID / ANPR / Weight panel stays visible; values update in place.
 }
 
 function updateInfoBoxWeight(weightKg) {
@@ -1610,6 +1780,7 @@ function initCameraModal() {
 document.addEventListener('DOMContentLoaded', () => {
     init();
     initCameraModal();
+    initFlowDetailsUi();
     updateTimestamp();
     setInterval(updateTimestamp, 1000);
 });
