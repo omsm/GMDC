@@ -1,40 +1,40 @@
-Also I want a new more thing, which will be very easier for the operator view.
-Instead of showing all the divs by default, I want simple icons, conveying the divs. The divs will be visible when a button named "Flow Details will be clicked as a big popup modal with X icon to close
+# To-do
 
-in the UI only
-for WB just like current;y we are showing RFID / ANPR / WEIGHT
-RFID:
---
-Truck Number:
---
-Weight: (if weighbridge)
-44 T 970 kg
+## Done (shipped)
 
+### Operator Flow Details UI (v1.2+)
+Simple icons for transaction steps; full step cards in a **Flow Details** modal.
+Shipped on Mines-Checkpoint / Mines-WB dashboards.
 
-and below that instead if divs show
+---
 
+## Pending
 
-show in symbol tick (for success), Cross (for error), loading (for thattransaction happening)
-RFID (icon with on top right cornor on the icon) ---- ANPR (icon) ---- WEIGHT (icon)
+### Digitizer-app: API + MQTT modes (Windows & macOS)
 
+**Scope:** `digitizer-app`, `checkpoint-config`, `Mines-WB`
 
-Weighbridge:
-RFID Read  (when RFID is not read loading icon will be shown, RFID is read then tick icon will be shown, RFID read timeout/error then cross icon will be shown)
+1. **Platform**
+   - digitizer-app must run on **Windows** and **macOS**
 
+2. **Transport mode (user selects while configuring)**
+   - Dropdown: **API** | **MQTT**
+   - **API** — keep current parameters / behavior (`POST /read_stable_weight`, host/port, etc.)
+   - **MQTT** — configure:
+     - Broker host
+     - Broker port
+     - Username (optional)
+     - Password (optional)
+     - Topic to **publish**
+     - Topic to **subscribe**
 
-RFID Validation (APi: https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/rfid-tag and https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/checkpoint/rfid-tag) (When RFID API will be called loading icon, status 200 response is received then tick icon will be shown, if error status non 200 then cross icon will be shown)
+3. **checkpoint-config**
+   - Digitizer section UI: mode dropdown + API fields or MQTT fields as above
+   - Persist choice and fields in `iot_configuration.json`
 
-ANPR Read http://localhost:5001/api/detect (When ANPR API will be called loading icon, response is received and anpr_status is 1 then tick icon will be shown, if anpr_status is 0 or 2 then cross icon will be shown)
+4. **Mines-WB**
+   - Read digitizer mode from IoT config
+   - If API → existing HTTP digitizer client
+   - If MQTT → connect to broker, publish/subscribe on configured topics for weight
 
-ANPR Update (api: https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/status_check https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/checkpoint/check-status) (This is an optional process. If above ANPR read is anpr_status is 1 then this will be skipped, else this condition will work)
-
-
-
-
-VEHICLE EXIT (Boom close API) (When VEHICLE EXIT API will be called and response is received valid then tick icon will be shown, if error then cross icon will be shown)
-
-TRUCK EXITED (When TRUCK exits with sensor cut then loading. After sensor uncuts tick)
-Then after 2 seconds RESET the UI
-
-
-git config --global user.email "omshree1959@gmail.com" && git config --global user.name "OSM"
+**Status:** deferred — implement later.
