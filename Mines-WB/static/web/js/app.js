@@ -330,6 +330,7 @@ function init() {
     // Load application version for info button
     loadAppVersion();
     applySiteBranding();
+    initThemeToggle();
     initUpdaterUI();
 
     // Live updates: MQTT WebSocket on the same host, port 9001
@@ -340,6 +341,39 @@ function init() {
     initApiAlertPopup();
     
     console.log('Dashboard initialized');
+}
+
+const THEME_STORAGE_KEY = 'gmdc_ui_theme';
+
+function getPreferredTheme() {
+    try {
+        const stored = localStorage.getItem(THEME_STORAGE_KEY);
+        if (stored === 'dark' || stored === 'light') return stored;
+    } catch (e) { /* ignore */ }
+    return 'light';
+}
+
+function applyTheme(theme) {
+    const next = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch (e) { /* ignore */ }
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) {
+        btn.title = next === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+        btn.setAttribute('aria-pressed', next === 'dark' ? 'true' : 'false');
+    }
+}
+
+function initThemeToggle() {
+    applyTheme(getPreferredTheme());
+    const btn = document.getElementById('theme-toggle-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
 }
 
 async function applySiteBranding() {

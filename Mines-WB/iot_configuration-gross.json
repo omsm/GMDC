@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "device_ip": "10.10.180.11",
   "checkpoint_type": "gross_wb",
   "wb_type": "unidirectional",
   "server": {

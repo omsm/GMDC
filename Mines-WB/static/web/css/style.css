@@ -62,6 +62,84 @@
     --shadow-xl: 0 8px 16px rgba(9, 30, 66, 0.18);
 }
 
+/* Dark mode — same tokens, inverted surfaces */
+html[data-theme="dark"] {
+    color-scheme: dark;
+    --primary: #4c9aff;
+    --primary-hover: #2684ff;
+    --primary-light: #1c2b41;
+    --secondary: #b3bac5;
+    --success: #36b37e;
+    --success-light: #1b4332;
+    --warning: #ffab00;
+    --warning-light: #3d2e00;
+    --error: #ff5630;
+    --error-light: #3d1510;
+    --info: #4c9aff;
+    --info-light: #1c2b41;
+
+    --neutral-0: #1d2125;
+    --neutral-50: #161a1d;
+    --neutral-100: #22272b;
+    --neutral-200: #2c333a;
+    --neutral-300: #3b444c;
+    --neutral-400: #596773;
+    --neutral-500: #8c9bab;
+    --neutral-600: #9fadbc;
+    --neutral-700: #b6c2cf;
+    --neutral-800: #c7d1db;
+    --neutral-900: #f0f3f5;
+
+    --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.55);
+}
+
+html[data-theme="dark"] .header-login-btn.is-logout:hover {
+    background: #ff7452;
+}
+
+html[data-theme="dark"] .theme-toggle-btn .icon-moon {
+    display: none;
+}
+
+html[data-theme="dark"] .theme-toggle-btn .icon-sun {
+    display: block;
+}
+
+html:not([data-theme="dark"]) .theme-toggle-btn .icon-sun {
+    display: none;
+}
+
+html:not([data-theme="dark"]) .theme-toggle-btn .icon-moon {
+    display: block;
+}
+
+.theme-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--neutral-300);
+    border-radius: 4px;
+    background: var(--neutral-100);
+    color: var(--neutral-800);
+    cursor: pointer;
+}
+
+.theme-toggle-btn:hover {
+    background: var(--neutral-200);
+    color: var(--neutral-900);
+}
+
+.theme-toggle-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
 body {
     font-family: var(--font-family);
     background-color: var(--neutral-50);

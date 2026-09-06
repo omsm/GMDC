@@ -332,7 +332,7 @@ class PDFReportGenerator:
         if not REPORTLAB_AVAILABLE:
             raise ImportError("reportlab is required for PDF generation")
         
-        config = self.config_manager.get_all()
+        config = self.config_manager.get_all_for_frontend()
         setup_info = config.get('setup_info', {})
 
         # Load weighbridge info (ID & Name) from wb_info.json if available

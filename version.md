@@ -1,13 +1,30 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.3**
+**Current version: 1.4**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.3.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.4.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.3 — 2026-09-06 (latest)
+## 1.4 — 2026-09-06 (latest)
+
+Auto device IP from the commissioning PC, plus operator dashboard dark mode.
+
+### Device IP
+- On **checkpoint-config Finish**, detect this PC’s LAN IPv4 and write top-level `device_ip` into `iot_configuration.json`
+- Preference: **Ethernet** first, then Wi-Fi, then other / UDP fallback (`utils/local_ip.py`)
+- Field is **backend-only** — not shown in the commissioning UI, finish toast, or PDF report
+- **Mines-Checkpoint** and **Mines-WB** load `device_ip` from IoT config for OCI payloads; `.env` `DEVICE_IP` is fallback only
+
+### Operator UI — dark mode
+- Header toggle (top right) switches light ↔ dark on **Mines-Checkpoint** and **Mines-WB** dashboards
+- Theme preference stored in browser `localStorage` (`gmdc_ui_theme`) and restored on load
+- Dark theme remaps existing CSS design tokens (no separate stylesheet)
+
+---
+
+## 1.3 — 2026-09-06
 
 Family runtimes: one checkpoint app and one weighbridge app, selected by `checkpoint_type`.
 
@@ -113,6 +130,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.4** | Auto `device_ip` on Finish; dashboard light/dark mode toggle; runtimes read IP from IoT JSON |
 | **1.3** | Family apps `Mines-Checkpoint` / `Mines-WB` via `checkpoint_type`; shared `gmdc_common` |
 | **1.2** | Flow Details icons; Weight Validation UI; demo OCI :8001; Mosquitto/WS coexistence |
 | **1.1** | Shared packages + README; API/error UX; voice; OCI message text; I/O status cascade |

@@ -710,8 +710,8 @@ def disable_debug_mode():
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    """Get all configuration"""
-    return jsonify(config_manager.get_all())
+    """Get configuration for the commissioning UI (excludes backend-only device_ip)."""
+    return jsonify(config_manager.get_all_for_frontend())
 
 
 @app.route('/api/config/wb-type', methods=['POST'])
@@ -811,6 +811,11 @@ def reset_all_config():
 @app.route('/api/config/<section>', methods=['POST'])
 def save_section_config(section):
     """Save configuration for a specific section"""
+    if section == 'device_ip':
+        return jsonify({
+            "status": 403,
+            "message": "device_ip is set automatically when configuration is finished.",
+        }), 403
     if section == 'camera' and not ENABLE_CAMERA_CONFIGURATION:
         return jsonify({
             "status": 400,

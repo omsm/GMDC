@@ -1,5 +1,8 @@
 {
-    "wb_type": "bidirectional",
+    "schema_version": 1,
+    "device_ip": "IP244245525163",
+    "checkpoint_type": "tracking_point_1",
+    "wb_type": "unidirectional",
     "demo_mode": false,
     "truck_anpr_retry_timer": 5,
     "vehicle_crossing_timeout": 60,
@@ -22,25 +25,23 @@
             "manual_match_length": 24,
             "manual_match_sample": "E200001D7507013115006BB9",
             "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
-        },
-        "entry_b": {
-            "ip": "192.168.31.88",
-            "port": "6000",
-            "mode": "SERVER",
-            "make": "identium",
-            "model": "r450",
-            "validated": true,
-            "manual_match_start": -1,
-            "manual_match_length": 0,
-            "manual_match_sample": ""
         }
+    },
+    "handheld_rfid": {
+        "enabled": true,
+        "ip": "",
+        "port": "",
+        "make": "",
+        "model": "",
+        "device_id": "",
+        "validated": false
     },
     "camera": {
         "top": {
             "rtsp_url": "",
             "make": "",
             "model": "",
-            "validated": true
+            "validated": false
         },
         "front": {
             "rtsp_url": "",
@@ -132,16 +133,16 @@
                 "default_signal": "low",
                 "enabled": true,
                 "validated": true,
-                "description": "Idle/validation=FALSE; after grant truck on sensor=TRUE then clears=FALSE \u2192 TL red + boom close"
+                "description": "Idle/validation=FALSE; after grant truck on sensor=TRUE then clears=FALSE → TL red + boom close"
             },
             "wb_sensor": {
-                "pin": "1",
+                "pin": "",
                 "default_signal": "low",
                 "enabled": false,
                 "validated": false
             },
             "exit_sensor": {
-                "pin": "2",
+                "pin": "",
                 "default_signal": "low",
                 "enabled": false,
                 "validated": false
@@ -238,13 +239,13 @@
         "model": ""
     },
     "api_endpoints": {
-        "oci_base_url": "https://gmuatociexp.gmdcltd.co.in",
-        "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/rfid-tag",
-        "anpr_base_url": "http://192.168.31.151:5001",
+        "oci_base_url": "http://localhost:8001",
+        "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/checkpoint/rfid-tag",
+        "anpr_base_url": "http://localhost:8001",
         "anpr_detect_url": "/api/detect",
         "invalid_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number",
-        "update_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/status_check",
-        "boom_close_url": "/ords/gmdc_dicsm/dlms_checkpoint/boom-close",
+        "update_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/checkpoint/check-status",
+        "boom_close_url": "/ords/gmdc_dicsm/dlms_checkpoint/checkpoint_boom_close",
         "reset_checkpoint_url": "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
     },
     "setup_info": {
@@ -255,7 +256,5 @@
         "verification_date": "2026-05-21",
         "remarks": "ok",
         "setup_timestamp": "2026-05-21T04:55:03.066Z"
-    },
-    "schema_version": 1,
-    "checkpoint_type": "mines_entry"
+    }
 }

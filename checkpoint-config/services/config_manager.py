@@ -175,6 +175,7 @@ CANONICAL_CONFIG_KEY_ORDER = (
     "schema_version",
     "checkpoint_type",
     "wb_type",
+    "device_ip",
     "server",
     "rfid",
     "rfids",
@@ -860,6 +861,7 @@ def _invalidate_layout_dependent_sections(config: dict) -> None:
 # Default configuration for GMDC checkpoint / weighbridge apps
 DEFAULT_CONFIG = {
     "schema_version": 1,
+    "device_ip": "",
     "checkpoint_type": "mines_entry",
     "wb_type": "unidirectional",
     "server": {
@@ -1170,11 +1172,24 @@ class ConfigManager:
             return False
     
     def get_all(self):
-        """Get all configuration"""
+        """Get all configuration (includes backend-only fields such as device_ip)."""
         return self.config
+
+    def get_all_for_frontend(self):
+        """
+        Config payload for the commissioning UI.
+
+        device_ip is auto-detected on Finish and must not appear in the UI.
+        """
+        data = self._deep_copy(self.config)
+        if isinstance(data, dict):
+            data.pop("device_ip", None)
+        return data
     
     def get_section(self, section):
         """Get configuration for a specific section"""
+        if section == "device_ip":
+            return {}
         return self.config.get(section, {})
 
     def get_wb_type(self) -> str:
@@ -1302,13 +1317,23 @@ class ConfigManager:
         return validate_io_pin_uniqueness(io_data, layout)
     
     def save_all(self, data):
-        """Save all configuration"""
-        self.config = data
+        """Save all configuration (preserve backend-only device_ip from UI payloads)."""
+        existing_device_ip = self.config.get("device_ip", "") if isinstance(self.config, dict) else ""
+        payload = data if isinstance(data, dict) else {}
+        # Never accept device_ip from the frontend
+        payload = dict(payload)
+        payload.pop("device_ip", None)
+        self.config = payload
+        if existing_device_ip:
+            self.config["device_ip"] = existing_device_ip
         self._sanitize_config_for_layout(self.config)
         return self._save_config()
     
     def save_section(self, section, data):
         """Save configuration for a specific section"""
+        if section == "device_ip":
+            # Auto-set on finalize only — not editable via API/UI
+            return False
         if section == "rfids":
             self.config["rfids"] = (
                 order_rfids_section(data) if isinstance(data, dict) else {}
@@ -1655,7 +1680,7 @@ class ConfigManager:
             return {
                 "status": 200,
                 "message": "Configuration finalized and saved successfully",
-                "file": CONFIG_FILE
+                "file": CONFIG_FILE,
             }
         except IOError as e:
             return {
@@ -1688,6 +1713,27 @@ class ConfigManager:
         # Update setup_info with verification date
         if 'setup_info' in final:
             final['setup_info']['verification_date'] = datetime.now().strftime('%Y-%m-%d')
+
+        # Capture this PC's LAN IP (Ethernet preferred over Wi-Fi) for OCI device_ip
+        try:
+            from utils.local_ip import detect_device_ip
+
+            detected = detect_device_ip()
+            if detected:
+                final["device_ip"] = detected
+            else:
+                final.setdefault("device_ip", "")
+        except Exception as e:
+            # Never block finish on IP detection failure
+            final.setdefault("device_ip", "")
+            try:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "device_ip detection failed during finalize: %s", e
+                )
+            except Exception:
+                pass
         
         # Remove internal fields not needed by weighbridge_app
         fields_to_remove = ['ip_range', '_meta']

@@ -221,9 +221,21 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     )
     brand = get_brand(checkpoint_type)
 
+    # Prefer LAN IP written by checkpoint-config finish; .env DEVICE_IP is fallback only
+    config_device_ip = str(raw.get("device_ip") or "").strip()
+    env_device_ip = str(os.getenv("DEVICE_IP") or "").strip()
+    device_ip = config_device_ip or env_device_ip or "192.168.10.223"
+    if config_device_ip:
+        logger.info("device_ip from iot_configuration.json: %s", config_device_ip)
+    elif env_device_ip:
+        logger.warning(
+            "device_ip missing in IoT config - using DEVICE_IP from .env: %s",
+            env_device_ip,
+        )
+
     settings = Settings(
         demo_mode=_env_bool("DEMO_MODE", raw.get("demo_mode", True)),
-        device_ip=os.getenv("DEVICE_IP", "192.168.10.223"),
+        device_ip=device_ip,
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
         checkpoint_type=checkpoint_type,

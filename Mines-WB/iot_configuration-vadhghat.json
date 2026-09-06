@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "device_ip": "10.10.180.12",
   "checkpoint_type": "vadghat_wb",
   "wb_type": "unidirectional",
   "server": {
