@@ -1,34 +1,55 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.2**
+**Current version: 1.3**
 
-Per-app `VERSION` files may differ (e.g. Mine-entry / Tracking-point-1 `1.0.0`, TareWb-App `0.1.0`, checkpoint-config `0.1.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.3.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.2 — 2026-09-05 (latest)
+## 1.3 — 2026-09-06 (latest)
+
+Family runtimes: one checkpoint app and one weighbridge app, selected by `checkpoint_type`.
+
+### Family apps (workspace layout)
+- **`Mines-Checkpoint/`** — single checkpoint runtime for:
+  - `mines_entry`, `tracking_1`, `tracking_2`, `mines_exit`
+  - OCI path defaults and boom-close body style (`entry` vs `tracking`) follow `checkpoint_type`
+- **`Mines-WB/`** — single weighbridge runtime for:
+  - `tare_wb`, `vadaghat_wb`, `gross_wb`
+  - Same perfected TareWb operator UI (Flow Details + Weight Read / Weight Validation)
+- Shared **`gmdc_common`** for both families
+- Sample configs under each app’s `samples/` folder
+- Dashboard logo / title / idle display follow `checkpoint_type` via `/api/status`
+- Root **README.md** updated for the two-family layout
+- Legacy folders `Mine-entry/`, `Tracking-point-1/`, `TareWb-App/` kept as reference copies
+
+### How to switch site type
+- Set `checkpoint_type` in `iot_configuration.json`, or `CHECKPOINT_TYPE` in `.env`
+- Copy a profile from `samples/` over `iot_configuration.json` when commissioning a new PC
+
+---
+
+## 1.2 — 2026-09-05
 
 Operator-facing flow icons, local OCI simulation, and MQTT broker coexistence.
 
 ### Operator UI
 - Flow Details modal: step cards hidden by default; open via **Flow Details**, close with **X**
 - Icon strip with loading / success / error / skipped states
-  - **Checkpoints (Mine-entry, Tracking-point-1):** RFID Read → RFID Validation → ANPR Read → ANPR Update → Vehicle Exit → Truck Exited
-  - **TareWb-App:** same plus **Weight Read** and **Weight Validation** (OCI weight-details)
+  - **Checkpoints:** RFID Read → RFID Validation → ANPR Read → ANPR Update → Vehicle Exit → Truck Exited
+  - **Weighbridge:** same plus **Weight Read** and **Weight Validation** (OCI weight-details)
 - ANPR Update skipped when ANPR match (`anpr_status = 1`)
 - UI auto-reset ~2 seconds after Truck Exited succeeds
 
 ### Demo / simulation
-- `TareWb-App/demo-app/apis.py` local OCI + digitizer on **http://localhost:8001**
-- Switchable scenarios (`success`, `rfid_invalid`, `weight_fail`, unreachable/confirm/status variants) via `POST /sim/scenario`
-- Config/env can point `OCI_BASE_URL` at localhost for offline testing
+- Local OCI + digitizer simulator on **http://localhost:8001** (`demo-app/apis.py`)
+- Switchable scenarios via `POST /sim/scenario`
 
 ### Platform / MQTT
 - If Mosquitto already owns **:9001**, skip in-app WebSocket broker (INFO, not ERROR)
 - Publish via Mosquitto TCP **:1883**; dashboard still uses `ws://…:9001`
-- Applied across Mine-entry, Tracking-point-1, and TareWb-App
-- checkpoint-config: Mosquitto Homebrew `sbin` detection; macOS `afplay` audio test; pywebview lifecycle so closing the window stops Flask
+- checkpoint-config: Mosquitto Homebrew `sbin` detection; macOS `afplay` audio test; pywebview lifecycle
 
 ---
 
@@ -84,7 +105,7 @@ First complete yard install on this codebase: checkpoint + weighbridge FSMs, har
 ```
 Mines entry → Tare WB → Tracking-1 → Vadaghat → Tracking-2 → Gross WB → Mines exit
 ```
-Tracking-2 and Mines Exit reuse the checkpoint family (profiles only in 1.0).
+Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkpoint in 1.3).
 
 ---
 
@@ -92,7 +113,8 @@ Tracking-2 and Mines Exit reuse the checkpoint family (profiles only in 1.0).
 
 | Version | Focus |
 |---------|--------|
-| **1.2** | Flow Details icons, Weight Validation UI, demo OCI :8001, Mosquitto/WS coexistence, macOS config-tool fixes |
+| **1.3** | Family apps `Mines-Checkpoint` / `Mines-WB` via `checkpoint_type`; shared `gmdc_common` |
+| **1.2** | Flow Details icons; Weight Validation UI; demo OCI :8001; Mosquitto/WS coexistence |
 | **1.1** | Shared packages + README; API/error UX; voice; OCI message text; I/O status cascade |
 | **1.0** | Core checkpoint + weighbridge runtimes, hardware, OCI/ANPR, dashboards, tests |
 
@@ -100,4 +122,4 @@ Tracking-2 and Mines Exit reuse the checkpoint family (profiles only in 1.0).
 
 ## Notes for the next release
 
-Open items tracked outside this file (e.g. `to-do.md.md`): further operator UI polish, Tracking-2 / Mines Exit runtimes, digitizer port alignment (8800 vs config defaults), bidirectional ENTRY_B hardware swap.
+Open items tracked outside this file (e.g. `to-do.md.md`): further operator UI polish, digitizer port alignment (8800 vs config defaults), bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.
