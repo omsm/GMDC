@@ -9,7 +9,7 @@
     "validated": true
   },
   "rfid": {
-    "ip": "192.168.31.87",
+    "ip": "192.168.31.5",
     "port": "5555",
     "mode": "API",
     "make": "Zebra",
@@ -75,7 +75,7 @@
     "output_mode": "relay",
     "connection": {
       "ethernet": {
-        "ip": "192.168.63.89",
+        "ip": "192.168.31.89",
         "port": "502",
         "timeout": "1"
       },

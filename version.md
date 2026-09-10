@@ -1,13 +1,32 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.5**
+**Current version: 1.6**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.5.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.6.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.5 — 2026-09-08 (latest)
+## 1.6 — 2026-09-10 (latest)
+
+Updated default Zebra RFID CUSTOM **mode payload** in shared `gmdc_common`, plus package bump.
+
+### RFID mode payload (`gmdc_common`)
+- Default `DEFAULT_MODE_PAYLOAD` in `gmdc_common/gmdc_common/services/rfid_control.py` retuned for current site readers:
+  - Antenna **5**, transmit power **30**
+  - `antennaStopCondition` duration **100**
+  - Query: `tagpopulation` 10, `sel` **NOT_SL**, session **S1**
+  - TID `selects` mask (`800600`) for inventory filtering
+  - Report filter **PER_ANTENNA** duration **1**
+- Per-site override still supported via `mode_payload` under the RFID section in `iot_configuration.json` (falls back to the shared default when omitted)
+- `gmdc-common` package version set to **0.2.8**
+
+### Mines-Checkpoint
+- `POST /rfid_data` logs the inbound RFID JSON payload for field debugging
+
+---
+
+## 1.5 — 2026-09-08
 
 Operator ANPR toggle and clarified OCI invalid-truck / status-check rules, including CE trips on Mines-Checkpoint.
 
@@ -152,6 +171,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.6** | Retuned default Zebra RFID `DEFAULT_MODE_PAYLOAD` in `gmdc_common` (0.2.8); optional per-site `mode_payload` override |
 | **1.5** | ANPR ON/OFF toggle; invalid-truck always; status-check on mismatch 0/2; CE trips require check-status for all ANPR cases (Checkpoint) |
 | **1.4** | Auto `device_ip` on Finish; dashboard light/dark mode toggle; runtimes read IP from IoT JSON |
 | **1.3** | Family apps `Mines-Checkpoint` / `Mines-WB` via `checkpoint_type`; shared `gmdc_common` |

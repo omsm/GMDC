@@ -6,7 +6,7 @@ Flow (PDF):
   grant entry (TL green, boom open) → entry sensor → reset
 
 Hardware (iot_configuration / modbus_tcp_app):
-  Modbus TCP 192.168.63.89:502 slave=1, read_fc=2 DI 0/8, write_fc=5 DO 0/8
+  Modbus TCP 192.168.31.89:502 slave=1, read_fc=2 DI 0/8, write_fc=5 DO 0/8
   DO0/1 entry traffic light, DO2/3 entry boom, DI0 entry sensor
 """
 

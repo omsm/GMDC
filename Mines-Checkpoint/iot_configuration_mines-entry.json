@@ -11,7 +11,7 @@
     },
     "rfids": {
         "entry_a": {
-            "ip": "192.168.31.87",
+            "ip": "192.168.31.5",
             "port": "5555",
             "mode": "API",
             "make": "Zebra",
@@ -76,7 +76,7 @@
         "output_mode": "direct",
         "connection": {
             "ethernet": {
-                "ip": "192.168.63.89",
+                "ip": "192.168.31.89",
                 "port": "502",
                 "timeout": "1"
             },
@@ -241,7 +241,7 @@
     "api_endpoints": {
         "oci_base_url": "https://gmuatociexp.gmdcltd.co.in",
         "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/rfid-tag",
-        "anpr_base_url": "http://192.168.31.151:5001",
+        "anpr_base_url": "http://localhost:5001",
         "anpr_detect_url": "/api/detect",
         "invalid_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number",
         "update_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/status_check",

@@ -16,32 +16,45 @@ logger = logging.getLogger("gmdc_common.services.rfid_control")
 
 # Default CUSTOM mode payload (antennas 1-4, site-tuned transmit power)
 DEFAULT_MODE_PAYLOAD: Dict[str, Any] = {
-    "antennas": [1, 2, 3, 4],
-    "delayBetweenAntennaCycles": {
-        "duration": 0,
-        "type": "DISABLED",
-    },
-    "environment": "AUTO_DETECT",
-    "query": {
-        "sel": "ALL",
-        "session": "S1",
-        "target": "A",
-    },
-    "reportFilter": {
-        "duration": 0,
-        "type": "PER_ANTENNA",
-    },
-    "tagMetaData": [
-        "ANTENNA",
-        "RSSI",
-        "SEEN_COUNT",
-        "CHANNEL",
-        "CRC",
-        "PC",
-        "PHASE",
-    ],
-    "transmitPower": [17, 1, 1, 1],
-    "type": "CUSTOM",
+  "type": "CUSTOM",
+  "antennaStopCondition": {
+    "type": "DURATION",
+    "value": 100
+  },
+  "antennas": [
+    5
+  ],
+  "query": {
+    "tagpopulation": 10,
+    "sel": "NOT_SL",
+    "session": "S1",
+    "target": "A"
+  },
+  "modeSpecificSettings": {
+    "interval": {
+      "unit": "seconds",
+      "value": 0
+    }
+  },
+  "selects": [
+    {
+      "target": "S1",
+      "action": "INVB_NOTHING",
+      "membank": "TID",
+      "pointer": 6,
+      "length": 24,
+      "mask": "800600"
+    }
+  ],
+  "transmitPower": [
+    30
+  ],
+  "radioStartConditions": {},
+  "radioStopConditions": {},
+  "reportFilter": {
+    "duration": 1,
+    "type": "PER_ANTENNA"
+  }
 }
 
 

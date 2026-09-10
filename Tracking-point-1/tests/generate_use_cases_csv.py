@@ -43,13 +43,13 @@ ROWS = [
         "Positive",
         "Idle hardware initialize - TL red and boom closed on startup",
         "1. Set DEMO_MODE=false and correct Modbus IP.\n2. Start application.\n3. Observe DO coils and logs.\n4. Confirm TrafficLight RED and BoomBarrier CLOSED.",
-        "Controller 192.168.63.89:502; DO0=red DO1=green DO2=open DO3=close.",
+        "Controller 192.168.31.89:502; DO0=red DO1=green DO2=open DO3=close.",
     ],
     [
         "UC-005",
         "Positive",
         "Connect to real Modbus I/O controller (FC2 DI / FC5 DO)",
-        "1. Set DEMO_MODE=false in .env.\n2. Confirm iot_configuration ethernet IP 192.168.63.89 port 502 slave 1.\n3. Start application.\n4. Verify log ModbusTCP connected read_fc=2 write_fc=5.",
+        "1. Set DEMO_MODE=false in .env.\n2. Confirm iot_configuration ethernet IP 192.168.31.89 port 502 slave 1.\n3. Start application.\n4. Verify log ModbusTCP connected read_fc=2 write_fc=5.",
         "Must NOT use DemoIOController when running on site hardware.",
     ],
     [

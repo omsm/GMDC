@@ -69,7 +69,7 @@ ROWS = [
     ["TC-SEN-004", "Sensor", "Crossing", "Rising edge alone does not close boom", "WAIT_CROSSING", "1. Sensor goes TRUE and stays TRUE", "sensor TRUE", "Boom remains OPEN until FALSE after occupied", "P0", "Negative"],
     ["TC-SEN-005", "Sensor", "Timeout", "Crossing timeout auto IDLE if no clear", "WAIT_CROSSING; vehicle_crossing_timeout set", "1. Do not clear sensor until timeout", "e.g. 60s", "Auto IDLE boom closed TL red after timeout", "P1", "Positive"],
     # Modbus / TL
-    ["TC-HW-001", "Hardware", "Modbus", "Connect real Modbus controller", "DEMO_MODE=false; 192.168.63.89:502 up", "1. Start app 2. Check logs", "IP 192.168.63.89 port 502 slave 1", "ModbusTCP connected read_fc=2 write_fc=5; not DemoIO", "P0", "Positive"],
+    ["TC-HW-001", "Hardware", "Modbus", "Connect real Modbus controller", "DEMO_MODE=false; 192.168.31.89:502 up", "1. Start app 2. Check logs", "IP 192.168.31.89 port 502 slave 1", "ModbusTCP connected read_fc=2 write_fc=5; not DemoIO", "P0", "Positive"],
     ["TC-HW-002", "Hardware", "Modbus", "DEMO_MODE uses DemoIOController", "DEMO_MODE=true", "1. Start app", "DEMO_MODE=true", "Log DemoIOController connected", "P2", "Positive"],
     ["TC-HW-003", "Hardware", "TL", "IDLE applies TL red and boom closed", "App start or reset", "1. Observe DO0-DO3", "Idle hardware", "Red ON green OFF; boom close asserted", "P0", "Positive"],
     ["TC-HW-004", "Hardware", "TL", "Grant applies TL green", "Successful validation", "1. Observe after grant", "grant path", "Green ON red OFF", "P0", "Positive"],

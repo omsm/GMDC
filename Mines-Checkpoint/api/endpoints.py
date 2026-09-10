@@ -116,6 +116,9 @@ def register_routes(app: Flask) -> None:
         """
         try:
             payload: Any = request.get_json(force=True, silent=False)
+            logger.info("-" * 50)
+            logger.info("rfid_data payload: %s", payload)
+            logger.info("-" * 50)
         except Exception as e:
             logger.error("rfid_data invalid JSON: %s", e)
             return jsonify({"status": "error", "message": str(e)}), 400

@@ -244,7 +244,7 @@ def choose_int(name: str, cli_value: Optional[int], default_value: int, minimum:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Modbus TCP test app for Ethernet-based controllers")
-    parser.add_argument("--host", default="192.168.63.89", help="Controller IP")
+    parser.add_argument("--host", default="192.168.31.89", help="Controller IP")
     parser.add_argument("--port", type=int, default=502, help="Modbus TCP port")
     parser.add_argument("--slave", type=int, default=1, help="Modbus slave/unit/device id")
     parser.add_argument("--timeout", type=float, default=1.0, help="TCP timeout in seconds")
