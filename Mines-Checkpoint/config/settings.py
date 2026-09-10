@@ -70,12 +70,16 @@ class Settings:
     # Seconds to wait for exit sensor after entry granted before auto-IDLE
     vehicle_crossing_timeout: float = 10.0
 
+    # When False, skip /api/detect; invalid-truck uses anpr_status=0
+    anpr_enabled: bool = True
+
     mqtt_broker: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_topic_tx: str = "iot_display/application_to_display"
     mqtt_topic_rx: str = "iot_display/display_to_application"
     display_type: str = "mqtt"
 
+    config_path: str = ""
     raw_config: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -290,6 +294,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             or raw.get("vehicle_crossing_timeout")
             or 10
         ),
+        anpr_enabled=_env_bool(
+            "ANPR_ENABLED",
+            bool(raw.get("anpr_enabled", True)),
+        ),
         mqtt_broker=os.getenv("MQTT_BROKER")
         or display.get("ip")
         or "127.0.0.1",
@@ -301,13 +309,40 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "mqtt_topic_rx", "iot_display/display_to_application"
         ),
         display_type=(display.get("type") or "mqtt").lower(),
+        config_path=str(path),
         raw_config=raw,
     )
     logger.info(
-        "Mines-Checkpoint type=%s boom_style=%s OCI=%s ANPR=%s",
+        "Mines-Checkpoint type=%s boom_style=%s anpr_enabled=%s OCI=%s ANPR=%s",
         settings.checkpoint_type,
         settings.boom_close_style,
+        settings.anpr_enabled,
         settings.oci_base_url,
         settings.anpr_detect_url,
     )
     return settings
+
+
+def persist_anpr_enabled(settings: Settings, enabled: bool) -> bool:
+    """Update in-memory settings and write anpr_enabled to iot_configuration.json."""
+    settings.anpr_enabled = bool(enabled)
+    if isinstance(settings.raw_config, dict):
+        settings.raw_config["anpr_enabled"] = bool(enabled)
+    path = Path(settings.config_path) if settings.config_path else Path()
+    if not path.is_file():
+        logger.warning("Cannot persist anpr_enabled - config file missing: %s", path)
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+        data["anpr_enabled"] = bool(enabled)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+            f.write("\n")
+        logger.info("Persisted anpr_enabled=%s to %s", enabled, path)
+        return True
+    except (OSError, json.JSONDecodeError, TypeError) as e:
+        logger.error("Failed to persist anpr_enabled: %s", e)
+        return False

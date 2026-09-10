@@ -1,6 +1,6 @@
 {
     "wb_type": "bidirectional",
-    "device_ip": "92.168.10.223",
+    "device_ip": "192.168.10.223",
     "demo_mode": false,
     "truck_anpr_retry_timer": 5,
     "vehicle_crossing_timeout": 60,

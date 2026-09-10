@@ -1417,7 +1417,7 @@ body {
 .flow-details-modal-content .camera-modal-body {
     max-height: calc(90vh - 72px);
     overflow: auto;
-    background: #f8fafc;
+    background: rgb(3, 7, 14);
     padding: 16px;
 }
 

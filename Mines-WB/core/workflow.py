@@ -1239,13 +1239,12 @@ class MinesWbWorkflow:
         """
         ANPR branch (tare WB):
 
-        anpr_status 1: top photo → invalid_truck → weight → weight_details
-                       → boom_close(current truck_details) → exit
-        anpr_status 0: top photo → invalid_truck → status_check loop
-                       → (vehicleStatus=1) weight → weight_details
-                       → boom_close(truck_details) → exit
-        anpr_status 2: same as status 0 (status_check loop); when
-                       vehicleStatus=1 continue like status 1
+        Always: invalid-truck after ANPR (or disabled stub).
+        anpr_status 1: weight → weight_details → boom_close → exit
+                       (no status-check)
+        anpr_status 0/2: status_check loop until vehicleStatus=1 → same weight path
+        ANPR disabled: skip detect → invalid-truck(anpr_status=2) → weight path
+                       (no status-check)
         """
         sm = self.ctx.state_machine
         oci = self.ctx.oci
@@ -1254,6 +1253,53 @@ class MinesWbWorkflow:
         assert sm and oci and settings and txn
 
         parsed = parse_truck_details(txn.truck_details)
+
+        # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2
+        # then continue weight/exit (no status-check — not a CE checkpoint).
+        if not bool(getattr(settings, "anpr_enabled", True)):
+            logger.info(
+                "ANPR disabled - skipping /api/detect and status_check; "
+                "invalid-truck anpr_status=2 then weight details"
+            )
+            txn.anpr_status = 2
+            txn.anpr_raw = {
+                "vehicleNo_web": txn.vehicle_no or "",
+                "vehicleNo_anpr": "",
+                "rfid": txn.rfid or "",
+                "device_ip": settings.device_ip,
+                "anpr_status": 2,
+            }
+            self._ui_status(
+                STEP_VALIDATING_ANPR,
+                "success",
+                "ANPR skipped (disabled by operator).",
+            )
+            self._capture_top_photo()
+            top_photo_name = (txn.top_image or "").strip() or "error.jpg"
+            txn.top_image = top_photo_name
+            txn.anpr_raw = dict(txn.anpr_raw or {})
+            txn.anpr_raw["top_image"] = top_photo_name
+            invalid_resp = oci.invalid_truck_number(
+                rfid=txn.rfid,
+                truck_number=txn.vehicle_no,
+                device_ip=settings.device_ip,
+                anpr_payload=txn.anpr_raw,
+                anpr_status=2,
+                top_image=top_photo_name,
+                token=parsed.get("token_no") or "",
+            )
+            if is_api_failure(invalid_resp):
+                self._ui_api_failure(
+                    STEP_VALIDATING_ANPR,
+                    invalid_resp,
+                    fallback="Invalid-truck service not reachable",
+                )
+            sm.trigger(Event.ANPR_MATCH)
+            self._final_weight_and_details(
+                boom_close_after=txn.truck_details
+            )
+            return
+
         anpr = oci.anpr_detect(
             vehicle_number=txn.vehicle_no,
             rfid=txn.rfid,
@@ -1284,8 +1330,7 @@ class MinesWbWorkflow:
             STEP_VALIDATING_ANPR, "info", "Validating vehicle number (ANPR)."
         )
 
-        # Status 0 / 1 / 2 - top photo, then branch.
-        # Same photo name used by invalid-truck (top_image) and weight-details (top_image_name).
+        # Always invalid-truck. Status-check only for ANPR mismatch 0/2.
         self._capture_top_photo()
         top_photo_name = (txn.top_image or "").strip() or "error.jpg"
         txn.top_image = top_photo_name

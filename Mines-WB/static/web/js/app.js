@@ -388,6 +388,9 @@ async function applySiteBranding() {
         if (logoEl) logoEl.textContent = logo;
         if (titleEl) titleEl.textContent = 'Weighbridge';
         document.title = name + ' - Dashboard';
+        if (typeof data.anpr_enabled === 'boolean') {
+            setAnprToggleUi(data.anpr_enabled);
+        }
     } catch (e) {
         console.warn('Site branding unavailable:', e);
     }
@@ -805,6 +808,55 @@ function applyIdleUi() {
 }
 
 let operatorLoggedIn = false;
+let anprEnabled = true;
+
+function setAnprToggleUi(enabled) {
+    anprEnabled = !!enabled;
+    const btn = document.getElementById('anpr-toggle-button');
+    if (!btn) return;
+    btn.textContent = anprEnabled ? 'ANPR: ON' : 'ANPR: OFF';
+    btn.classList.toggle('is-on', anprEnabled);
+    btn.classList.toggle('is-off', !anprEnabled);
+    btn.title = anprEnabled
+        ? 'ANPR enabled — click to disable (skip /api/detect)'
+        : 'ANPR disabled — click to enable';
+}
+
+async function refreshAnprToggle() {
+    try {
+        const resp = await fetch('/api/anpr-enabled', { cache: 'no-store' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        setAnprToggleUi(data.anpr_enabled !== false);
+    } catch (e) {
+        console.warn('Failed to load ANPR toggle state:', e);
+    }
+}
+
+async function handleAnprToggle() {
+    if (!operatorLoggedIn) return;
+    const btn = document.getElementById('anpr-toggle-button');
+    const next = !anprEnabled;
+    if (btn) btn.disabled = true;
+    try {
+        const resp = await fetch('/api/anpr-enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ anpr_enabled: next }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.message || ('HTTP ' + resp.status));
+        }
+        setAnprToggleUi(data.anpr_enabled !== false);
+    } catch (e) {
+        console.error('ANPR toggle failed:', e);
+        alert('Failed to update ANPR setting. Please try again.');
+        await refreshAnprToggle();
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
 
 function setOperatorUnlocked(unlocked) {
     operatorLoggedIn = !!unlocked;
@@ -815,6 +867,9 @@ function setOperatorUnlocked(unlocked) {
         loginBtn.textContent = operatorLoggedIn ? 'Logout' : 'Login';
         loginBtn.classList.toggle('is-logout', operatorLoggedIn);
         loginBtn.disabled = false;
+    }
+    if (operatorLoggedIn) {
+        refreshAnprToggle();
     }
 }
 

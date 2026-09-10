@@ -62,6 +62,7 @@ class AppContext:
             "checkpoint_type": getattr(settings, "checkpoint_type", "") if settings else "",
             "display_name": getattr(settings, "display_name", "") if settings else "",
             "logo_initials": getattr(settings, "logo_initials", "") if settings else "",
+            "anpr_enabled": bool(getattr(settings, "anpr_enabled", True)) if settings else True,
             "service": getattr(settings, "service_name", "GMDC Mines Checkpoint")
             if settings
             else "GMDC Mines Checkpoint",

@@ -70,6 +70,7 @@ class AppContext:
             "checkpoint_type": getattr(self.settings, "checkpoint_type", None),
             "display_name": getattr(self.settings, "display_name", None),
             "logo_initials": getattr(self.settings, "logo_initials", None),
+            "anpr_enabled": bool(getattr(self.settings, "anpr_enabled", True)),
             "wb_type": getattr(self.settings, "wb_type", None),
             "config_path": getattr(self.settings, "config_path", None),
             "digitizer_url": getattr(self.settings, "digitizer_url", None),

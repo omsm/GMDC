@@ -23,7 +23,8 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 # Digitizer weight — keep in band for default TARE_DETAILS (tare=25950 ± 500).
-DEFAULT_WEIGHT = float(os.getenv("SIM_WEIGHT_KG", "25950"))
+# DEFAULT_WEIGHT = float(os.getenv("SIM_WEIGHT_KG", "25950")) # TareWb
+DEFAULT_WEIGHT = float(os.getenv("SIM_WEIGHT_KG", "44950")) # VadhghatWb
 
 # Pipe format used by Mines WB: trip|rfid|veh|gross|tare|tol|token|ip|veh
 TARE_DETAILS = (

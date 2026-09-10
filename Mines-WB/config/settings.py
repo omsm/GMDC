@@ -105,6 +105,9 @@ class Settings:
     voice_error_prefix: bool = True
     voice_path: str = ""  # resolved absolute directory
 
+    # When False, skip /api/detect; invalid-truck uses anpr_status=0
+    anpr_enabled: bool = True
+
     config_path: str = ""
     raw_config: Dict[str, Any] = field(default_factory=dict)
 
@@ -479,6 +482,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             os.getenv("VOICE_DIRECTORY") or voice.get("directory") or "voice"
         ),
         voice_error_prefix=bool(voice.get("error_prefix", True)),
+        anpr_enabled=_env_bool(
+            "ANPR_ENABLED",
+            bool(raw.get("anpr_enabled", True)),
+        ),
         config_path=str(path),
         raw_config=raw,
     )
@@ -495,14 +502,40 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     )
     logger.info(
         "Mines WB settings: type=%s config=%s digitizer=%s OCI=%s ANPR=%s "
-        "demo=%s voice=%s top_camera=%s",
+        "anpr_enabled=%s demo=%s voice=%s top_camera=%s",
         settings.checkpoint_type,
         settings.config_path,
         settings.digitizer_url,
         settings.oci_base_url,
         settings.anpr_detect_url,
+        settings.anpr_enabled,
         settings.demo_mode,
         settings.voice_path if settings.use_audio() else "off",
         "set" if settings.top_camera_rtsp_url else "missing",
     )
     return settings
+
+
+def persist_anpr_enabled(settings: Settings, enabled: bool) -> bool:
+    """Update in-memory settings and write anpr_enabled to iot_configuration.json."""
+    settings.anpr_enabled = bool(enabled)
+    if isinstance(settings.raw_config, dict):
+        settings.raw_config["anpr_enabled"] = bool(enabled)
+    path = Path(settings.config_path) if settings.config_path else Path()
+    if not path.is_file():
+        logger.warning("Cannot persist anpr_enabled - config file missing: %s", path)
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+        data["anpr_enabled"] = bool(enabled)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+            f.write("\n")
+        logger.info("Persisted anpr_enabled=%s to %s", enabled, path)
+        return True
+    except (OSError, json.JSONDecodeError, TypeError) as e:
+        logger.error("Failed to persist anpr_enabled: %s", e)
+        return False

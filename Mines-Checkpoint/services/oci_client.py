@@ -49,13 +49,16 @@ class OCIResponse:
 
 def parse_truck_details(truck_details: str) -> Dict[str, str]:
     """
-    Parse pipe-delimited truck_details:
-    T|{rfid}|{vehicle_no}|{weight}|...|{token}|{device_ip}
-    Index: 0=T, 1=rfid, 2=vehicle_no, 3=weight, ..., -2=token-ish, -1=device_ip
+    Parse pipe-delimited truck_details.
+
+    Examples:
+      T|rfid|vehicle|weight|...|token|device_ip
+      CE|rfid|vehicle|gross|tare|tol|token|device_ip|vehicle
     """
     parts = [p.strip() for p in (truck_details or "").split("|")]
     result: Dict[str, str] = {
         "raw": truck_details or "",
+        "prefix": parts[0] if parts else "",
         "rfid": "",
         "vehicle_no": "",
         "token_no": "",
@@ -68,11 +71,39 @@ def parse_truck_details(truck_details: str) -> Dict[str, str]:
     if len(parts) >= 4:
         result["weight"] = parts[3]
     if len(parts) >= 7:
-        # Example: T|rfid|veh|12500|45000|500|TRIP-...|192.168...
         result["token_no"] = parts[6]
     if len(parts) >= 2:
-        result["device_ip"] = parts[-1]
+        prefix = (parts[0] or "").strip().upper()
+        # CE responses append vehicle_no again after device_ip
+        if prefix == "CE" and len(parts) >= 8:
+            result["device_ip"] = parts[7]
+        else:
+            result["device_ip"] = parts[-1]
     return result
+
+
+def truck_details_prefix(truck_details: str) -> str:
+    """First pipe segment of truck_details (e.g. CE, T, V, G)."""
+    raw = (truck_details or "").strip()
+    if not raw:
+        return ""
+    return raw.split("|", 1)[0].strip().upper()
+
+
+def is_ce_truck_details(truck_details: str) -> bool:
+    """CE|… trips require check-status until statusCode 200 after invalid-truck."""
+    return truck_details_prefix(truck_details) == "CE"
+
+
+def status_code_from_response(resp: OCIResponse) -> Optional[int]:
+    """Read numeric statusCode from check-status / OCI JSON body."""
+    raw = getattr(resp, "raw", None) or {}
+    if "statusCode" not in raw:
+        return None
+    try:
+        return int(raw["statusCode"])
+    except (TypeError, ValueError):
+        return None
 
 
 def build_invalid_truck_payload(
@@ -530,7 +561,10 @@ class OCIClient:
         elif "statusCode" in resp.raw:
             try:
                 code = int(resp.raw["statusCode"])
-                resp.status = 0 if code >= 400 else 0
+                # Keep body statusCode on resp.status when vehicleStatus absent
+                # (CE check-status success is statusCode == 200).
+                resp.status = code
+                resp.ok = code == 200
             except (TypeError, ValueError):
                 resp.status = 0
         return resp

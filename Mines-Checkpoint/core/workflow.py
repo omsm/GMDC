@@ -29,7 +29,12 @@ from services.frontend_mqtt import (
     STEP_VALIDATING_RFID,
     STEP_WAIT_CROSSING,
 )
-from services.oci_client import OCIResponse, parse_truck_details
+from services.oci_client import (
+    OCIResponse,
+    is_ce_truck_details,
+    parse_truck_details,
+    status_code_from_response,
+)
 from services.api_errors import (
     KIND_UNREACHABLE,
     extract_api_message,
@@ -658,13 +663,51 @@ class CheckpointWorkflow:
             return
 
         sm.trigger(Event.RFID_VALID)  # -> DISPLAY_TRUCK
-        self._ui_status(
-            STEP_VALIDATING_RFID,
-            "success",
-            f"Truck No: {txn.vehicle_no or txn.validated_rfid}",
-        )
+        self._ui_status(STEP_VALIDATING_RFID, "success", f"Truck No: {txn.vehicle_no or txn.validated_rfid}")
         self._ui_rfid(txn.validated_rfid, txn.vehicle_no or None)
         self._announce(txn.vehicle_no or txn.validated_rfid)
+
+        # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2.
+        # Status-check only for CE trips (all ANPR paths); non-CE disabled grants.
+        if not bool(getattr(settings, "anpr_enabled", True)):
+            logger.info(
+                "ANPR disabled - skipping /api/detect; invalid-truck anpr_status=2"
+            )
+            self._ui_status(
+                STEP_VALIDATING_ANPR,
+                "success",
+                "ANPR skipped (disabled by operator).",
+            )
+            txn.anpr_status = 2
+            txn.anpr_raw = {
+                "vehicleNo_web": txn.vehicle_no or "",
+                "vehicleNo_anpr": "",
+                "rfid": txn.validated_rfid or "",
+                "device_ip": txn.device_ip or settings.device_ip,
+                "anpr_status": 2,
+            }
+            invalid_resp = oci.invalid_truck_number(
+                rfid=txn.validated_rfid,
+                truck_number=txn.vehicle_no,
+                device_ip=txn.device_ip or settings.device_ip,
+                anpr_payload=txn.anpr_raw,
+                token=txn.token_no,
+                anpr_status=2,
+            )
+            if is_api_failure(invalid_resp):
+                self._ui_api_failure(
+                    STEP_VALIDATING_ANPR,
+                    invalid_resp,
+                    fallback="Invalid-truck service not reachable",
+                )
+            if is_ce_truck_details(txn.truck_details or ""):
+                sm.trigger(Event.ANPR_MISMATCH)
+                self._ce_check_status_loop(sm, txn, oci, settings.device_ip)
+                return
+            sm.trigger(Event.ANPR_MATCH)
+            self._do_grant_entry(txn.truck_no or txn.vehicle_no)
+            return
+
         self._ui_status(STEP_VALIDATING_ANPR, "info", "ANPR validation in progress.")
 
         # ANPR with up to 3 retries on exception / transport failure
@@ -700,7 +743,8 @@ class CheckpointWorkflow:
         txn.anpr_status = anpr.status
         txn.anpr_raw = anpr.raw
 
-        # status 0 / 2 -> invalid truck API then status_check loop; status 1 -> grant
+        # Always invalid-truck. Status-check: CE → all ANPR 0/1/2 (statusCode 200 loop);
+        # non-CE → only mismatch 0/2 (vehicleStatus loop); match grants without it.
         sm.trigger(Event.ANPR_MISMATCH)
         invalid_resp = oci.invalid_truck_number(
             rfid=txn.validated_rfid,
@@ -716,6 +760,26 @@ class CheckpointWorkflow:
                 invalid_resp,
                 fallback="Invalid-truck service not reachable",
             )
+
+        if is_ce_truck_details(txn.truck_details or ""):
+            if anpr.status == 1:
+                self._ui_status(STEP_VALIDATING_ANPR, "success", "ANPR matched.")
+            elif anpr.status == 2:
+                self._announce(MSG_ANPR_ERR_2)
+                self._ui_status(
+                    STEP_VALIDATING_ANPR,
+                    "warning",
+                    "ANPR Err-2, Number not readable",
+                )
+            else:
+                self._announce(MSG_ANPR_ERR)
+                self._ui_status(
+                    STEP_VALIDATING_ANPR,
+                    "warning",
+                    "ANPR Err-0, Number plate mismatch",
+                )
+            self._ce_check_status_loop(sm, txn, oci, settings.device_ip)
+            return
 
         if anpr.status == 1:
             self._ui_status(STEP_VALIDATING_ANPR, "success", "ANPR matched.")
@@ -799,11 +863,7 @@ class CheckpointWorkflow:
         )
         return last_resp
 
-    def _manual_update_loop(self, sm, txn, oci, device_ip: str) -> None:
-        """
-        Poll status_check every truck_anpr_retry_timer seconds while
-        vehicleStatus == 0. Grant on 1, reset on 2.
-        """
+    def _status_check_retry_sec(self) -> float:
         settings = self.ctx.settings
         retry_sec = float(
             getattr(settings, "truck_anpr_retry_timer", None)
@@ -811,6 +871,73 @@ class CheckpointWorkflow:
         )
         if retry_sec <= 0:
             retry_sec = TIMEOUTS.MANUAL_UPDATE_POLL_SEC
+        return retry_sec
+
+    def _ce_check_status_loop(self, sm, txn, oci, device_ip: str) -> None:
+        """
+        CE| truck_details: after invalid-truck, poll check-status until
+        JSON statusCode == 200 (ANPR match or mismatch), then grant entry.
+        """
+        retry_sec = self._status_check_retry_sec()
+        logger.info(
+            "CE trip - polling check-status until statusCode=200 (every %ss)",
+            retry_sec,
+        )
+        self._ui_status(
+            STEP_VALIDATING_ANPR,
+            "info",
+            "Waiting for check-status (CE)…",
+        )
+        while not self._manual_stop.is_set():
+            if sm.current_state != State.MANUAL_UPDATE:
+                break
+            resp = oci.update_truck_number(
+                rfid=txn.validated_rfid,
+                truck_number=txn.vehicle_no,
+                device_ip=txn.device_ip or device_ip,
+                anpr_payload=txn.anpr_raw,
+            )
+            code = status_code_from_response(resp)
+            logger.info(
+                "CE check-status statusCode=%s http=%s message=%s",
+                code,
+                getattr(resp, "http_status", None),
+                resp.raw.get("statusMessage") or resp.message,
+            )
+
+            if code == 200:
+                if resp.raw.get("truck_number") or resp.raw.get("vehicleNo_web"):
+                    txn.truck_no = str(
+                        resp.raw.get("truck_number")
+                        or resp.raw.get("vehicleNo_web")
+                    )
+                    txn.vehicle_no = txn.truck_no
+                sm.trigger(Event.UPDATE_STATUS_1)
+                self._do_grant_entry(txn.truck_no or txn.vehicle_no)
+                return
+
+            if is_api_failure(resp) and is_service_alert(resp):
+                if not self._status_check_alerted:
+                    self._status_check_alerted = True
+                    self._ui_api_failure(
+                        STEP_VALIDATING_ANPR,
+                        resp,
+                        fallback="Status-check service not reachable",
+                    )
+            else:
+                self._ui_anpr_waiting(txn)
+
+            sm.trigger(Event.UPDATE_STATUS_0)
+            time.sleep(retry_sec)
+
+        logger.info("CE check-status loop stopped")
+
+    def _manual_update_loop(self, sm, txn, oci, device_ip: str) -> None:
+        """
+        Non-CE: poll status_check every truck_anpr_retry_timer seconds while
+        vehicleStatus == 0. Grant on 1, reset on 2.
+        """
+        retry_sec = self._status_check_retry_sec()
 
         logger.info(
             "Entering manual truck update loop (retry every %ss while vehicleStatus=0)",

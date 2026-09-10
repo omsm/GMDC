@@ -256,5 +256,6 @@
         "verification_date": "2026-05-21",
         "remarks": "ok",
         "setup_timestamp": "2026-05-21T04:55:03.066Z"
-    }
+    },
+    "anpr_enabled": true
 }

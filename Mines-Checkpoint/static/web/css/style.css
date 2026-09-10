@@ -664,6 +664,27 @@ body {
     background: #e08600;
 }
 
+.demo-controls .anpr-toggle-button {
+    background: var(--success);
+    color: #fff;
+    min-width: 110px;
+}
+
+.demo-controls .anpr-toggle-button:hover,
+.demo-controls .anpr-toggle-button:active {
+    filter: brightness(0.92);
+}
+
+.demo-controls .anpr-toggle-button.is-off {
+    background: var(--neutral-600);
+    color: #fff;
+}
+
+.demo-controls .anpr-toggle-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .check-sensor-popup {
     display: none;
     position: fixed;
@@ -1356,6 +1377,10 @@ body {
     line-height: 1.25;
 }
 
+html[data-theme="dark"] .flow-icon-label {
+    color: #f1f5f9;
+}
+
 .flow-icon-badge {
     position: absolute;
     top: -2px;
@@ -1495,7 +1520,7 @@ body {
 .flow-details-modal-content .camera-modal-body {
     max-height: calc(90vh - 72px);
     overflow: auto;
-    background: #f8fafc;
+    background: rgb(3, 7, 14);
     padding: 16px;
 }
 

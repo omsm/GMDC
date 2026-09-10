@@ -1,13 +1,35 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.4**
+**Current version: 1.5**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.4.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.5.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.4 — 2026-09-06 (latest)
+## 1.5 — 2026-09-08 (latest)
+
+Operator ANPR toggle and clarified OCI invalid-truck / status-check rules, including CE trips on Mines-Checkpoint.
+
+### Operator UI — ANPR toggle
+- After login, **ANPR: ON/OFF** beside Free Pass / Reset on **Mines-Checkpoint** and **Mines-WB**
+- Persists `anpr_enabled` in `iot_configuration.json` via `GET/POST /api/anpr-enabled`
+- When **OFF**: skip `/api/detect`; call **invalid-truck** with `anpr_status: 2`; continue grant (checkpoint) or weight path (WB) without status-check (unless CE — see below)
+
+### OCI — invalid-truck / status-check
+- **invalid-truck** is always called after RFID validation (match, mismatch, and ANPR disabled)
+- **status-check** (non-CE): only on ANPR mismatch (`anpr_status` **0** or **2**), polled until `vehicleStatus` allows continue/abort
+- **ANPR match (`1`)** and **ANPR disabled** (non-CE): no status-check; proceed after invalid-truck
+
+### Mines-Checkpoint — CE trips
+- When RFID `truck_details` starts with **`CE|`**, after invalid-truck poll **check-status** for **all** ANPR outcomes (**0 / 1 / 2**) and when ANPR is disabled
+- Loop until body **`statusCode == 200`**, then grant entry
+- CE `truck_details` parsing uses the correct `device_ip` field (not the trailing vehicle number)
+- **Mines-WB** has no CE status-check path
+
+---
+
+## 1.4 — 2026-09-06
 
 Auto device IP from the commissioning PC, plus operator dashboard dark mode.
 
@@ -130,6 +152,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.5** | ANPR ON/OFF toggle; invalid-truck always; status-check on mismatch 0/2; CE trips require check-status for all ANPR cases (Checkpoint) |
 | **1.4** | Auto `device_ip` on Finish; dashboard light/dark mode toggle; runtimes read IP from IoT JSON |
 | **1.3** | Family apps `Mines-Checkpoint` / `Mines-WB` via `checkpoint_type`; shared `gmdc_common` |
 | **1.2** | Flow Details icons; Weight Validation UI; demo OCI :8001; Mosquitto/WS coexistence |

@@ -245,6 +245,43 @@ def register_routes(app: Flask) -> None:
             }
         )
 
+    @app.get("/api/anpr-enabled")
+    def get_anpr_enabled():
+        ctx = AppContext.get_instance()
+        enabled = True
+        if ctx.settings is not None:
+            enabled = bool(getattr(ctx.settings, "anpr_enabled", True))
+        return jsonify({"status": 200, "anpr_enabled": enabled})
+
+    @app.post("/api/anpr-enabled")
+    def set_anpr_enabled():
+        from config.settings import persist_anpr_enabled
+
+        data = request.get_json(silent=True) or {}
+        if "anpr_enabled" not in data and "enabled" not in data:
+            return jsonify(
+                {"status": 400, "message": "anpr_enabled required"}
+            ), 400
+        raw = data.get("anpr_enabled", data.get("enabled"))
+        if isinstance(raw, str):
+            enabled = raw.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            enabled = bool(raw)
+        ctx = AppContext.get_instance()
+        if not ctx.settings:
+            return jsonify({"status": 503, "message": "Settings not ready"}), 503
+        ok = persist_anpr_enabled(ctx.settings, enabled)
+        return jsonify(
+            {
+                "status": 200 if ok else 500,
+                "anpr_enabled": bool(ctx.settings.anpr_enabled),
+                "persisted": ok,
+                "message": (
+                    "ANPR enabled" if enabled else "ANPR disabled (detect skipped)"
+                ),
+            }
+        ), (200 if ok else 500)
+
     @app.post("/api/simulate-exit")
     def simulate_exit():
         """Demo helper: pulse exit sensor / trigger crossing complete."""

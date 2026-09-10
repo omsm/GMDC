@@ -123,6 +123,7 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         ctx = AppContext.get_instance()
         ctx.settings = MagicMock()
         ctx.settings.device_ip = "192.168.10.223"
+        ctx.settings.anpr_enabled = True
         ctx.settings.truck_anpr_retry_timer = 0.01
         ctx.settings.top_camera_rtsp_url = ""
         ctx.state_machine = StateMachine()
@@ -168,6 +169,7 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         wf._after_rfid_valid()
 
         ctx.oci.invalid_truck_number.assert_called()
+        ctx.oci.update_truck_number.assert_not_called()
         self.assertEqual(ctx.oci.boom_close.call_count, 1)
         td = ctx.oci.boom_close.call_args.kwargs.get("truck_details")
         self.assertEqual(td, ctx.transactions.truck_details)
@@ -180,6 +182,26 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         self.assertEqual(top_name, "error.jpg")
         inv = ctx.oci.invalid_truck_number.call_args.kwargs
         self.assertEqual(inv.get("top_image"), top_name)
+
+    def test_anpr_disabled_calls_invalid_truck_not_status_check(self):
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.settings.anpr_enabled = False
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+        ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
+
+        wf._after_rfid_valid()
+
+        ctx.oci.anpr_detect.assert_not_called()
+        ctx.oci.invalid_truck_number.assert_called()
+        inv = ctx.oci.invalid_truck_number.call_args.kwargs
+        self.assertEqual(inv.get("anpr_status"), 2)
+        ctx.oci.update_truck_number.assert_not_called()
+        ctx.oci.weight_details.assert_called()
 
     def test_anpr_status_0_uses_status_check_then_boom_close_filled(self):
         from services.oci_client import OCIResponse
@@ -459,6 +481,9 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         ctx.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
         )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
+        )
         ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
         ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
         wf._after_rfid_valid()
@@ -476,6 +501,9 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         )
         ctx.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
         )
         ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
 
@@ -498,6 +526,9 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         )
         ctx.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
         )
         ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
         ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)

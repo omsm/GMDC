@@ -37,6 +37,7 @@ from services.oci_client import (
     build_boom_close_payload,
     build_invalid_truck_payload,
     build_status_check_payload,
+    is_ce_truck_details,
     parse_truck_details,
 )
 
@@ -66,6 +67,11 @@ SAMPLE_RFID_PAYLOAD = [
 TRUCK_DETAILS = (
     "T|e200001d7507013115006bb9|OD14P7339|2800|1500|500|"
     "TRIP-20260728-001|192.168.10.223"
+)
+
+CE_TRUCK_DETAILS = (
+    "CE|00000000000000000015c021|OD14AF2721|45000|26000|0|"
+    "9580709262|IP244245525163|OD14AF2721"
 )
 
 ANPR_RAW = {
@@ -115,6 +121,17 @@ class TestTruckDetailsParsing(unittest.TestCase):
         self.assertEqual(p["vehicle_no"], "OD14P7339")
         self.assertEqual(p["token_no"], "TRIP-20260728-001")
         self.assertEqual(p["device_ip"], "192.168.10.223")
+        self.assertEqual(p["prefix"], "T")
+        self.assertFalse(is_ce_truck_details(TRUCK_DETAILS))
+
+    def test_ce_pipe_delimited(self):
+        p = parse_truck_details(CE_TRUCK_DETAILS)
+        self.assertEqual(p["prefix"], "CE")
+        self.assertEqual(p["rfid"], "00000000000000000015c021")
+        self.assertEqual(p["vehicle_no"], "OD14AF2721")
+        self.assertEqual(p["token_no"], "9580709262")
+        self.assertEqual(p["device_ip"], "IP244245525163")
+        self.assertTrue(is_ce_truck_details(CE_TRUCK_DETAILS))
 
     def test_empty(self):
         p = parse_truck_details("")
@@ -496,6 +513,7 @@ class TestWorkflow(unittest.TestCase):
         settings = MagicMock()
         settings.device_ip = "192.168.10.223"
         settings.demo_mode = True
+        settings.anpr_enabled = True
         settings.truck_anpr_retry_timer = 0.01
         settings.vehicle_crossing_timeout = 0.15
         self.ctx.settings = settings
@@ -526,9 +544,9 @@ class TestWorkflow(unittest.TestCase):
         self._sleep_patch.stop()
         AppContext.reset_instance()
 
-    def _rfid_ok(self):
+    def _rfid_ok(self, truck_details: str = TRUCK_DETAILS):
         self.oci.validate_rfid.return_value = OCIResponse(
-            ok=True, status=200, truck_details=TRUCK_DETAILS
+            ok=True, status=200, truck_details=truck_details
         )
 
     def test_rfid_fail_shows_error_and_idle(self):
@@ -632,6 +650,9 @@ class TestWorkflow(unittest.TestCase):
         self.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
         )
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=200, raw={"statusCode": 200}
+        )
         self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
@@ -703,6 +724,8 @@ class TestWorkflow(unittest.TestCase):
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
 
+        self.oci.invalid_truck_number.assert_called()
+        self.oci.update_truck_number.assert_not_called()
         self.oci.boom_close.assert_called()
         bc_kwargs = self.oci.boom_close.call_args.kwargs
         self.assertEqual(bc_kwargs["rfid"], "e200001d7507013115006bb9")
@@ -714,6 +737,82 @@ class TestWorkflow(unittest.TestCase):
         self.tl.set_green.assert_called()
         self.display.send.assert_any_call("OD14P7339 Entry Granted")
 
+    def test_anpr_disabled_calls_invalid_truck_not_status_check(self):
+        self.ctx.settings.anpr_enabled = False
+        self._rfid_ok()
+        self.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+        self.oci.anpr_detect.assert_not_called()
+        self.oci.invalid_truck_number.assert_called()
+        inv = self.oci.invalid_truck_number.call_args.kwargs
+        self.assertEqual(inv.get("anpr_status"), 2)
+        self.oci.update_truck_number.assert_not_called()
+        self.boom.open.assert_called()
+
+    def test_ce_anpr_match_polls_check_status_until_status_code_200(self):
+        """CE| truck_details: after invalid-truck, poll until statusCode 200 even on ANPR match."""
+        self._rfid_ok(CE_TRUCK_DETAILS)
+        self.oci.anpr_detect.return_value = OCIResponse(
+            ok=True,
+            status=1,
+            raw={**ANPR_RAW, "anpr_status": 1, "matching_score": 100},
+        )
+        self.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        self.oci.update_truck_number.side_effect = [
+            OCIResponse(
+                ok=False,
+                status=0,
+                raw={"statusCode": 100, "statusMessage": "pending"},
+            ),
+            OCIResponse(
+                ok=True,
+                status=200,
+                raw={"statusCode": 200, "vehicleNo_web": "OD14AF2721"},
+            ),
+        ]
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["00000000000000000015c021"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+        self.assertEqual(self.oci.update_truck_number.call_count, 2)
+        self.boom.open.assert_called()
+        self.display.send.assert_any_call("OD14AF2721 Entry Granted")
+
+    def test_ce_anpr_mismatch_uses_status_code_not_vehicle_status(self):
+        """CE mismatch waits on statusCode 200; vehicleStatus 2 must not abort."""
+        self._rfid_ok(CE_TRUCK_DETAILS)
+        self.oci.anpr_detect.return_value = OCIResponse(
+            ok=False, status=0, raw=ANPR_RAW
+        )
+        self.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=201
+        )
+        self.oci.update_truck_number.side_effect = [
+            OCIResponse(
+                ok=False,
+                status=2,
+                raw={"statusCode": 100, "vehicleStatus": 2},
+            ),
+            OCIResponse(
+                ok=True,
+                status=200,
+                raw={"statusCode": 200},
+            ),
+        ]
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["00000000000000000015c021"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+        self.assertEqual(self.oci.update_truck_number.call_count, 2)
+        self.boom.open.assert_called()
+
     def test_boom_not_opened_when_boom_close_fails(self):
         self._rfid_ok()
         self.oci.anpr_detect.return_value = OCIResponse(
@@ -721,6 +820,9 @@ class TestWorkflow(unittest.TestCase):
         )
         self.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=200, raw={"statusCode": 200}
         )
         self.oci.boom_close.return_value = OCIResponse(
             ok=False, status=500, message="fail"
@@ -833,6 +935,9 @@ class TestWorkflow(unittest.TestCase):
         self.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
         )
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=200, raw={"statusCode": 200}
+        )
         self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
@@ -856,6 +961,9 @@ class TestWorkflow(unittest.TestCase):
         )
         self.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=200, raw={"statusCode": 200}
         )
         self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
 
