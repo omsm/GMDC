@@ -73,7 +73,9 @@ class AppContext:
             "anpr_enabled": bool(getattr(self.settings, "anpr_enabled", True)),
             "wb_type": getattr(self.settings, "wb_type", None),
             "config_path": getattr(self.settings, "config_path", None),
-            "digitizer_url": getattr(self.settings, "digitizer_url", None),
+            "digitizer": getattr(self.settings, "digitizer_label", None)
+            or getattr(self.settings, "digitizer_url", None),
+            "digitizer_mode": getattr(self.settings, "digitizer_mode", None),
             "active_rfid_direction": self.active_rfid_direction or None,
             "hardware": {
                 "io": self.io.get_status() if self.io else None,

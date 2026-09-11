@@ -49,7 +49,6 @@ class CheckpointProfile:
 # Shared section tuples
 # ---------------------------------------------------------------------------
 _CHECKPOINT_SECTIONS = (
-    "server",
     "rfid",
     "handheld_rfid",
     "display",
@@ -57,7 +56,6 @@ _CHECKPOINT_SECTIONS = (
     "voice",
 )
 _WEIGHBRIDGE_SECTIONS = (
-    "server",
     "rfid",
     "handheld_rfid",
     "camera",  # Top Camera RTSP (front optional / hidden in UI for WB)

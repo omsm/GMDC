@@ -30,13 +30,7 @@
     <!-- Sidebar -->
     <nav class="sidebar">
         <div class="nav-items">
-            <a href="#server" class="nav-item active" data-section="server">
-                <i class="bi bi-hdd-network"></i>
-                <span>Server</span>
-                <i class="bi bi-exclamation-triangle-fill warning-icon"></i>
-                <i class="bi bi-check-circle-fill check-icon"></i>
-            </a>
-            <a href="#rfid" class="nav-item" data-section="rfid">
+            <a href="#rfid" class="nav-item active" data-section="rfid">
                 <i class="bi bi-broadcast"></i>
                 <span id="navRfidLabel">RFID (Zebra API)</span>
                 <i class="bi bi-exclamation-triangle-fill warning-icon"></i>
@@ -101,40 +95,8 @@
 
     <!-- Content Area -->
     <main class="content">
-        <!-- Server Configuration -->
-        <section class="config-section active" id="server">
-            <div class="section-header">
-                <div class="section-header-main">
-                    <h2><i class="bi bi-hdd-network"></i> Server Configuration</h2>
-                    <p class="text-muted">Enter the server address used by this checkpoint.</p>
-                </div>
-                <button class="btn btn-outline btn-sm section-help-btn" onclick="openModuleHelp('server')">
-                    <i class="bi bi-question-circle"></i> Help
-                </button>
-            </div>
-            
-            <div class="config-card">
-                <div class="form-group">
-                    <label for="serverIp">Server URL</label>
-                    <input type="text" class="form-control" id="serverIp" value="" placeholder="Enter server URL">
-                </div>
-                <div class="form-group">
-                    <label for="serverPort">Server Port</label>
-                    <input type="text" class="form-control" id="serverPort" value="" placeholder="Enter server port">
-                </div>
-                <div class="btn-group-actions">
-                    <button class="btn btn-primary" onclick="checkAndSaveServer()">
-                        <i class="bi bi-check-lg"></i> Check & Save
-                    </button>
-                    <button class="btn btn-secondary" onclick="resetSection('server')">
-                        <i class="bi bi-arrow-counterclockwise"></i> Reset
-                    </button>
-                </div>
-            </div>
-        </section>
-
         <!-- RFID Configuration -->
-        <section class="config-section" id="rfid">
+        <section class="config-section active" id="rfid">
             <div class="section-header">
                 <div class="section-header-main">
                     <h2><i class="bi bi-broadcast"></i> RFID Configuration</h2>
@@ -1355,9 +1317,23 @@
                     </div>
                 </div>
                 
-                <h4 class="card-subtitle mt-3"><i class="bi bi-hdd-network"></i> Digitizer-app API</h4>
-                <!-- <p class="text-muted">Digitizer runs on another PC. Runtime calls <code>POST /read_stable_weight</code>.</p> -->
-                <input type="hidden" id="digitizerMode" value="api">
+                <h4 class="card-subtitle mt-3"><i class="bi bi-hdd-network"></i> Digitizer transport</h4>
+                <p class="text-muted mb-2">
+                    Digitizer-decoder usually runs on another PC. Choose <b>API</b> (HTTP) or <b>MQTT</b>
+                    (broker on the Mines-WB Mac; decoder publishes weight, Mines-WB subscribes).
+                </p>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerMode">Mode *</label>
+                            <select class="form-control" id="digitizerMode" onchange="toggleDigitizerFields()">
+                                <option value="api" selected>API (HTTP)</option>
+                                <option value="mqtt">MQTT</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div id="digitizerApiFields">
                 <div class="row">
                     <div class="col-md-4">
                         <div class="form-group">
@@ -1377,6 +1353,57 @@
                             <input type="text" class="form-control" id="digitizerPath" value="/read_stable_weight">
                         </div>
                     </div>
+                </div>
+                </div>
+                <div id="digitizerMqttFields" style="display: none;">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerBrokerHost">Broker host / IP *</label>
+                            <input type="text" class="form-control" id="digitizerBrokerHost" placeholder="Mines-WB Mac IP (e.g. 192.168.x.x)">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerBrokerPort">Broker port</label>
+                            <input type="text" class="form-control" id="digitizerBrokerPort" value="1883">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerMqttClientId">Client ID (optional)</label>
+                            <input type="text" class="form-control" id="digitizerMqttClientId" placeholder="gmdc-mines-wb-digitizer">
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerMqttUser">Username</label>
+                            <input type="text" class="form-control" id="digitizerMqttUser" placeholder="optional">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="digitizerMqttPassword">Password</label>
+                            <input type="password" class="form-control" id="digitizerMqttPassword" placeholder="optional">
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="digitizerTopicWeight">Weight topic (decoder → WB, dont change this*)</label>
+                            <input type="text" class="form-control" id="digitizerTopicWeight" value="gmdc/digitizer/weight">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="digitizerTopicRequest">Request topic (WB → decoder, dont change this*)</label>
+                            <input type="text" class="form-control" id="digitizerTopicRequest" value="gmdc/digitizer/request">
+                        </div>
+                    </div>
+                </div>
                 </div>
                 <div class="row" style="display:none;">
                     <div class="col-md-6">

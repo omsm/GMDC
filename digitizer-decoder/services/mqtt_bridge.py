@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
@@ -13,6 +14,8 @@ import paho.mqtt.client as mqtt
 from services.weight_runtime import WeightRuntime
 
 logger = logging.getLogger("digitizer_decoder.mqtt")
+
+HEARTBEAT_INTERVAL_SEC = 2.0
 
 
 def _unique_client_id(base: str) -> str:
@@ -25,12 +28,8 @@ def _unique_client_id(base: str) -> str:
 class MqttBridge:
     """
     Subscribe for weight requests; publish stable-weight JSON responses.
-    Also publishes live dashboard status on ``topic_status`` (WebSocket UI).
-
-    Request payloads (any of):
-      {} | {"action":"read_stable_weight"} | "read_stable_weight"
-    Response (publish topic):
-      {"statusCode":200,"stable_weight":43000.0}
+    Publishes live weight only when the value changes.
+    Publishes retained status snapshots + periodic heartbeats for Mines-WB sync.
     """
 
     def __init__(
@@ -46,6 +45,7 @@ class MqttBridge:
         topic_status: str = "gmdc/digitizer/status",
         client_id: str = "gmdc-digitizer-decoder",
         on_status: Optional[Callable[[str], None]] = None,
+        heartbeat_interval_sec: float = HEARTBEAT_INTERVAL_SEC,
     ) -> None:
         self.runtime = runtime
         self.broker_host = broker_host
@@ -62,10 +62,14 @@ class MqttBridge:
         )
         self.client_id = self.base_client_id
         self.on_status = on_status
+        self.heartbeat_interval_sec = max(1.0, float(heartbeat_interval_sec or 2.0))
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._lock = threading.RLock()
         self._status_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        self._last_published_weight: Optional[float] = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
     @property
     def connected(self) -> bool:
@@ -84,7 +88,6 @@ class MqttBridge:
                 protocol=mqtt.MQTTv311,
             )
         except TypeError:
-            # paho-mqtt v2
             client = mqtt.Client(
                 mqtt.CallbackAPIVersion.VERSION1,
                 client_id=self.client_id,
@@ -103,6 +106,7 @@ class MqttBridge:
             return False
         self._client = client
         client.loop_start()
+        self._start_heartbeat()
         logger.info(
             "MQTT starting broker=%s:%s client_id=%s sub=%s pub=%s status=%s",
             self.broker_host,
@@ -115,10 +119,12 @@ class MqttBridge:
         return True
 
     def stop(self) -> None:
+        self._stop_heartbeat()
         with self._lock:
             client = self._client
             self._client = None
             self._connected = False
+            self._last_published_weight = None
         if client:
             try:
                 client.loop_stop()
@@ -126,6 +132,50 @@ class MqttBridge:
             except Exception:
                 pass
         self._set_status("MQTT stopped")
+
+    def publish_weight_if_changed(
+        self,
+        weight: Optional[float],
+        *,
+        stable: bool = False,
+        stable_weight: Optional[float] = None,
+        force: bool = False,
+    ) -> None:
+        """Publish live weight only when the numeric value changes (or force)."""
+        client = self._client
+        if not client or not self._connected:
+            return
+        if weight is None and not force:
+            return
+        with self._lock:
+            prev = self._last_published_weight
+            if (
+                not force
+                and prev is not None
+                and weight is not None
+                and float(prev) == float(weight)
+            ):
+                return
+            self._last_published_weight = weight
+        payload = {
+            "statusCode": 200,
+            "current_weight": weight,
+            "weight": weight,
+            "stable": bool(stable),
+            "stable_weight": stable_weight if stable else None,
+            "ts": time.time(),
+            "source": "live",
+        }
+        try:
+            client.publish(
+                self.topic_publish,
+                json.dumps(payload),
+                qos=0,
+                retain=False,
+            )
+            logger.debug("MQTT weight change -> %s %s", self.topic_publish, payload)
+        except Exception as exc:
+            logger.warning("MQTT weight publish failed: %s", exc)
 
     def publish_live(self, payload: Dict[str, Any]) -> None:
         client = self._client
@@ -142,7 +192,7 @@ class MqttBridge:
             logger.warning("MQTT publish failed: %s", exc)
 
     def publish_ui_status(self, payload: Optional[Dict[str, Any]] = None) -> None:
-        """Publish live dashboard snapshot for browser MQTT clients."""
+        """Publish live dashboard snapshot for browser / Mines-WB heartbeat."""
         client = self._client
         if not client or not self._connected:
             return
@@ -155,15 +205,35 @@ class MqttBridge:
                 return
         if not data:
             return
+        out = dict(data)
+        out.setdefault("ts", time.time())
+        out["heartbeat"] = True
         try:
             client.publish(
                 self.topic_status,
-                json.dumps(data, default=str),
+                json.dumps(out, default=str),
                 qos=0,
                 retain=True,
             )
         except Exception as exc:
             logger.warning("MQTT status publish failed: %s", exc)
+
+    def _start_heartbeat(self) -> None:
+        self._heartbeat_stop.clear()
+
+        def _loop() -> None:
+            while not self._heartbeat_stop.wait(self.heartbeat_interval_sec):
+                if self._connected:
+                    self.publish_ui_status()
+
+        self._heartbeat_thread = threading.Thread(
+            target=_loop, name="DigitizerMqttHeartbeat", daemon=True
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+        self._heartbeat_thread = None
 
     def _set_status(self, msg: str) -> None:
         logger.info(msg)
@@ -181,6 +251,13 @@ class MqttBridge:
                 f"MQTT connected — subscribed {self.topic_subscribe}"
             )
             self.publish_ui_status()
+            snap = self.runtime.snapshot()
+            self.publish_weight_if_changed(
+                snap.get("current_weight"),
+                stable=bool(snap.get("stable")),
+                stable_weight=snap.get("stable_weight"),
+                force=True,
+            )
         else:
             self._set_status(f"MQTT connect rc={rc}")
 
@@ -194,10 +271,24 @@ class MqttBridge:
         if not self._is_weight_request(raw):
             return
         result = self.runtime.wait_stable()
-        body = json.dumps(result)
+        body_obj = dict(result) if isinstance(result, dict) else {"result": result}
+        body_obj.setdefault("ts", time.time())
+        body_obj["source"] = "request"
+        body = json.dumps(body_obj)
         try:
             client.publish(self.topic_publish, body, qos=0, retain=False)
             logger.info("MQTT response -> %s %s", self.topic_publish, body)
+            weight = None
+            for key in ("stable_weight", "current_weight", "weight"):
+                if body_obj.get(key) is not None:
+                    try:
+                        weight = float(body_obj[key])
+                        break
+                    except (TypeError, ValueError):
+                        continue
+            if weight is not None:
+                with self._lock:
+                    self._last_published_weight = weight
         except Exception as exc:
             logger.error("MQTT response publish failed: %s", exc)
 

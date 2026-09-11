@@ -326,16 +326,14 @@
             sys.textContent = 'Serial disconnected';
         }
 
-        if (s.mqtt && s.mqtt.topic_status) {
-            state.mqttStatusTopic = s.mqtt.topic_status;
+        if (s.mqtt) {
+            state.mqttStatusTopic = 'gmdc/digitizer/status';
         }
     }
 
     function ensureMqttLive(mqttCfg) {
         mqttCfg = mqttCfg || {};
-        if (mqttCfg.topic_status) {
-            state.mqttStatusTopic = mqttCfg.topic_status;
-        }
+        state.mqttStatusTopic = 'gmdc/digitizer/status';
         if (state.mqttClient || state.mqttConnecting) return;
         connectMqttStatus();
     }

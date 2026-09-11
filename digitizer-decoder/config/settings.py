@@ -27,9 +27,8 @@ DEFAULT_COMMUNICATION: Dict[str, Any] = {
         "broker_port": 1883,
         "username": "",
         "password": "",
-        "topic_publish": "",
-        "topic_subscribe": "",
-        "topic_status": "gmdc/digitizer/status",
+        "topic_publish": "gmdc/digitizer/weight",
+        "topic_subscribe": "gmdc/digitizer/request",
         "client_id": "gmdc-digitizer-decoder",
     },
 }

@@ -113,7 +113,10 @@ function initChecklist() {
     }
 }
 
-/** Fresh wizard start: wipe prior checkpoint config so no validated state carries over. */
+/**
+ * Explicit wipe only — re-running the checklist must NOT clear iot_configuration.json.
+ * Operators reuse existing values + validated flags unless they choose Start fresh.
+ */
 async function resetAllCheckpointConfig() {
     try {
         sessionStorage.removeItem('scanIpRange');
@@ -123,12 +126,47 @@ async function resetAllCheckpointConfig() {
         if (!response.ok || result.status !== 200) {
             console.warn('[Checklist] Config reset failed:', result.message || response.status);
             showToast('error', 'Reset', result.message || 'Could not reset checkpoint configuration');
-            return;
+            return false;
         }
         console.log('[Checklist] All checkpoint configuration reset to defaults');
+        showToast('success', 'Fresh start', 'Configuration cleared — wizard will start empty');
+        return true;
     } catch (err) {
         console.error('[Checklist] Config reset error:', err);
         showToast('error', 'Reset', 'Could not reset checkpoint configuration');
+        return false;
+    }
+}
+
+async function confirmStartFreshConfig() {
+    const ok = window.confirm(
+        'Start fresh configuration?\n\nThis will wipe the saved iot_configuration.json (all devices and validated flags).\nThis cannot be undone.'
+    );
+    if (!ok) return;
+    showLoading(true);
+    try {
+        await resetAllCheckpointConfig();
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function showExistingConfigHint() {
+    try {
+        const response = await fetch('/api/config');
+        const data = await response.json();
+        const cfg = data.config || data || {};
+        const hasSomething =
+            !!(cfg.rfid && (cfg.rfid.ip || cfg.rfid.validated)) ||
+            !!(cfg.digitizer && (cfg.digitizer.host || cfg.digitizer.broker_host || cfg.digitizer.validated)) ||
+            !!(cfg.display && (cfg.display.ip || cfg.display.validated)) ||
+            !!(cfg.io_controller && cfg.io_controller.validated) ||
+            cfg.status === true;
+        if (hasSomething) {
+            console.log('[Checklist] Reusing existing iot_configuration.json (not wiped)');
+        }
+    } catch (err) {
+        console.warn('[Checklist] Could not inspect existing config:', err);
     }
 }
 
@@ -185,7 +223,7 @@ function proceedToScan() {
 document.addEventListener('DOMContentLoaded', async function() {
     initTheme();
     initChecklist();
-    await resetAllCheckpointConfig();
+    // Keep existing config + validated flags on re-run (no automatic reset-all).
+    await showExistingConfigHint();
     loadSuggestedIpRange();
 });
-

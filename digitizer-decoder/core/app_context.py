@@ -75,9 +75,8 @@ class AppContext:
             topic_subscribe=str(
                 cfg.get("topic_subscribe") or "gmdc/digitizer/request"
             ),
-            topic_status=str(
-                cfg.get("topic_status") or "gmdc/digitizer/status"
-            ),
+            # Status/heartbeat topic is fixed across Mines-WB + decoder.
+            topic_status="gmdc/digitizer/status",
             client_id=str(
                 cfg.get("client_id") or "gmdc-digitizer-decoder"
             ),
@@ -99,6 +98,13 @@ class AppContext:
     def _on_runtime_update(self) -> None:
         if not (self.mqtt and self.mqtt.connected):
             return
+        snap = self.runtime.snapshot()
+        # Live weight topic: publish only when the numeric weight changes.
+        self.mqtt.publish_weight_if_changed(
+            snap.get("current_weight"),
+            stable=bool(snap.get("stable")),
+            stable_weight=snap.get("stable_weight"),
+        )
         # Throttle UI status publishes (~10 Hz) to avoid flooding Mosquitto
         now = time.monotonic()
         with self._status_publish_lock:
@@ -156,12 +162,9 @@ class AppContext:
                 **{
                     k: v
                     for k, v in self.settings.mqtt_cfg.items()
-                    if k != "password"
+                    if k not in ("password", "topic_status")
                 },
-                "topic_status": (
-                    (self.settings.mqtt_cfg.get("topic_status") or "")
-                    or "gmdc/digitizer/status"
-                ),
+                "topic_status": "gmdc/digitizer/status",
                 "password_set": bool(self.settings.mqtt_cfg.get("password")),
                 "client_id_active": (
                     self.mqtt.client_id if self.mqtt else None

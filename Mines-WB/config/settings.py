@@ -107,6 +107,13 @@ class Settings:
     digitizer_path: str = "/read_stable_weight"
     digitizer_timeout: float = 30.0
     digitizer_stable_count: int = 10
+    digitizer_mode: str = "api"
+    digitizer_broker_host: str = "127.0.0.1"
+    digitizer_broker_port: int = 1883
+    digitizer_mqtt_username: str = ""
+    digitizer_mqtt_password: str = ""
+    digitizer_topic_weight: str = "gmdc/digitizer/weight"
+    digitizer_topic_request: str = "gmdc/digitizer/request"
     min_weight_kg: float = 5000.0
 
     # Top Camera RTSP from checkpoint-config camera.top
@@ -182,6 +189,15 @@ class Settings:
         if not path.startswith("/"):
             path = "/" + path
         return f"http://{host}:{self.digitizer_port}{path}"
+
+    @property
+    def digitizer_label(self) -> str:
+        if str(self.digitizer_mode or "").lower() == "mqtt":
+            return (
+                f"mqtt://{self.digitizer_broker_host}:{self.digitizer_broker_port}"
+                f" [{self.digitizer_topic_weight}]"
+            )
+        return self.digitizer_url
 
     def io_config(self) -> Dict[str, Any]:
         return self.raw_config.get("io_controller", {})
@@ -361,6 +377,15 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     except (TypeError, ValueError):
         dig_port_i = 8100
 
+    dig_mode = str(
+        os.getenv("DIGITIZER_MODE") or dig.get("mode") or "api"
+    ).strip().lower() or "api"
+    dig_broker_port_raw = dig.get("broker_port") or "1883"
+    try:
+        dig_broker_port_i = int(dig_broker_port_raw)
+    except (TypeError, ValueError):
+        dig_broker_port_i = 1883
+
     checkpoint_type = normalize_checkpoint_type(
         os.getenv("CHECKPOINT_TYPE") or raw.get("checkpoint_type")
     )
@@ -465,6 +490,35 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         digitizer_stable_count=int(
             os.getenv("DIGITIZER_STABLE_COUNT") or dig.get("stable_count") or 10
         ),
+        digitizer_mode=dig_mode,
+        digitizer_broker_host=str(
+            os.getenv("DIGITIZER_BROKER_HOST")
+            or dig.get("broker_host")
+            or dig.get("host")
+            or "127.0.0.1"
+        ).strip()
+        or "127.0.0.1",
+        digitizer_broker_port=int(
+            os.getenv("DIGITIZER_BROKER_PORT") or dig_broker_port_i
+        ),
+        digitizer_mqtt_username=str(
+            os.getenv("DIGITIZER_MQTT_USERNAME") or dig.get("username") or ""
+        ),
+        digitizer_mqtt_password=str(
+            os.getenv("DIGITIZER_MQTT_PASSWORD") or dig.get("password") or ""
+        ),
+        digitizer_topic_weight=str(
+            os.getenv("DIGITIZER_TOPIC_WEIGHT")
+            or dig.get("topic_weight")
+            or dig.get("topic_publish")
+            or "gmdc/digitizer/weight"
+        ),
+        digitizer_topic_request=str(
+            os.getenv("DIGITIZER_TOPIC_REQUEST")
+            or dig.get("topic_request")
+            or dig.get("topic_subscribe")
+            or "gmdc/digitizer/request"
+        ),
         min_weight_kg=float(os.getenv("MIN_WEIGHT_KG") or 5000),
         top_camera_rtsp_url=str(
             os.getenv("TOP_CAMERA_RTSP_URL")
@@ -526,7 +580,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         "anpr_enabled=%s demo=%s voice=%s top_camera=%s",
         settings.checkpoint_type,
         settings.config_path,
-        settings.digitizer_url,
+        settings.digitizer_label,
         settings.oci_base_url,
         settings.anpr_detect_url,
         settings.anpr_enabled,

@@ -86,10 +86,12 @@ async function refreshFastagValidationConfig() {
 }
 
 function getWizardNavSections() {
-    // Prefer profile sections from server (checkpoint vs weighbridge)
+    // Prefer profile sections from backend (checkpoint vs weighbridge)
     const profileSections = window.APP_CONFIG?.profile?.sections;
     if (Array.isArray(profileSections) && profileSections.length) {
-        const s = profileSections.map((key) => {
+        const s = profileSections
+            .filter((key) => key !== 'server')
+            .map((key) => {
             if (key === 'io_controller') return 'io-controller';
             if (key === 'voice') return 'audio';
             if (key === 'handheld_rfid') return 'handheld-rfid';
@@ -98,12 +100,12 @@ function getWizardNavSections() {
         // Camera comes after handheld RFID (not between RFID and handheld)
         if (APP_CONFIG.enableCamera && !s.includes('camera')) {
             const hhIdx = s.indexOf('handheld-rfid');
-            const insertAt = hhIdx >= 0 ? hhIdx + 1 : (s.indexOf('rfid') >= 0 ? s.indexOf('rfid') + 1 : 2);
+            const insertAt = hhIdx >= 0 ? hhIdx + 1 : (s.indexOf('rfid') >= 0 ? s.indexOf('rfid') + 1 : 1);
             s.splice(insertAt, 0, 'camera');
         }
         return s;
     }
-    const s = ['server', 'rfid', 'handheld-rfid'];
+    const s = ['rfid', 'handheld-rfid'];
     if (APP_CONFIG.enableCamera) s.push('camera');
     s.push('display', 'io-controller', 'digitizer', 'audio');
     return s;
@@ -112,11 +114,11 @@ function getWizardNavSections() {
 function getWizardCompletionSections() {
     const profileSections = window.APP_CONFIG?.profile?.sections;
     if (Array.isArray(profileSections) && profileSections.length) {
-        const s = [...profileSections];
+        const s = [...profileSections].filter((x) => x !== 'server');
         // Camera after handheld_rfid so RFID → Handheld navigation stays correct
         if (APP_CONFIG.enableCamera && !s.includes('camera')) {
             const hhIdx = s.indexOf('handheld_rfid');
-            const insertAt = hhIdx >= 0 ? hhIdx + 1 : 2;
+            const insertAt = hhIdx >= 0 ? hhIdx + 1 : 1;
             s.splice(insertAt, 0, 'camera');
         }
         // Drop digitizer from completion if profile says no
@@ -125,7 +127,7 @@ function getWizardCompletionSections() {
         }
         return s;
     }
-    const s = ['server', 'rfid', 'handheld_rfid'];
+    const s = ['rfid', 'handheld_rfid'];
     if (APP_CONFIG.enableCamera) s.push('camera');
     s.push('display', 'io_controller', 'digitizer', 'voice');
     return s;
@@ -1164,15 +1166,26 @@ function navigateToNext(currentSection) {
 }
 
 // ============== Configuration Loading ==============
+let _suppressSectionInvalidation = false;
+const _sectionInvalidateTimers = {};
+const _sectionInvalidateInFlight = {};
+
 async function loadConfig() {
+    _suppressSectionInvalidation = true;
     try {
         const response = await fetch('/api/config');
         config = await response.json();
         populateFormFields();
         initAssignedDevices();
         refreshAllDropdowns();
+        initSectionChangeInvalidation();
     } catch (error) {
         console.error('Failed to load config:', error);
+    } finally {
+        // Allow a tick for any synthetic change events from setting .value
+        setTimeout(() => {
+            _suppressSectionInvalidation = false;
+        }, 0);
     }
 }
 
@@ -1253,8 +1266,9 @@ function populateFormFields() {
         toggleDisplayFields();
     }
     
-    // Digitizer (API - digitizer-app on another PC)
+    // Digitizer (API or MQTT - digitizer-decoder on another PC)
     if (config.digitizer) {
+        const digitizerModeEl = document.getElementById('digitizerMode');
         const digitizerHostEl = document.getElementById('digitizerHost');
         const digitizerApiPortEl = document.getElementById('digitizerApiPort');
         const digitizerPathEl = document.getElementById('digitizerPath');
@@ -1262,15 +1276,39 @@ function populateFormFields() {
         const digitizerStableCountEl = document.getElementById('digitizerStableCount');
         const digitizerMakeEl = document.getElementById('digitizerMake');
         const digitizerModelEl = document.getElementById('digitizerModel');
+        const dig = config.digitizer;
 
-        if (digitizerHostEl) digitizerHostEl.value = config.digitizer.host || '';
-        if (digitizerApiPortEl) digitizerApiPortEl.value = config.digitizer.port || '8100';
-        if (digitizerPathEl) digitizerPathEl.value = config.digitizer.path || '/read_stable_weight';
-        if (digitizerTimeoutEl) digitizerTimeoutEl.value = config.digitizer.timeout || '30';
-        if (digitizerStableCountEl) digitizerStableCountEl.value = config.digitizer.stable_count || '10';
-        if (digitizerMakeEl) digitizerMakeEl.value = config.digitizer.make || '';
-        if (digitizerModelEl) digitizerModelEl.value = config.digitizer.model || '';
+        if (digitizerModeEl) digitizerModeEl.value = dig.mode || 'api';
+        if (digitizerHostEl) digitizerHostEl.value = dig.host || '';
+        if (digitizerApiPortEl) digitizerApiPortEl.value = dig.port || '8100';
+        if (digitizerPathEl) digitizerPathEl.value = dig.path || '/read_stable_weight';
+        if (digitizerTimeoutEl) digitizerTimeoutEl.value = dig.timeout || '30';
+        if (digitizerStableCountEl) digitizerStableCountEl.value = dig.stable_count || '10';
+        if (digitizerMakeEl) digitizerMakeEl.value = dig.make || '';
+        if (digitizerModelEl) digitizerModelEl.value = dig.model || '';
 
+        const brokerHostEl = document.getElementById('digitizerBrokerHost');
+        const brokerPortEl = document.getElementById('digitizerBrokerPort');
+        const mqttUserEl = document.getElementById('digitizerMqttUser');
+        const mqttPassEl = document.getElementById('digitizerMqttPassword');
+        const topicWeightEl = document.getElementById('digitizerTopicWeight');
+        const topicRequestEl = document.getElementById('digitizerTopicRequest');
+        const mqttClientIdEl = document.getElementById('digitizerMqttClientId');
+        if (brokerHostEl) brokerHostEl.value = dig.broker_host || dig.host || '127.0.0.1';
+        if (brokerPortEl) brokerPortEl.value = dig.broker_port || '1883';
+        if (mqttUserEl) mqttUserEl.value = dig.username || '';
+        if (mqttPassEl) mqttPassEl.value = dig.password || '';
+        if (topicWeightEl) {
+            topicWeightEl.value = dig.topic_weight || dig.topic_publish || 'gmdc/digitizer/weight';
+        }
+        if (topicRequestEl) {
+            topicRequestEl.value = dig.topic_request || dig.topic_subscribe || 'gmdc/digitizer/request';
+        }
+        if (mqttClientIdEl) mqttClientIdEl.value = dig.client_id || '';
+
+        if (typeof toggleDigitizerFields === 'function') {
+            toggleDigitizerFields();
+        }
         if (typeof updateDigitizerSavedConfig === 'function') {
             updateDigitizerSavedConfig(config.digitizer);
         }
@@ -4253,19 +4291,83 @@ async function refreshSerialPorts() {
     }
 }
 
+function toggleDigitizerFields() {
+    const mode = (document.getElementById('digitizerMode')?.value || 'api').toLowerCase();
+    const apiFields = document.getElementById('digitizerApiFields');
+    const mqttFields = document.getElementById('digitizerMqttFields');
+    if (apiFields) apiFields.style.display = mode === 'mqtt' ? 'none' : '';
+    if (mqttFields) mqttFields.style.display = mode === 'mqtt' ? '' : 'none';
+}
+
 async function checkAndSaveDigitizer() {
-    // GMDC: digitizer-app HTTP API (host/port + /read_stable_weight)
-    const host = document.getElementById('digitizerHost')?.value?.trim() || '';
-    const port = document.getElementById('digitizerApiPort')?.value?.trim() || '8100';
-    const path = document.getElementById('digitizerPath')?.value?.trim() || '/read_stable_weight';
+    const mode = (document.getElementById('digitizerMode')?.value || 'api').toLowerCase();
     const timeout = document.getElementById('digitizerTimeout')?.value?.trim() || '30';
     const stableCount = document.getElementById('digitizerStableCount')?.value?.trim() || '10';
     const make = document.getElementById('digitizerMake')?.value || '';
     const model = document.getElementById('digitizerModel')?.value || '';
 
-    if (!host) {
-        showToast('error', 'Digitizer', 'Host / IP is required');
-        return;
+    let checkBody;
+    let payload;
+    let assignedLabel = '';
+
+    if (mode === 'mqtt') {
+        const brokerHost = document.getElementById('digitizerBrokerHost')?.value?.trim() || '';
+        const brokerPort = document.getElementById('digitizerBrokerPort')?.value?.trim() || '1883';
+        const username = document.getElementById('digitizerMqttUser')?.value?.trim() || '';
+        const password = document.getElementById('digitizerMqttPassword')?.value || '';
+        const topicWeight = document.getElementById('digitizerTopicWeight')?.value?.trim()
+            || 'gmdc/digitizer/weight';
+        const topicRequest = document.getElementById('digitizerTopicRequest')?.value?.trim()
+            || 'gmdc/digitizer/request';
+        const clientId = document.getElementById('digitizerMqttClientId')?.value?.trim() || '';
+
+        if (!brokerHost) {
+            showToast('error', 'Digitizer', 'MQTT broker host is required (Mines-WB Mac IP)');
+            return;
+        }
+
+        checkBody = {
+            mode: 'mqtt',
+            broker_host: brokerHost,
+            broker_port: brokerPort,
+            username,
+            password,
+            topic_weight: topicWeight,
+            topic_request: topicRequest,
+            timeout,
+        };
+        payload = {
+            mode: 'mqtt',
+            broker_host: brokerHost,
+            broker_port: brokerPort,
+            username,
+            password,
+            topic_weight: topicWeight,
+            topic_request: topicRequest,
+            client_id: clientId,
+            timeout,
+            stable_count: stableCount,
+            make,
+            model,
+            validated: true,
+        };
+        assignedLabel = `mqtt://${brokerHost}:${brokerPort}`;
+    } else {
+        const host = document.getElementById('digitizerHost')?.value?.trim() || '';
+        const port = document.getElementById('digitizerApiPort')?.value?.trim() || '8100';
+        const path = document.getElementById('digitizerPath')?.value?.trim() || '/read_stable_weight';
+
+        if (!host) {
+            showToast('error', 'Digitizer', 'Host / IP is required');
+            return;
+        }
+
+        checkBody = { mode: 'api', host, port, path, timeout };
+        payload = {
+            mode: 'api', host, port, path, timeout,
+            stable_count: stableCount, make, model, validated: true,
+        };
+        assignedLabel = host + ':' + port;
     }
 
     showLoading(true);
@@ -4273,7 +4375,7 @@ async function checkAndSaveDigitizer() {
         const response = await fetch('/api/digitizer/check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'api', host, port, path, timeout }),
+            body: JSON.stringify(checkBody),
         });
         const result = await response.json();
         showLoading(false);
@@ -4282,26 +4384,23 @@ async function checkAndSaveDigitizer() {
         const outputEl = document.getElementById('digitizerOutput');
         if (consoleEl) consoleEl.style.display = 'block';
         if (outputEl) {
-            // Digitizer Data: show weight in KG only (not full API JSON).
             const weight = result.weight;
             if (weight !== null && weight !== undefined && weight !== '' && !Number.isNaN(Number(weight))) {
                 outputEl.textContent = `${Number(weight)} KG`;
             } else if (result.status === 200) {
-                outputEl.textContent = 'Weight not available';
+                outputEl.textContent = mode === 'mqtt'
+                    ? (result.message || 'MQTT digitizer reachable')
+                    : 'Weight not available';
             } else {
                 outputEl.textContent = result.message || 'Digitizer check failed';
             }
         }
 
         if (result.status !== 200) {
-            showToast('error', 'Digitizer', result.message || 'API check failed');
+            showToast('error', 'Digitizer', result.message || 'Check failed');
             return;
         }
 
-        const payload = {
-            mode: 'api', host, port, path, timeout,
-            stable_count: stableCount, make, model, validated: true,
-        };
         const saveResp = await fetch('/api/config/digitizer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4312,15 +4411,15 @@ async function checkAndSaveDigitizer() {
             throw new Error(saveData.message || 'Failed to save digitizer configuration');
         }
 
-        showToast('success', 'Success', result.message || 'Digitizer-app saved');
+        showToast('success', 'Success', result.message || 'Digitizer saved');
         markSectionValidated('digitizer');
         if (typeof updateAssignedDevice === 'function') {
-            updateAssignedDevice('digitizer', host + ':' + port, false);
+            updateAssignedDevice('digitizer', assignedLabel, false);
         }
         navigateToNext('digitizer');
     } catch (err) {
         showLoading(false);
-        console.error('[Digitizer API] Error:', err);
+        console.error('[Digitizer] Error:', err);
         showToast('error', 'Digitizer', err.message || 'Check failed');
     }
 }
@@ -4584,6 +4683,11 @@ async function pollHandheldRfidWait(meta) {
 
 (function applyProfileVisibility() {
     const profile = window.APP_CONFIG && window.APP_CONFIG.profile;
+    // Server module removed from /devices wizard
+    const serverNav = document.querySelector('.nav-item[data-section="server"]');
+    const serverSec = document.getElementById('server');
+    if (serverNav) serverNav.style.display = 'none';
+    if (serverSec) serverSec.style.display = 'none';
     if (!profile) return;
     if (!profile.has_digitizer) {
         const nav = document.getElementById('navDigitizer');
@@ -4791,7 +4895,9 @@ function markSectionNotValidated(section) {
     const sectionMap = {
         'io-controller': 'io_controller',
         'io_controller': 'io_controller',
-        'audio': 'voice'  // Frontend uses 'audio', backend uses 'voice'
+        'audio': 'voice',  // Frontend uses 'audio', backend uses 'voice'
+        'handheld-rfid': 'handheld_rfid',
+        'handheld_rfid': 'handheld_rfid',
     };
     const configSection = sectionMap[section] || section;
     
@@ -4801,6 +4907,9 @@ function markSectionNotValidated(section) {
         // Also clear frontend key if it's audio
         if (configSection === 'voice') {
             completionStatus['audio'] = false;
+        }
+        if (configSection === 'handheld_rfid') {
+            completionStatus['handheld-rfid'] = false;
         }
         
         // Update all_complete status - use backend section names
@@ -4812,8 +4921,95 @@ function markSectionNotValidated(section) {
             updateValidationUI();
         }
     }
+
+    // Persist validated:false immediately (debounced) so re-runs keep truth.
+    schedulePersistSectionInvalidation(section);
     
     console.log(`[Reset] Section '${configSection}' marked as not validated`);
+}
+
+function schedulePersistSectionInvalidation(section) {
+    if (_suppressSectionInvalidation) return;
+    const key = section || '';
+    if (!key) return;
+    if (_sectionInvalidateTimers[key]) {
+        clearTimeout(_sectionInvalidateTimers[key]);
+    }
+    _sectionInvalidateTimers[key] = setTimeout(() => {
+        persistSectionInvalidation(key);
+    }, 250);
+}
+
+async function persistSectionInvalidation(section) {
+    if (_suppressSectionInvalidation) return;
+    const sectionMap = {
+        'io-controller': 'io_controller',
+        'audio': 'voice',
+        'handheld-rfid': 'handheld_rfid',
+    };
+    const apiSection = sectionMap[section] || section;
+    if (_sectionInvalidateInFlight[apiSection]) return;
+    _sectionInvalidateInFlight[apiSection] = true;
+    try {
+        const response = await fetch(`/api/config/${apiSection}/invalidate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.status !== 200) {
+            console.warn(
+                '[Invalidate] Failed for',
+                apiSection,
+                result.message || response.status
+            );
+            return;
+        }
+        if (result.completion && typeof completionStatus !== 'undefined') {
+            Object.assign(completionStatus, result.completion);
+            if (typeof updateValidationUI === 'function') {
+                updateValidationUI();
+            }
+        }
+        // Keep in-memory config root status false
+        if (config && typeof config === 'object') {
+            config.status = false;
+        }
+    } catch (err) {
+        console.warn('[Invalidate] Error for', apiSection, err);
+    } finally {
+        _sectionInvalidateInFlight[apiSection] = false;
+    }
+}
+
+/**
+ * Any edit in a validated section clears validation (UI + JSON).
+ * I/O uses its own initIoChangeDetection → markSectionNotValidated.
+ */
+function initSectionChangeInvalidation() {
+    const sectionRoots = {
+        rfid: 'rfid',
+        'handheld-rfid': 'handheld-rfid',
+        camera: 'camera',
+        display: 'display',
+        digitizer: 'digitizer',
+        audio: 'audio',
+    };
+    Object.entries(sectionRoots).forEach(([sectionId, invalidateKey]) => {
+        const root = document.getElementById(sectionId);
+        if (!root || root.dataset.invalidateBound === 'true') return;
+        root.dataset.invalidateBound = 'true';
+        const onEdit = (event) => {
+            const t = event.target;
+            if (!t || !t.matches) return;
+            if (!t.matches('input, select, textarea')) return;
+            // Buttons (check/save/reset) should not invalidate by themselves
+            if (t.matches('button, [type="button"], [type="submit"]')) return;
+            markSectionNotValidated(invalidateKey);
+        };
+        root.addEventListener('input', onEdit, true);
+        root.addEventListener('change', onEdit, true);
+    });
 }
 
 // ============== Skip Section (Debug Only) ==============

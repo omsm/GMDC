@@ -32,7 +32,7 @@ from hardware import (
     create_io_controller,
     create_rfid_reader,
 )
-from services.digitizer_client import DigitizerClient
+from services.digitizer_client import create_digitizer_client
 from services.display_service import ConsoleDisplayService, create_display_service
 from services.frontend_mqtt import FrontendMqtt
 from services.oci_client import OCIClient
@@ -305,12 +305,9 @@ def bootstrap() -> AppContext:
             demo_fallback=True,
         )
 
-    ctx.digitizer = DigitizerClient(
-        url=settings.digitizer_url,
-        timeout=settings.digitizer_timeout,
-        demo_mode=settings.demo_mode,
-        demo_weight_kg=12500.0,
-    )
+    ctx.digitizer = create_digitizer_client(settings)
+    if hasattr(ctx.digitizer, "start"):
+        ctx.digitizer.start()
 
     if settings.use_audio():
         ctx.voice = VoiceService(
@@ -328,6 +325,8 @@ def bootstrap() -> AppContext:
     _build_hardware(ctx)
 
     ctx.workflow = MinesWbWorkflow(ctx)
+    if hasattr(ctx.workflow, "attach_digitizer_monitor"):
+        ctx.workflow.attach_digitizer_monitor()
 
     fe_broker = settings.mqtt_broker or "127.0.0.1"
     fe_port = int(settings.mqtt_port or 1883)
@@ -387,7 +386,7 @@ def bootstrap() -> AppContext:
         settings.demo_mode,
         settings.config_path,
         ctx.state_machine.current_state.name,
-        settings.digitizer_url,
+        settings.digitizer_label,
     )
     return ctx
 
@@ -410,7 +409,7 @@ def main() -> int:
         f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
         f"  MQTT WS    : ws://<this-pc-ip>:{settings.mqtt_ws_port}\n"
         f"  Config     : {settings.config_path}\n"
-        f"  Digitizer  : {settings.digitizer_url}\n"
+        f"  Digitizer  : {settings.digitizer_label}\n"
         f"  State      : {ctx.state_machine.current_state.name if ctx.state_machine else '?'}\n"
         f"  Waiting for "
         f"{'ENTRY or EXIT sensor' if settings.is_bidirectional() else 'ENTRY sensor'}"
@@ -453,6 +452,11 @@ def main() -> int:
         if ctx.frontend:
             try:
                 ctx.frontend.disconnect()
+            except Exception:
+                pass
+        if ctx.digitizer and hasattr(ctx.digitizer, "stop"):
+            try:
+                ctx.digitizer.stop()
             except Exception:
                 pass
         if ctx.display:

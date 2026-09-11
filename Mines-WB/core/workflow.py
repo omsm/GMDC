@@ -76,8 +76,10 @@ class MinesWbWorkflow:
         self._boom_close_timer: Optional[threading.Timer] = None
         self._idle_s2_s3_timer: Optional[threading.Timer] = None
         self._backward_timer: Optional[threading.Timer] = None
+        self._digitizer_hang_timer: Optional[threading.Timer] = None
         self._timer_lock = threading.Lock()
         self._rfid_control_lock = threading.Lock()
+        self._digitizer_hang_announced = False
         self._awaiting_rfid = False
         self._forward_loop_active = False
         self._idle_s2_s3_loop_active = False
@@ -385,8 +387,30 @@ class MinesWbWorkflow:
         exit_ = bool(st.get("exit_active") or st.get("exit_occupied_latch"))
         return wb and exit_
 
+    def _digitizer_weight_nonzero(self) -> bool:
+        """True when live digitizer weight > 0 (MQTT live feed only)."""
+        dig = getattr(self.ctx, "digitizer", None)
+        if not dig or not hasattr(dig, "supports_live_weight"):
+            return False
+        if not dig.supports_live_weight():
+            return False
+        weight = dig.get_current_weight() if hasattr(dig, "get_current_weight") else None
+        if weight is None:
+            return False
+        try:
+            return float(weight) > 0.0
+        except (TypeError, ValueError):
+            return False
+
+    def _idle_platform_fault(self) -> bool:
+        """
+        IDLE pre-entry fault: WB+exit both cut, or digitizer weight not zero.
+        After entry sensor cut (left IDLE), this check no longer applies.
+        """
+        return self._wb_and_exit_occupied() or self._digitizer_weight_nonzero()
+
     def _start_idle_s2_s3_announcement(self) -> None:
-        """Play weighbridge_0.wav while IDLE with platform (s2) and exit (s3) cut."""
+        """Play weighbridge_0.wav while IDLE with platform fault (s2+s3 or weight≠0)."""
         if self._idle_s2_s3_loop_active:
             return
         self._idle_s2_s3_loop_active = True
@@ -413,7 +437,7 @@ class MinesWbWorkflow:
                 not self._idle_s2_s3_loop_active
                 or not sm
                 or sm.current_state != State.IDLE
-                or not self._wb_and_exit_occupied()
+                or not self._idle_platform_fault()
             ):
                 self._stop_idle_s2_s3_announcement(stop_audio=False)
                 return
@@ -436,16 +460,79 @@ class MinesWbWorkflow:
                 voice.stop()
 
     def _maybe_announce_idle_s2_s3(self) -> bool:
-        """True when IDLE and s2+s3 are cut (announcement started)."""
+        """True when IDLE and platform fault (s2+s3 cut and/or weight≠0)."""
         sm = self.ctx.state_machine
         if not sm or sm.current_state != State.IDLE:
             self._stop_idle_s2_s3_announcement()
             return False
-        if not self._wb_and_exit_occupied():
+        if not self._idle_platform_fault():
             self._stop_idle_s2_s3_announcement()
             return False
         self._start_idle_s2_s3_announcement()
         return True
+
+    def attach_digitizer_monitor(self) -> None:
+        """Watch live MQTT weight (idle weight≠0) and decoder heartbeat (hang)."""
+        dig = getattr(self.ctx, "digitizer", None)
+        if dig and hasattr(dig, "set_update_listener"):
+            dig.set_update_listener(self._on_digitizer_update)
+        self._schedule_digitizer_hang_check()
+
+    def _on_digitizer_update(self) -> None:
+        sm = self.ctx.state_machine
+        if sm and sm.current_state == State.IDLE:
+            self._maybe_announce_idle_s2_s3()
+        self._maybe_notify_digitizer_hang()
+
+    def _schedule_digitizer_hang_check(self) -> None:
+        dig = getattr(self.ctx, "digitizer", None)
+        if not dig or not hasattr(dig, "is_alive"):
+            return
+        if not hasattr(dig, "supports_live_weight") or not dig.supports_live_weight():
+            return
+
+        def _tick():
+            self._maybe_notify_digitizer_hang()
+            self._schedule_digitizer_hang_check()
+
+        self._cancel_timer("_digitizer_hang_timer")
+        timer = threading.Timer(2.0, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._digitizer_hang_timer = timer
+        timer.start()
+
+    def _maybe_notify_digitizer_hang(self) -> None:
+        dig = getattr(self.ctx, "digitizer", None)
+        if not dig or not hasattr(dig, "is_alive"):
+            return
+        if not hasattr(dig, "supports_live_weight") or not dig.supports_live_weight():
+            return
+        alive = bool(dig.is_alive())
+        if alive:
+            if self._digitizer_hang_announced:
+                self._digitizer_hang_announced = False
+                logger.info("Digitizer decoder heartbeat restored")
+                self._ui_status(
+                    STEP_READING_WEIGHT,
+                    "success",
+                    "Digitizer decoder online.",
+                )
+            return
+        if self._digitizer_hang_announced:
+            return
+        self._digitizer_hang_announced = True
+        logger.warning("Digitizer decoder heartbeat lost — notifying operator")
+        voice = self._voice()
+        if voice and hasattr(voice, "digitizer_error"):
+            voice.digitizer_error()
+        self._ui_status(
+            STEP_READING_WEIGHT,
+            "error",
+            "Digitizer decoder not responding (MQTT heartbeat lost).",
+            popup=True,
+            popup_title="Digitizer offline",
+        )
 
     def _sensor_cut(self, which: str) -> bool:
         poller = getattr(self.ctx, "sensor_poller", None)

@@ -11,7 +11,7 @@ Same serial indexing + stable-weight logic, with a **Mines-Checkpoint / Mines-WB
 
 The original `digitizer-app/` PySide UI remains available unchanged.
 
-Product version: **1.7** (see root [`version.md`](../version.md)).
+Product version: **1.8** (see root [`version.md`](../version.md)).
 
 ## Layout
 
@@ -51,7 +51,11 @@ Serial reads are fixed **40-byte** chunks (not line-based). Live raw/weight can 
 
 ### Live dashboard status (MQTT)
 
-Retained snapshots on `gmdc/digitizer/status` over broker WebSocket **:9001**. The UI connects with Paho; HTTP `/api/status` is used only for a one-shot bootstrap if MQTT is unavailable.
+Retained snapshots on hardcoded topic `gmdc/digitizer/status` over broker WebSocket **:9001** (UI) and TCP **:1883** (Mines-WB). Status includes a **heartbeat every ~2s** so Mines-WB can detect a hung decoder. The status topic is not configurable.
+
+Live weight is published on `gmdc/digitizer/weight` **only when the numeric weight changes** (plus request/response replies). The UI connects with Paho; HTTP `/api/status` is used only for a one-shot bootstrap if MQTT is unavailable.
+
+**Site layout:** run Mosquitto on the Mines-WB Mac; point decoder `communication.mqtt.broker_host` at that Mac’s LAN IP.
 
 Live weight is always shown: **red** while unstable, **green** when stable. Stable count wraps `1…10` then restarts at `1`.
 

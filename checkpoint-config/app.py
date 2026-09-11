@@ -797,7 +797,7 @@ def save_all_config():
 
 @app.route('/api/config/reset-all', methods=['POST'])
 def reset_all_config():
-    """Reset entire iot_configuration to defaults (Pre-Configuration checklist start)."""
+    """Reset entire iot_configuration to defaults (explicit Start fresh only)."""
     success = config_manager.reset_all()
     if success:
         return jsonify({
@@ -806,6 +806,27 @@ def reset_all_config():
             "config": config_manager.get_all(),
         })
     return jsonify({"status": 500, "message": "Failed to reset configuration"}), 500
+
+
+@app.route('/api/config/<section>/invalidate', methods=['POST'])
+def invalidate_section_config(section):
+    """Mark a section validated=false (and root status=false) after UI edits."""
+    if section == 'device_ip':
+        return jsonify({
+            "status": 403,
+            "message": "device_ip cannot be invalidated this way.",
+        }), 403
+    success = config_manager.invalidate_section(section)
+    if success:
+        return jsonify({
+            "status": 200,
+            "message": f"{section} marked as not validated",
+            "completion": config_manager.get_completion_status(),
+        })
+    return jsonify({
+        "status": 400,
+        "message": f"Unknown or empty section: {section}",
+    }), 400
 
 
 @app.route('/api/config/<section>', methods=['POST'])
@@ -833,9 +854,15 @@ def save_section_config(section):
         if err:
             return jsonify({"status": 400, "message": err}), 400
     if section == 'digitizer':
-        # GMDC: API digitizer - only require host/port; skip serial calibration
         dig = data or {}
-        if (dig.get("mode") or "api") == "api":
+        mode = str(dig.get("mode") or "api").strip().lower()
+        if mode == "mqtt":
+            if not str(dig.get("broker_host") or dig.get("host") or "").strip():
+                return jsonify({
+                    "status": 400,
+                    "message": "MQTT broker host is required (Mines-WB Mac IP)",
+                }), 400
+        elif mode == "api":
             if not str(dig.get("host") or dig.get("ip") or "").strip():
                 return jsonify({
                     "status": 400,
@@ -1197,10 +1224,13 @@ def check_display():
 
 @app.route('/api/digitizer/check', methods=['POST'])
 def check_digitizer():
-    """Check digitizer-app API connectivity (POST /read_stable_weight)."""
+    """Check digitizer connectivity (API HTTP or MQTT status/weight)."""
     data = request.json or {}
-    # Prefer API mode (GMDC default)
-    if (data.get('mode') or 'api') == 'api' or data.get('host') or data.get('ip'):
+    mode = str(data.get('mode') or 'api').strip().lower()
+    if mode in ('api', 'mqtt') or data.get('host') or data.get('ip') or data.get('broker_host'):
+        if mode not in ('api', 'mqtt'):
+            data = dict(data)
+            data['mode'] = 'api'
         result = digitizer_api_service.check_connection(data)
         return jsonify(result)
     # Legacy serial fallback (kept for brownfield labs)

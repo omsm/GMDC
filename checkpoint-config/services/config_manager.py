@@ -135,6 +135,7 @@ def _normalize_io_sensors(config: dict) -> dict:
 DIGITIZER_TRANSIENT_KEYS = frozenset({
     "calibration_sample_hex",
     "sample_hex",
+    "topic_status",  # hardcoded in Mines-WB + digitizer-decoder backends
 })
 
 DIGITIZER_NUMERIC_DEFAULTS = {
@@ -233,30 +234,46 @@ def migrate_gmdc_api_defaults(config: dict) -> None:
         port_val = str(dig.get("port") or "").strip().upper()
         looks_serial = port_val.startswith("COM") or dig.get("baud_rate") is not None
         mode = str(dig.get("mode") or "").strip().lower()
-        needs_api_reset = mode != "api" or (
-            looks_serial and not str(dig.get("host") or "").strip()
-        )
-        if needs_api_reset:
-            dig["mode"] = "api"
-            if not dig.get("host"):
-                dig["host"] = ""
-            if looks_serial or not str(dig.get("port") or "").isdigit():
-                dig["port"] = "8100"
-            dig.setdefault("path", "/read_stable_weight")
-            dig.setdefault("timeout", "30")
-            dig.setdefault("stable_count", "10")
-            # Drop serial-only noise from the live API section
-            for key in (
-                "baud_rate",
-                "bytesize",
-                "parity",
-                "stopbits",
-                "conversion_method",
-                "indexing",
-            ):
-                dig.pop(key, None)
-            if dig.get("validated") and not dig.get("host"):
-                dig["validated"] = False
+
+        if mode == "mqtt":
+            dig.setdefault("broker_host", dig.get("broker_host") or dig.get("host") or "127.0.0.1")
+            dig.setdefault("broker_port", dig.get("broker_port") or "1883")
+            dig.setdefault(
+                "topic_weight",
+                dig.get("topic_weight") or dig.get("topic_publish") or "gmdc/digitizer/weight",
+            )
+            dig.setdefault(
+                "topic_request",
+                dig.get("topic_request") or dig.get("topic_subscribe") or "gmdc/digitizer/request",
+            )
+            dig.setdefault("timeout", dig.get("timeout") or "30")
+            dig.setdefault("stable_count", dig.get("stable_count") or "10")
+            dig.pop("topic_status", None)
+        else:
+            needs_api_reset = mode not in ("api",) or (
+                looks_serial and not str(dig.get("host") or "").strip()
+            )
+            if needs_api_reset:
+                dig["mode"] = "api"
+                if not dig.get("host"):
+                    dig["host"] = ""
+                if looks_serial or not str(dig.get("port") or "").isdigit():
+                    dig["port"] = "8100"
+                dig.setdefault("path", "/read_stable_weight")
+                dig.setdefault("timeout", "30")
+                dig.setdefault("stable_count", "10")
+                # Drop serial-only noise from the live API section
+                for key in (
+                    "baud_rate",
+                    "bytesize",
+                    "parity",
+                    "stopbits",
+                    "conversion_method",
+                    "indexing",
+                ):
+                    dig.pop(key, None)
+                if dig.get("validated") and not dig.get("host"):
+                    dig["validated"] = False
 
     rfid = config.get("rfid")
     if isinstance(rfid, dict):
@@ -947,12 +964,18 @@ DEFAULT_CONFIG = {
         "mqtt_topic_rx": "iot_display/display_to_application",
         "validated": False
     },
-    # Digitizer-app on another PC - HTTP /read_stable_weight (not local COM)
+    # Digitizer: API (HTTP) or MQTT (decoder on another PC; broker on Mines-WB Mac)
     "digitizer": {
         "mode": "api",
         "host": "",
         "port": "8100",
         "path": "/read_stable_weight",
+        "broker_host": "127.0.0.1",
+        "broker_port": "1883",
+        "username": "",
+        "password": "",
+        "topic_weight": "gmdc/digitizer/weight",
+        "topic_request": "gmdc/digitizer/request",
         "timeout": "30",
         "stable_count": "10",
         "validated": False,
@@ -1445,8 +1468,8 @@ class ConfigManager:
 
     def reset_all(self):
         """
-        Reset entire configuration to defaults (fresh Pre-Configuration start).
-        Used when the checklist page loads so each wizard run starts clean.
+        Reset entire configuration to defaults.
+        Only for explicit "Start fresh configuration" — not on checklist load.
         """
         config = self._deep_copy(DEFAULT_CONFIG)
         config["status"] = False
@@ -1472,6 +1495,70 @@ class ConfigManager:
                 self.config[section]['validated'] = validated
                 return self._save_config()
         return False
+
+    def invalidate_section(self, section: str) -> bool:
+        """
+        Mark a wizard section as not validated and clear root status.
+        Used when the operator edits fields after a successful Check & Save.
+        """
+        key = str(section or "").strip()
+        aliases = {
+            "audio": "voice",
+            "io-controller": "io_controller",
+            "handheld-rfid": "handheld_rfid",
+        }
+        key = aliases.get(key, key)
+        if not key:
+            return False
+
+        self.config["status"] = False
+
+        if key == "rfid":
+            rfid = self.config.get("rfid")
+            if isinstance(rfid, dict):
+                rfid["validated"] = False
+            rfids = self.config.get("rfids")
+            if isinstance(rfids, dict):
+                for side in ("entry_a", "entry_b"):
+                    reader = rfids.get(side)
+                    if isinstance(reader, dict):
+                        reader["validated"] = False
+        elif key == "camera":
+            cam = self.config.get("camera")
+            if not isinstance(cam, dict):
+                cam = {}
+                self.config["camera"] = cam
+            cam["validated"] = False
+            for sub in ("top", "front"):
+                block = cam.get(sub)
+                if isinstance(block, dict):
+                    block["validated"] = False
+        elif key == "io_controller":
+            io = self.config.get("io_controller")
+            if isinstance(io, dict):
+                io["validated"] = False
+                sensors = io.get("sensors")
+                if isinstance(sensors, dict):
+                    for sensor in sensors.values():
+                        if isinstance(sensor, dict):
+                            sensor["validated"] = False
+                for group_key in ("traffic_lights", "boom_barriers"):
+                    group = io.get(group_key)
+                    if not isinstance(group, dict):
+                        continue
+                    for block in group.values():
+                        if isinstance(block, dict):
+                            if "validated" in block:
+                                block["validated"] = False
+                            for side_meta in block.values():
+                                if isinstance(side_meta, dict) and "validated" in side_meta:
+                                    side_meta["validated"] = False
+        elif key in self.config and isinstance(self.config[key], dict):
+            self.config[key]["validated"] = False
+        else:
+            return False
+
+        return self._save_config()
     
     def set_status(self, status=True):
         """Set the root-level status field"""

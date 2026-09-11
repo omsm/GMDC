@@ -1,13 +1,32 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.7**
+**Current version: 1.8**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB / digitizer-decoder `1.7.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB / digitizer-decoder `1.8.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.7 — 2026-09-11 (latest)
+## 1.8 — 2026-09-11 (latest)
+
+Digitizer MQTT commissioning polish, checkpoint-config wizard cleanup, and config persistence across re-runs.
+
+### Digitizer MQTT (shipped end-to-end)
+- checkpoint-config: digitizer mode **API | MQTT** (broker host = Mines-WB Mac; decoder on another PC)
+- Status / heartbeat topic hardcoded as `gmdc/digitizer/status` (not shown in UI; both apps)
+- Mines-WB MQTT client: subscribe weight + status; request stable weight for capture/validation
+- IDLE gate: WB+exit clear **and** live weight **0** before entry cut (`weighbridge_0`); stops after entry
+- Hang notify when decoder heartbeat is lost; decoder publishes weight only on value change
+
+### checkpoint-config UX
+- **Server** module removed from `/devices` wizard (not required for finish)
+- Re-run **keeps** `iot_configuration.json` and section `validated` flags (no automatic wipe on checklist load)
+- Explicit **Start fresh configuration** on checklist when a full wipe is needed
+- Editing any section field immediately sets that section `validated: false` (+ root `status: false`) in JSON
+
+---
+
+## 1.7 — 2026-09-11
 
 Digitizer Decoder web service, shared local Mosquitto bootstrap (1883 + 9001), and leaner dashboard MQTT publishing.
 
@@ -30,6 +49,13 @@ Digitizer Decoder web service, shared local Mosquitto bootstrap (1883 + 9001), a
 ### Dashboard MQTT traffic
 - Frontend MQTT topics publish **only on real payload change** (device status monitor still polls hardware; MQTT send is change-gated)
 - Browser connect / `request_status` / reset still force a full snapshot
+
+### Digitizer MQTT (checkpoint-config + Mines-WB)
+- Commissioning UI: digitizer mode **API | MQTT** with broker/topics (broker = Mines-WB Mac; decoder on another PC)
+- Mines-WB MQTT client subscribes to weight + status; requests stable weight for capture/validation
+- IDLE gate: WB+exit must be clear **and** live digitizer weight must be **0** before entry cut (same `weighbridge_0` announcement); check stops after entry
+- Hang sync: decoder status heartbeat ~2s; Mines-WB notifies if heartbeat is lost
+- Decoder publishes weight topic only when the weight value changes
 
 ---
 
@@ -197,7 +223,8 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
-| **1.7** | Digitizer Decoder web app; shared Mosquitto ensure (1883/9001); change-only UI MQTT; live weight MQTT status + stable wrap |
+| **1.8** | Digitizer MQTT E2E; hardcoded status topic; no Server wizard step; config reuse on re-run; invalidate-on-edit |
+| **1.7** | Digitizer Decoder; Mosquitto ensure; change-only UI MQTT; digitizer MQTT in config/Mines-WB; idle weight=0 + hang sync |
 | **1.6** | Retuned default Zebra RFID `DEFAULT_MODE_PAYLOAD` in `gmdc_common` (0.2.8); optional per-site `mode_payload` override |
 | **1.5** | ANPR ON/OFF toggle; invalid-truck always; status-check on mismatch 0/2; CE trips require check-status for all ANPR cases (Checkpoint) |
 | **1.4** | Auto `device_ip` on Finish; dashboard light/dark mode toggle; runtimes read IP from IoT JSON |
@@ -210,4 +237,4 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 ## Notes for the next release
 
-Open items tracked outside this file (e.g. `to-do.md.md`): checkpoint-config digitizer MQTT fields wiring into Mines-WB client, bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.
+Open items tracked outside this file (e.g. `to-do.md.md`): align PySide `digitizer-app` MQTT publish-on-change with decoder, bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.

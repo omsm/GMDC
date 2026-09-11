@@ -9,14 +9,14 @@
     "validated": false
   },
   "rfid": {
-    "ip": "",
+    "ip": "192.168.31.5",
     "port": "5555",
     "mode": "API",
     "make": "Zebra",
     "model": "fx900",
     "username": "admin",
-    "password": "",
-    "validated": false,
+    "password": "Csmpl@123",
+    "validated": true,
     "manual_match_start": 0,
     "manual_match_length": 24,
     "manual_match_sample": "",
@@ -26,24 +26,26 @@
     "enabled": true,
     "ip": "",
     "port": "",
-    "make": "",
-    "model": "",
-    "device_id": "",
-    "validated": false
+    "make": "demo",
+    "model": "demo",
+    "device_id": "okok",
+    "validated": true,
+    "last_rfid_data": "Hello WOrld"
   },
   "camera": {
     "top": {
-      "rtsp_url": "",
-      "make": "",
-      "model": "",
-      "validated": false
+      "rtsp_url": "rtsp://zafir:Csm_12345@192.168.40.69:554/Streaming/Channels/103",
+      "make": "ok",
+      "model": "ok",
+      "validated": true
     },
     "front": {
-      "rtsp_url": "",
-      "make": "",
-      "model": "",
-      "validated": false
-    }
+      "rtsp_url": "rtsp://zafir:Csm_12345@192.168.40.69:554/Streaming/Channels/103",
+      "make": "ok",
+      "model": "ok",
+      "validated": true
+    },
+    "validated": true
   },
   "display": {
     "type": "mqtt",
@@ -51,28 +53,37 @@
     "port": "1883",
     "mqtt_topic_tx": "iot_display/application_to_display",
     "mqtt_topic_rx": "iot_display/display_to_application",
-    "validated": false
+    "validated": true,
+    "make": "okok",
+    "model": "okok"
   },
   "digitizer": {
-    "mode": "api",
+    "mode": "mqtt",
     "host": "",
     "port": "8100",
     "path": "/read_stable_weight",
+    "broker_host": "127.0.0.1",
+    "broker_port": "1883",
+    "username": "",
+    "password": "",
+    "topic_weight": "gmdc/digitizer/weight",
+    "topic_request": "gmdc/digitizer/request",
     "timeout": "30",
     "stable_count": "10",
-    "validated": false,
-    "make": "",
-    "model": "",
+    "validated": true,
+    "make": "ok",
+    "model": "ok",
     "baud_rate": "9600",
     "bytesize": "8",
-    "stopbits": "1"
+    "stopbits": "1",
+    "client_id": ""
   },
   "io_controller": {
     "type": "ethernet",
     "output_mode": "direct",
     "connection": {
       "ethernet": {
-        "ip": "",
+        "ip": "192.168.31.89",
         "port": "502",
         "timeout": "1"
       },
@@ -101,9 +112,9 @@
       "write_multiple_registers": "16"
     },
     "digital_inputs": {
-      "start_address": "",
+      "start_address": "0",
       "count": "8",
-      "function_code": "",
+      "function_code": "2",
       "mapping": {
         "sensor_entry": {
           "address": "0",
@@ -120,9 +131,9 @@
       }
     },
     "digital_outputs": {
-      "start_address": "",
+      "start_address": "0",
       "count": "8",
-      "function_code": "",
+      "function_code": "5",
       "mode_description": {
         "direct": "Each light/barrier has separate pins (red_pin, green_pin, open_pin, close_pin)",
         "relay": "Single pin per device controls a relay with NO/NC contacts"
@@ -158,25 +169,25 @@
       "entry_sensor": {
         "pin": "0",
         "default_signal": "low",
-        "validated": false
+        "validated": true
       },
       "wb_sensor": {
         "pin": "1",
         "default_signal": "low",
-        "validated": false
+        "validated": true
       },
       "exit_sensor": {
         "pin": "2",
         "default_signal": "low",
-        "validated": false
+        "validated": true
       }
     },
     "traffic_lights": {
       "mode": "direct",
       "relay_logic": {
-        "description": "Relay ON (coil=HIGH) = NO contact = GREEN, Relay OFF (coil=LOW) = NC contact = RED",
-        "on_state": "green",
-        "off_state": "red"
+        "description": "Relay ON (coil=HIGH) = NO contact = RED, Relay OFF (coil=LOW) = NC contact = GREEN",
+        "on_state": "red",
+        "off_state": "green"
       },
       "direct": {
         "entry": {
@@ -190,23 +201,23 @@
       },
       "relay": {
         "entry": {
-          "pin": "0",
-          "description": "Relay 1: NO=Green, NC=Red"
+          "pin": "",
+          "description": "Relay 1: NO=Red, NC=Green"
         },
         "exit": {
-          "pin": "1",
-          "description": "Relay 2: NO=Green, NC=Red"
+          "pin": "",
+          "description": "Relay 2: NO=Red, NC=Green"
         }
       },
       "entry": {
-        "make": "",
-        "model": "",
-        "validated": false
+        "make": "okok",
+        "model": "okok",
+        "validated": true
       },
       "exit": {
-        "make": "",
-        "model": "",
-        "validated": false
+        "make": "okok",
+        "model": "okok",
+        "validated": true
       }
     },
     "boom_barriers": {
@@ -218,24 +229,24 @@
       },
       "direct": {
         "entry": {
-          "open_pin": "4",
+          "open_pin": "",
           "close_pin": null,
           "enabled": false
         },
         "exit": {
-          "open_pin": "5",
+          "open_pin": "",
           "close_pin": null,
           "enabled": false
         }
       },
       "relay": {
         "entry": {
-          "pin": "2",
+          "pin": "",
           "enabled": false,
           "description": "Relay 3: NO=Open, NC=Close"
         },
         "exit": {
-          "pin": "3",
+          "pin": "",
           "enabled": false,
           "description": "Relay 4: NO=Open, NC=Close"
         }
@@ -243,22 +254,26 @@
       "entry": {
         "make": "",
         "model": "",
-        "validated": false
+        "validated": null
       },
       "exit": {
         "make": "",
         "model": "",
-        "validated": false
+        "validated": null
       }
     },
-    "validated": false
+    "validated": true,
+    "make": "ok",
+    "model": "ok"
   },
   "status": false,
   "voice": {
     "enabled": true,
     "directory": "static/voice",
     "error_prefix": true,
-    "validated": false
+    "validated": true,
+    "make": "",
+    "model": ""
   },
   "api_endpoints": {
     "oci_base_url": "https://gmuatociexp.gmdcltd.co.in",
@@ -293,15 +308,17 @@
     "anpr_password": "GMDC@1234"
   },
   "setup_info": {
-    "weighbridge_details": "",
-    "weighbridge_location": "",
-    "vendor_company": "",
-    "verified_by": "",
-    "verification_date": ""
+    "weighbridge_details": "00844",
+    "weighbridge_location": "THE GREAT INDIAN WEIGHBRIDGE",
+    "vendor_company": "OSM",
+    "verified_by": "OSM",
+    "verification_date": "2026-09-11",
+    "remarks": "",
+    "setup_timestamp": "2026-09-11T12:43:16.308Z"
   },
   "ip_range": {
-    "start_ip": "172.20.10.1",
-    "end_ip": "172.20.10.254"
+    "start_ip": "192.168.31.1",
+    "end_ip": "192.168.31.254"
   },
   "_meta": {
     "layout_change_pending": true
