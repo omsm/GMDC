@@ -1,13 +1,39 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.6**
+**Current version: 1.7**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.6.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB / digitizer-decoder `1.7.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.6 — 2026-09-10 (latest)
+## 1.7 — 2026-09-11 (latest)
+
+Digitizer Decoder web service, shared local Mosquitto bootstrap (1883 + 9001), and leaner dashboard MQTT publishing.
+
+### Digitizer Decoder (`digitizer-decoder/`)
+- New Flask web app replacing the PySide `digitizer-app` shell for field use
+- Same ASCII index calibration + stable-weight logic; Mines-style dashboard
+- Transport toggle: **API** (`/read_stable_weight`) or **MQTT** (request → stable → publish)
+- Admin login unlocks Configuration (serial, transport, calibration)
+- Serial: fixed **40-byte** reads (no `readline`); refresh-ports control in UI
+- Live dashboard status over **MQTT WebSocket** (`gmdc/digitizer/status` on broker WS `:9001`); one HTTP bootstrap only
+- Live weight always shown; **red** while unstable, **green** when stable; stable count wraps `1…10` then back to `1`
+- Frame-end calibration: when operator picks `][`, store `]` so single `[xxxxx]` frames extract live
+- Sample Arduino simulator (`arduino-app/`) streams zero-padded `[00000]`…`[50000]` with ADC averaging + hysteresis
+
+### Local MQTT broker (`mqtt_broker_setup/`)
+- Shared installer/ensure helper: check **1883** (MQTT) and **9001** (WebSocket); if down → install Mosquitto, write conf, start service/daemon
+- Wired at startup for **checkpoint-config**, **Mines-Checkpoint**, **Mines-WB**, **Mine-entry**, **Tracking-point-1**, **TareWb-App**, and **digitizer-decoder**
+- Settings expose `mqtt_port` (1883) and `mqtt_ws_port` (9001); HTTP/WS ports from display config are not used as TCP MQTT ports
+
+### Dashboard MQTT traffic
+- Frontend MQTT topics publish **only on real payload change** (device status monitor still polls hardware; MQTT send is change-gated)
+- Browser connect / `request_status` / reset still force a full snapshot
+
+---
+
+## 1.6 — 2026-09-10
 
 Updated default Zebra RFID CUSTOM **mode payload** in shared `gmdc_common`, plus package bump.
 
@@ -171,6 +197,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.7** | Digitizer Decoder web app; shared Mosquitto ensure (1883/9001); change-only UI MQTT; live weight MQTT status + stable wrap |
 | **1.6** | Retuned default Zebra RFID `DEFAULT_MODE_PAYLOAD` in `gmdc_common` (0.2.8); optional per-site `mode_payload` override |
 | **1.5** | ANPR ON/OFF toggle; invalid-truck always; status-check on mismatch 0/2; CE trips require check-status for all ANPR cases (Checkpoint) |
 | **1.4** | Auto `device_ip` on Finish; dashboard light/dark mode toggle; runtimes read IP from IoT JSON |
@@ -183,4 +210,4 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 ## Notes for the next release
 
-Open items tracked outside this file (e.g. `to-do.md.md`): further operator UI polish, digitizer port alignment (8800 vs config defaults), bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.
+Open items tracked outside this file (e.g. `to-do.md.md`): checkpoint-config digitizer MQTT fields wiring into Mines-WB client, bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.

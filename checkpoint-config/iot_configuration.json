@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "checkpoint_type": "mines_entry",
+  "checkpoint_type": "tare_wb",
   "wb_type": "unidirectional",
+  "device_ip": "",
   "server": {
     "ip": "",
     "port": "",
@@ -299,7 +300,10 @@
     "verification_date": ""
   },
   "ip_range": {
-    "start_ip": "192.168.1.1",
-    "end_ip": "192.168.1.254"
+    "start_ip": "172.20.10.1",
+    "end_ip": "172.20.10.254"
+  },
+  "_meta": {
+    "layout_change_pending": true
   }
 }

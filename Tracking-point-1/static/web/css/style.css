@@ -213,7 +213,7 @@ body {
 
 /* Left Panel: Device Status */
 .left-panel {
-    width: 360px;
+    width: 400px;
     background: var(--neutral-0);
     border: 1px solid var(--neutral-200);
     border-radius: 4px;

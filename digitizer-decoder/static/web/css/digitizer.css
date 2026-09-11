@@ -1,0 +1,251 @@
+/* Digitizer Decoder — layout extras on top of Mines Checkpoint design tokens */
+
+.dig-layout {
+    align-items: stretch;
+}
+
+.dig-weight-panel {
+    text-align: left;
+    padding: var(--spacing-xl) !important;
+    min-height: 180px;
+}
+
+.dig-weight-value {
+    font-size: 72px;
+    font-weight: 700;
+    color: var(--neutral-900);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    transition: color 0.2s ease;
+}
+
+.dig-weight-value.is-unstable {
+    color: var(--error);
+}
+
+.dig-weight-value.is-stable-wt {
+    color: var(--success);
+}
+
+.dig-weight-unit {
+    color: var(--neutral-600);
+    font-size: var(--font-size-lg);
+    margin-top: var(--spacing-xs);
+}
+
+.dig-weight-meta {
+    margin-top: var(--spacing-md);
+    color: var(--neutral-700);
+    font-weight: 600;
+}
+
+.dig-raw {
+    margin-top: var(--spacing-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--neutral-500);
+    word-break: break-all;
+}
+
+.dig-config-panel {
+    padding-bottom: var(--spacing-xl) !important;
+}
+
+.dig-section {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--neutral-200);
+}
+
+.dig-section-title {
+    font-size: var(--font-size-base);
+    color: var(--neutral-800);
+    margin-bottom: var(--spacing-md);
+}
+
+.dig-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-md);
+}
+
+.dig-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: var(--font-size-sm);
+    color: var(--neutral-700);
+}
+
+.dig-field-wide {
+    grid-column: 1 / -1;
+}
+
+.dig-port-row {
+    display: flex;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+}
+
+.dig-port-row select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.dig-port-row .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dig-field input,
+.dig-field select,
+.dig-pick-row select {
+    border: 1px solid var(--neutral-300);
+    background: var(--neutral-0);
+    color: var(--neutral-900);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family);
+}
+
+.dig-field input:focus,
+.dig-field select:focus,
+.dig-pick-row select:focus {
+    outline: 2px solid var(--primary-light);
+    border-color: var(--primary);
+}
+
+.dig-help {
+    color: var(--neutral-600);
+    font-size: var(--font-size-sm);
+    margin: var(--spacing-sm) 0;
+}
+
+.dig-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    margin: var(--spacing-md) 0;
+}
+
+.dig-actions-end {
+    justify-content: flex-end;
+    border-top: 1px solid var(--neutral-200);
+    padding-top: var(--spacing-lg);
+}
+
+.dig-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--spacing-md);
+}
+
+.dig-byte-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 220px;
+    overflow: auto;
+    padding: var(--spacing-sm);
+    background: var(--neutral-50);
+    border: 1px solid var(--neutral-200);
+    border-radius: 8px;
+}
+
+.dig-byte {
+    width: 42px;
+    height: 42px;
+    border-radius: 6px;
+    border: 1px solid var(--neutral-300);
+    background: var(--neutral-0);
+    color: var(--neutral-800);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+}
+
+.dig-byte:hover {
+    border-color: var(--primary);
+}
+
+.dig-byte.is-r1 { background: var(--info-light); border-color: var(--primary); }
+.dig-byte.is-r3 { background: var(--success-light); border-color: var(--success); }
+.dig-byte.is-r4 { background: var(--warning-light); border-color: var(--warning); }
+.dig-byte.is-r2,
+.dig-byte.is-r5,
+.dig-byte.is-r6 { background: var(--neutral-100); }
+
+.device-status.status-connected { color: var(--success); }
+.device-status.status-disconnected { color: var(--error); }
+.device-status.status-warning { color: var(--warning); }
+
+.dig-config-modal {
+    max-width: 860px;
+    width: 94%;
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.dig-config-modal .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.dig-config-modal .camera-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--neutral-700);
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.dig-mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--neutral-300);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: var(--spacing-md);
+    background: var(--neutral-100);
+}
+
+.dig-mode-btn {
+    border: none;
+    background: transparent;
+    color: var(--neutral-700);
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    padding: 10px 28px;
+    cursor: pointer;
+    min-width: 96px;
+}
+
+.dig-mode-btn + .dig-mode-btn {
+    border-left: 1px solid var(--neutral-300);
+}
+
+.dig-mode-btn.is-active {
+    background: var(--primary);
+    color: #fff;
+}
+
+.dig-mode-panel.is-hidden {
+    display: none !important;
+}
+
+#config-button[hidden],
+#login-button[hidden] {
+    display: none !important;
+}
+

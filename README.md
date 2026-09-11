@@ -4,7 +4,7 @@ Python runtimes for Gujarat Mineral Development Corporation (GMDC) mine-yard che
 
 This workspace is one site install. Shared packages (`gmdc_common`, `checkpoint-config`, `digitizer-app`) live next to two family runtimes so every PC can commission hardware, share drivers, and run the matching site flow via `checkpoint_type`.
 
-**Current product version:** see [`version.md`](version.md) (**1.6**).
+**Current product version:** see [`version.md`](version.md) (**1.7**).
 
 ## Site flow
 
@@ -31,7 +31,9 @@ Legacy folders `Mine-entry/`, `Tracking-point-1/`, and `TareWb-App/` remain as r
 new-IoT/
 ├── gmdc_common/          Shared library (hardware, RFID, FSM, display, voice)
 ├── checkpoint-config/    Commissioning UI - writes iot_configuration.json
-├── digitizer-app/        Serial weighbridge reader + HTTP weight API
+├── digitizer-app/        PySide serial weighbridge reader + HTTP weight API
+├── digitizer-decoder/    Web digitizer (API or MQTT) + operator dashboard
+├── mqtt_broker_setup/    Ensure local Mosquitto on 1883 + WebSocket 9001
 ├── Mines-Checkpoint/     Checkpoint family runtime (entry / tracking / exit)
 ├── Mines-WB/             Weighbridge family runtime (tare / vadaghat / gross)
 └── version.md
@@ -72,6 +74,14 @@ Commissioning tool for all site types. Flask UI on **http://127.0.0.1:8080**. Wr
 ### `digitizer-app`
 
 Standalone PySide6 serial reader. HTTP API: **http://0.0.0.0:8800/read_stable_weight**.
+
+### `digitizer-decoder`
+
+Web replacement for the PySide shell (same calibration / stable-weight logic). Dashboard default **http://127.0.0.1:8800/**. Modes: **API** (`/read_stable_weight`) or **MQTT** request/response. Live UI status over MQTT WebSocket (`gmdc/digitizer/status` on **:9001**). See [`digitizer-decoder/README.md`](digitizer-decoder/README.md).
+
+### `mqtt_broker_setup`
+
+Shared helper used at app startup: if MQTT **1883** or WS **9001** is down, install/configure/start local Mosquitto so dashboards and digitizer MQTT can connect.
 
 ---
 

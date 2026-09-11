@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digitizer Decoder - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/digitizer.css">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('gmdc_ui_theme');
+                if (t === 'dark' || t === 'light') {
+                    document.documentElement.setAttribute('data-theme', t);
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-logo">
+                    <div class="logo-icon">DD</div>
+                    <div class="header-title">
+                        <h1>Digitizer Decoder</h1>
+                        <span class="subtitle">
+                            Weighbridge Serial Service
+                            <span id="app-version" style="margin-left:8px; opacity:0.85; font-weight:600;">v--</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="theme-toggle-btn" class="theme-toggle-btn" type="button" title="Switch theme" aria-label="Toggle theme">
+                    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"></path>
+                    </svg>
+                    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4"></circle>
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+                    </svg>
+                </button>
+                <div class="system-status" id="system-status">
+                    <span class="status-indicator-dot"></span>
+                    <span id="status-text">Starting…</span>
+                </div>
+                <div class="timestamp" id="current-time">--:--:--</div>
+                <button id="config-button" class="header-login-btn" type="button" hidden>Configuration</button>
+                <button id="login-button" class="header-login-btn" type="button">Login</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container dig-layout">
+        <div class="left-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Device Status</h2>
+            </div>
+            <div class="panel-body">
+                <div class="device-status-container">
+                    <div class="device-item">
+                        <div class="device-header">
+                            <div class="device-name">Serial Digitizer</div>
+                            <div class="device-status" id="serial-status-badge">
+                                <span class="status-indicator"></span>
+                                <span id="serial-status-text">--</span>
+                            </div>
+                        </div>
+                        <div class="device-details" id="serial-details">Port: --</div>
+                    </div>
+                    <div class="device-item">
+                        <div class="device-header">
+                            <div class="device-name">Transport</div>
+                            <div class="device-status" id="transport-status-badge">
+                                <span class="status-indicator"></span>
+                                <span id="transport-mode-text">--</span>
+                            </div>
+                        </div>
+                        <div class="device-details" id="transport-details">--</div>
+                    </div>
+                    <div class="device-item">
+                        <div class="device-header">
+                            <div class="device-name">Calibration</div>
+                            <div class="device-status" id="calib-status-badge">
+                                <span class="status-indicator"></span>
+                                <span id="calib-status-text">--</span>
+                            </div>
+                        </div>
+                        <div class="device-details">ASCII index extraction</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Live Weight</h2>
+            </div>
+            <div class="panel-body dig-weight-panel">
+                <div class="dig-weight-value" id="live-weight">--</div>
+                <div class="dig-weight-unit">kg</div>
+                <div class="dig-weight-meta" id="stable-meta">Stable: --</div>
+                <div class="dig-raw" id="raw-line"></div>
+                <p class="dig-help" id="setup-hint">Admin login required to configure serial port, transport, and calibration.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin login -->
+    <div id="login-modal" class="modal">
+        <div class="modal-content login-card">
+            <div class="modal-header login-card-header">
+                <h2>Admin Login</h2>
+            </div>
+            <div class="modal-body">
+                <form id="login-form" autocomplete="on">
+                    <label class="login-label" for="login-username">Username</label>
+                    <input id="login-username" class="login-input" type="text" name="username" required>
+                    <label class="login-label" for="login-password">Password</label>
+                    <input id="login-password" class="login-input" type="password" name="password" required>
+                    <p id="login-error" class="login-error" hidden></p>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id="login-cancel-btn" class="modal-btn modal-btn-cancel" type="button">Cancel</button>
+                <button id="login-submit-btn" class="modal-btn modal-btn-ok" type="submit" form="login-form">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configuration popup (admin only) -->
+    <div id="config-modal" class="modal">
+        <div class="modal-content dig-config-modal">
+            <div class="modal-header">
+                <h2>Configuration</h2>
+                <button type="button" class="camera-modal-close" id="config-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body dig-config-panel">
+                <form id="config-form" autocomplete="off">
+                    <div class="dig-section">
+                        <h3 class="dig-section-title">Serial port</h3>
+                        <div class="dig-grid">
+                            <label class="dig-field dig-field-wide">
+                                <span>Port</span>
+                                <div class="dig-port-row">
+                                    <select id="cfg-port"></select>
+                                    <button type="button" class="btn btn-primary" id="btn-refresh-ports" title="Rescan serial ports">
+                                        Refresh ports
+                                    </button>
+                                </div>
+                            </label>
+                            <label class="dig-field">
+                                <span>Baud rate</span>
+                                <select id="cfg-baud">
+                                    <option value="--Select--">--Select--</option>
+                                    <option>9600</option><option>19200</option>
+                                    <option>38400</option><option>57600</option>
+                                    <option>115200</option>
+                                </select>
+                            </label>
+                            <label class="dig-field">
+                                <span>Data bits</span>
+                                <select id="cfg-databits">
+                                    <option value="--Select--">--Select--</option>
+                                    <option>7</option><option>8</option>
+                                </select>
+                            </label>
+                            <label class="dig-field">
+                                <span>Parity</span>
+                                <select id="cfg-parity">
+                                    <option value="--Select--">--Select--</option>
+                                    <option value="N">None</option>
+                                    <option value="E">Even</option>
+                                    <option value="O">Odd</option>
+                                </select>
+                            </label>
+                            <label class="dig-field">
+                                <span>Stop bits</span>
+                                <select id="cfg-stopbits">
+                                    <option value="--Select--">--Select--</option>
+                                    <option>1</option><option>1.5</option><option>2</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="dig-section">
+                        <h3 class="dig-section-title">Communication</h3>
+                        <div class="dig-mode-toggle" role="group" aria-label="Communication mode">
+                            <button type="button" class="dig-mode-btn is-active" data-mode="api" id="mode-btn-api">API</button>
+                            <button type="button" class="dig-mode-btn" data-mode="mqtt" id="mode-btn-mqtt">MQTT</button>
+                        </div>
+                        <input type="hidden" id="cfg-mode" value="api">
+
+                        <div id="api-fields" class="dig-grid dig-mode-panel">
+                            <label class="dig-field">
+                                <span>API host</span>
+                                <input id="cfg-api-host" type="text">
+                            </label>
+                            <label class="dig-field">
+                                <span>API port</span>
+                                <input id="cfg-api-port" type="number">
+                            </label>
+                            <label class="dig-field dig-field-wide">
+                                <span>Path</span>
+                                <input id="cfg-api-path" type="text">
+                            </label>
+                        </div>
+                        <div id="mqtt-fields" class="dig-grid dig-mode-panel is-hidden">
+                            <label class="dig-field">
+                                <span>Broker host</span>
+                                <input id="cfg-mqtt-host" type="text">
+                            </label>
+                            <label class="dig-field">
+                                <span>Broker port</span>
+                                <input id="cfg-mqtt-port" type="number" value="1883" min="1" max="65535">
+                            </label>
+                            <label class="dig-field">
+                                <span>Username</span>
+                                <input id="cfg-mqtt-user" type="text" autocomplete="off">
+                            </label>
+                            <label class="dig-field">
+                                <span>Password</span>
+                                <input id="cfg-mqtt-pass" type="password" autocomplete="new-password">
+                            </label>
+                            <label class="dig-field dig-field-wide">
+                                <span>Publish topic (weight response)</span>
+                                <input id="cfg-mqtt-pub" type="text">
+                            </label>
+                            <label class="dig-field dig-field-wide">
+                                <span>Subscribe topic (request)</span>
+                                <input id="cfg-mqtt-sub" type="text">
+                            </label>
+                            <label class="dig-field dig-field-wide">
+                                <span>Client ID</span>
+                                <input id="cfg-mqtt-client" type="text">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="dig-section">
+                        <h3 class="dig-section-title">ASCII index calibration</h3>
+                        <p class="dig-help">Capture a live sample, click R1 / R3 / R4 bytes, then save.</p>
+                        <div class="dig-actions">
+                            <button type="button" class="header-login-btn" id="btn-capture">Capture sample</button>
+                            <button type="button" class="header-login-btn" id="btn-preview">Preview weight</button>
+                        </div>
+                        <div class="dig-pick-row">
+                            <label>Active pick
+                                <select id="pick-row">
+                                    <option value="0">R1 frame start</option>
+                                    <option value="1">R2 frame start (opt)</option>
+                                    <option value="2">R3 weight start</option>
+                                    <option value="3">R4 weight end</option>
+                                    <option value="4">R5 frame end (opt)</option>
+                                    <option value="5">R6 frame end (opt)</option>
+                                </select>
+                            </label>
+                            <span id="picks-summary" class="dig-help">Picks: —</span>
+                        </div>
+                        <div class="dig-byte-grid" id="byte-grid"></div>
+                        <div class="dig-help" id="preview-result"></div>
+                    </div>
+
+                    <div class="dig-actions dig-actions-end">
+                        <button type="button" class="modal-btn modal-btn-cancel" id="btn-test-weight">Test stable weight</button>
+                        <button type="submit" class="modal-btn modal-btn-ok" id="btn-save">Save configuration</button>
+                    </div>
+                    <div class="dig-help" id="save-result"></div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/paho-mqtt.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

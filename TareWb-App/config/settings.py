@@ -33,6 +33,25 @@ def _join_url(base: str, path_or_url: str) -> str:
     return base + p
 
 
+def _resolve_mqtt_tcp_port(raw: Any) -> int:
+    """Backend MQTT TCP is 1883 (ignore HTTP / WS ports from display config)."""
+    try:
+        port = int(raw) if raw not in (None, "") else 1883
+    except (TypeError, ValueError):
+        return 1883
+    if port in (80, 81, 443, 8000, 8080, 8800, 8100, 9001) or port <= 0:
+        return 1883
+    return port
+
+
+def _resolve_mqtt_ws_port(raw: Any) -> int:
+    try:
+        port = int(raw) if raw not in (None, "") else 9001
+    except (TypeError, ValueError):
+        return 9001
+    return port if port > 0 else 9001
+
+
 @dataclass
 class Settings:
     demo_mode: bool = True
@@ -90,6 +109,7 @@ class Settings:
 
     mqtt_broker: str = "127.0.0.1"
     mqtt_port: int = 1883
+    mqtt_ws_port: int = 9001
     mqtt_topic_tx: str = "iot_display/application_to_display"
     mqtt_topic_rx: str = "iot_display/display_to_application"
     display_type: str = "mqtt"
@@ -424,7 +444,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             or ""
         ).strip(),
         mqtt_broker=os.getenv("MQTT_BROKER") or (display.get("ip") or "").strip() or "",
-        mqtt_port=int(
+        mqtt_port=_resolve_mqtt_tcp_port(
             os.getenv("MQTT_PORT")
             or (
                 display.get("port")
@@ -433,6 +453,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             )
             or "1883"
         ),
+        mqtt_ws_port=_resolve_mqtt_ws_port(os.getenv("MQTT_WS_PORT") or "9001"),
         mqtt_topic_tx=display.get(
             "mqtt_topic_tx", "iot_display/application_to_display"
         ),

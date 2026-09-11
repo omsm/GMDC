@@ -43,6 +43,20 @@ from utils.logging_setup import setup_logging
 logger = logging.getLogger("tare_wb.main")
 
 
+def _ensure_local_mqtt_broker() -> None:
+    """Install/start Mosquitto if 1883 (MQTT) or 9001 (WS) is not listening."""
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        for path in (str(repo_root / "mqtt_broker_setup"), str(repo_root)):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+        from mqtt_broker_setup import bootstrap_local_mqtt
+
+        bootstrap_local_mqtt(__file__)
+    except Exception as exc:
+        logger.exception("MQTT broker ensure failed: %s", exc)
+
+
 def _pin(value: Any) -> Optional[int]:
     if value is None or value == "":
         return None
@@ -240,6 +254,7 @@ def _build_hardware(ctx: AppContext) -> None:
 
 def bootstrap() -> AppContext:
     setup_logging()
+    _ensure_local_mqtt_broker()
     settings = load_settings()
     AppContext.reset_instance()
     ctx = AppContext.get_instance()
@@ -388,7 +403,8 @@ def main() -> int:
         f"  Dashboard  : http://127.0.0.1:{settings.api_port}/\n"
         f"  Animation  : http://127.0.0.1:{settings.api_port}/animated.html\n"
         f"  API        : http://127.0.0.1:{settings.api_port}/api/status\n"
-        f"  MQTT WS    : ws://<this-pc-ip>:9001\n"
+        f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
+        f"  MQTT WS    : ws://<this-pc-ip>:{settings.mqtt_ws_port}\n"
         f"  Config     : {settings.config_path}\n"
         f"  Digitizer  : {settings.digitizer_url}\n"
         f"  State      : {ctx.state_machine.current_state.name if ctx.state_machine else '?'}\n"

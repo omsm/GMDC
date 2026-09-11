@@ -1282,9 +1282,9 @@ class SerialReaderApp(QMainWindow):
             return False
 
             self.config = dialog.get_config()
-        self.config["status"] = is_calibrated(self.config)
+            self.config["status"] = is_calibrated(self.config)
             self._save_config(self.config)
-        RUNTIME.update_config(self.config)
+            RUNTIME.update_config(self.config)
             self._update_config_summary()
 
         if not is_calibrated(self.config):

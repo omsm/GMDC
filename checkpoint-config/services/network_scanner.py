@@ -19,12 +19,13 @@ PORT_SIGNATURES = {
     5555: "RFID Reader",
     8080: "HTTP Alt",
     1883: "MQTT",
+    9001: "MQTT-WS",
     22: "SSH",
     23: "Telnet",
 }
 
 # Priority ports to scan
-SCAN_PORTS = [80, 443, 502, 554, 6000, 5555, 8080, 1883, 22, 23, 8000, 8900, 37777, 34567]
+SCAN_PORTS = [80, 443, 502, 554, 6000, 5555, 8080, 1883, 9001, 22, 23, 8000, 8900, 37777, 34567]
 
 
 logger = logging.getLogger(__name__)
@@ -157,7 +158,7 @@ class NetworkScanner:
             return "IP Camera"
         if 502 in open_ports:
             return "Modbus I/O Module"
-        if 1883 in open_ports:
+        if 1883 in open_ports or 9001 in open_ports:
             return "MQTT Broker"
         if 80 in open_ports or 443 in open_ports or 8080 in open_ports:
             return "Web Device"

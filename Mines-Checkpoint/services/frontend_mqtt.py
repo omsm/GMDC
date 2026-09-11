@@ -113,6 +113,8 @@ class FrontendMqtt:
         }
         self._seq: int = 0
         self._last_sig: str = ""
+        # Skip MQTT when payload is unchanged (force=True on connect/request).
+        self._last_published: Dict[str, str] = {}
 
         self._on_reset: Optional[Callable[[], None]] = None
         self._on_free_pass: Optional[Callable[[], None]] = None
@@ -218,6 +220,7 @@ class FrontendMqtt:
         self._connected = False
 
     def start_device_monitor(self, interval_sec: float = 0.4) -> None:
+        """Poll hardware; MQTT publish only when device_status actually changes."""
         if self._monitor and self._monitor.is_alive():
             return
 
@@ -315,23 +318,38 @@ class FrontendMqtt:
                 logger.error("MQTT TCP publish %s failed: %s", topic, e)
         return ok
 
-    def publish_position(self, position: int) -> bool:
-        self.position = int(position)
-        return self._publish("wb_frontend/position", str(self.position), qos=0)
+    def _publish_changed(
+        self, topic: str, message: str, qos: int = 0, *, force: bool = False
+    ) -> bool:
+        """Publish only when payload changes (or force=True for snapshot refresh)."""
+        if not force and self._last_published.get(topic) == message:
+            return True
+        self._last_published[topic] = message
+        return self._publish(topic, message, qos=qos)
 
-    def publish_display(self, message: str) -> bool:
+    def publish_position(self, position: int, *, force: bool = False) -> bool:
+        self.position = int(position)
+        return self._publish_changed(
+            "wb_frontend/position", str(self.position), qos=0, force=force
+        )
+
+    def publish_display(self, message: str, *, force: bool = False) -> bool:
         self.display = str(message or "")
-        return self._publish("wb_frontend/display", self.display, qos=0)
+        return self._publish_changed(
+            "wb_frontend/display", self.display, qos=0, force=force
+        )
 
     def publish_rfid(
-        self, rfid: str, truck_number: Optional[str] = None
+        self, rfid: str, truck_number: Optional[str] = None, *, force: bool = False
     ) -> bool:
         self.rfid = str(rfid or "")
         self.truck_number = truck_number
         payload = json.dumps(
             {"rfid": self.rfid, "truck_number": self.truck_number}
         )
-        return self._publish("wb_frontend/rfid", payload, qos=0)
+        return self._publish_changed(
+            "wb_frontend/rfid", payload, qos=0, force=force
+        )
 
     def publish_status(
         self,
@@ -341,6 +359,7 @@ class FrontendMqtt:
         *,
         popup: bool = False,
         popup_title: str = "",
+        force: bool = False,
     ) -> bool:
         self.last_status = {
             "step": str(step or ""),
@@ -350,31 +369,38 @@ class FrontendMqtt:
             "popup_title": str(popup_title or ""),
         }
         payload = json.dumps(self.last_status)
-        return self._publish("wb_frontend/status", payload, qos=0)
+        return self._publish_changed(
+            "wb_frontend/status", payload, qos=0, force=force
+        )
 
     def snapshot(self) -> Dict[str, Any]:
         return build_frontend_snapshot(self.ctx, publisher=self)
 
-    def publish_device_status(self, devices: Optional[Dict[str, Any]] = None) -> bool:
+    def publish_device_status(
+        self, devices: Optional[Dict[str, Any]] = None, *, force: bool = False
+    ) -> bool:
         payload = devices if devices is not None else collect_device_status(self.ctx)
-        return self._publish(
-            "wb_frontend/device_status", json.dumps(payload), qos=0
+        message = json.dumps(payload, sort_keys=True, default=str)
+        return self._publish_changed(
+            "wb_frontend/device_status", message, qos=0, force=force
         )
 
     def republish_snapshot(self) -> None:
+        """Full UI refresh for browser connect/request (always publish)."""
         st = self.last_status or {}
-        self.publish_position(self.position)
-        self.publish_display(self.display)
+        self.publish_position(self.position, force=True)
+        self.publish_display(self.display, force=True)
         self.publish_status(
             st.get("step") or STEP_RFID_READ,
             st.get("status") or "idle",
             st.get("message") or "Waiting for RFID scan.",
             popup=bool(st.get("popup")),
             popup_title=str(st.get("popup_title") or ""),
+            force=True,
         )
         if self.rfid:
-            self.publish_rfid(self.rfid, self.truck_number)
-        self.publish_device_status()
+            self.publish_rfid(self.rfid, self.truck_number, force=True)
+        self.publish_device_status(force=True)
 
     def reset_idle(self) -> None:
         self.rfid = ""
@@ -384,14 +410,15 @@ class FrontendMqtt:
             "status": "idle",
             "message": "Waiting for RFID scan.",
         }
-        self.publish_position(-1)
-        self.publish_display(IDLE_DISPLAY)
+        self.publish_position(-1, force=True)
+        self.publish_display(IDLE_DISPLAY, force=True)
         self.publish_status(
             STEP_RFID_READ,
             "idle",
             "Waiting for RFID scan.",
+            force=True,
         )
-        self.publish_device_status()
+        self.publish_device_status(force=True)
 
 
 # FSM name → animation position + dashboard step.

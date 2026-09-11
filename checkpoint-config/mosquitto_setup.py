@@ -867,6 +867,11 @@ socket_domain ipv4
         if existing_content:
             has_allow_anonymous = "allow_anonymous true" in existing_content
             has_listener = "listener 1883 0.0.0.0" in existing_content or "listener 1883" in existing_content
+            has_ws_listener = (
+                "listener 9001 0.0.0.0" in existing_content
+                or "listener 9001" in existing_content
+            )
+            has_websockets = "protocol websockets" in existing_content
             has_socket_domain = "socket_domain ipv4" in existing_content
             # For Mosquitto 2.x, log_dest file must have the path on the same line
             # Check for "log_dest file " followed by a path (not just "log_dest file" alone)
@@ -882,10 +887,21 @@ socket_domain ipv4
             if has_invalid_log_dest:
                 logger.warning("Found invalid 'log_dest file' without path - config needs update")
                 needs_update = True
-            elif (has_allow_anonymous and has_listener and has_socket_domain and 
-                has_valid_log_dest and has_log_type and has_log_timestamp and has_log_format):
-                logger.info("Required settings already present in config file")
+            elif (
+                has_allow_anonymous
+                and has_listener
+                and has_ws_listener
+                and has_websockets
+                and has_socket_domain
+            ):
+                logger.info("Required MQTT/WS settings already present in config file")
                 needs_update = False
+                _ = (
+                    has_valid_log_dest,
+                    has_log_type,
+                    has_log_timestamp,
+                    has_log_format,
+                )
         
         # Write config file
         if needs_update:

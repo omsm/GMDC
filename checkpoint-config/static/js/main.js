@@ -909,7 +909,10 @@ function populateFormFields() {
         document.getElementById('displayType').value = config.display.type || 'api';
         document.getElementById('displayIp').value = config.display.ip || '';
         if (document.getElementById('displayPort')) {
-            document.getElementById('displayPort').value = config.display.port || '8000';
+            const dtype = (config.display.type || 'api').toLowerCase();
+            document.getElementById('displayPort').value = dtype === 'mqtt'
+                ? (config.display.port || '1883')
+                : (config.display.port || '8000');
         }
         document.getElementById('displayMake').value = config.display.make || '';
         document.getElementById('displayModel').value = config.display.model || '';
@@ -1801,6 +1804,10 @@ function toggleDisplayFields() {
         ipGroup.style.display = 'none';
         if (portGroup) portGroup.style.display = 'none';
         mqttInfo.style.display = 'block';
+        const portEl = document.getElementById('displayPort');
+        if (portEl && (!portEl.value || ['8000', '80', '81', '8080'].includes(portEl.value))) {
+            portEl.value = '1883';
+        }
     } else {
         ipGroup.style.display = 'block';
         if (portGroup) portGroup.style.display = 'block';
@@ -1814,7 +1821,9 @@ async function checkAndSaveDisplay() {
     const displayIp = isManual 
         ? document.getElementById('displayIp').value.trim()
         : (document.getElementById('displayIpSelect')?.value || document.getElementById('displayIp').value.trim());
-    const displayPort = document.getElementById('displayPort')?.value.trim() || '8000';
+    const displayPort = displayType === 'mqtt'
+        ? '1883'
+        : (document.getElementById('displayPort')?.value.trim() || '8000');
     const displayMake = document.getElementById('displayMake')?.value.trim() || '';
     const displayModel = document.getElementById('displayModel')?.value.trim() || '';
     
