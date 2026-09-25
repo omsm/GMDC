@@ -81,4 +81,10 @@ cursor_*.md
 **/cursor_*.md
 packaging/macos/build/
 packaging/macos/dist/
+packaging/macos/vendor/homebrew/
+packaging/macos/vendor/bottles/
+packaging/macos/vendor/VENDOR_INFO.txt
 dist.zip
+# Keep vendor tooling tracked
+!packaging/macos/vendor/README.md
+!packaging/macos/vendor/download_vendor.sh

@@ -1,13 +1,32 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.10**
+**Current version: 1.11**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.10.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.11.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.10 — 2026-09-26 (latest)
+## 1.11 — 2026-09-26 (latest)
+
+macOS offline packaging vendors Homebrew + Mosquitto bottles so site Macs can install the MQTT broker without downloading brew packages.
+
+### Vendored MQTT broker (`packaging/macos/vendor/`)
+- `download_vendor.sh` fetches Homebrew `install.sh`, pinned `brew.tar.gz`, and Mosquitto bottles (+ deps: openssl, libwebsockets, cjson, …)
+- Bottle / Homebrew payloads are **gitignored**; tooling + README stay tracked
+- `build_macos.sh` auto-downloads vendor when missing and copies `vendor/` into `dist/Mines-Automation/`
+
+### Install order (`mqtt_broker_setup` / checkpoint-config)
+1. Use Mosquitto if already present  
+2. Ensure Homebrew: system brew → local `brew.tar.gz` bootstrap → local `install.sh` → download installer  
+3. Install Mosquitto from **local bottles** when present; otherwise `brew install mosquitto` (network)
+
+### Docs
+- packaging README + deploy notes describe `vendor/` and offline broker setup
+
+---
+
+## 1.10 — 2026-09-26
 
 MQTT LED display protocol (Display IP identity), transaction message strings with `@` line breaks, and bi-directional dual TX.
 
@@ -264,6 +283,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.11** | macOS vendor Homebrew + Mosquitto bottles; local-first broker install in Mines-Automation bundle |
 | **1.10** | MQTT display protocol (Display IP / pcb_id / data_info); bi TX a+b; Welcome on connect; `@` message strings |
 | **1.9** | Flow icons: RFID Read on tag; RFID Validation on OCI; ANPR Update only on statusCode 201 |
 | **1.8** | Digitizer MQTT E2E; hardcoded status topic; no Server wizard step; config reuse on re-run; invalidate-on-edit |

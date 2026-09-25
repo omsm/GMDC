@@ -15,11 +15,11 @@
 #     timeout_config.py
 #     .env
 #     voice/
+#     vendor/                  Homebrew installer + Mosquitto bottles (offline MQTT)
 #
 # Target Macs: copy the whole Mines-Automation folder. No Python install needed.
-# Prerequisite on target: Mosquitto MQTT broker already installed & able to listen
-# on 1883 / 9001 (Homebrew mosquitto or pkg). Broker install needs internet once
-# per machine OR ship Mosquitto separately — the Python apps themselves are offline.
+# Mosquitto: prefer local vendor bottles / Homebrew bootstrap; network only if
+# vendor assets are missing.
 
 set -euo pipefail
 
@@ -29,6 +29,7 @@ VENV="${SCRIPT_DIR}/.venv"
 BUILD_DIR="${SCRIPT_DIR}/build"
 DIST_DIR="${SCRIPT_DIR}/dist"
 BUNDLE="${REPO_ROOT}/dist/Mines-Automation"
+VENDOR_DIR="${SCRIPT_DIR}/vendor"
 
 PY_BIN="${PYTHON:-python3}"
 
@@ -38,6 +39,25 @@ echo "==> Bundle: ${BUNDLE}"
 if ! command -v "${PY_BIN}" >/dev/null 2>&1; then
   echo "ERROR: ${PY_BIN} not found. Install Python 3.11+ on the build Mac only." >&2
   exit 1
+fi
+
+# --- Vendored Homebrew + Mosquitto bottles (gitignored payloads) ---
+need_vendor=0
+if [[ ! -f "${VENDOR_DIR}/homebrew/install.sh" ]]; then
+  need_vendor=1
+fi
+if [[ ! -d "${VENDOR_DIR}/bottles" ]] || \
+   [[ -z "$(find "${VENDOR_DIR}/bottles" -name '*.bottle.tar.gz' 2>/dev/null | head -1)" ]]; then
+  need_vendor=1
+fi
+if [[ "${need_vendor}" -eq 1 ]]; then
+  echo "==> Vendor Mosquitto/Homebrew assets missing — downloading..."
+  chmod +x "${VENDOR_DIR}/download_vendor.sh"
+  "${VENDOR_DIR}/download_vendor.sh" || {
+    echo "WARN: vendor download failed. Bundle will fall back to network brew install on site." >&2
+  }
+else
+  echo "==> Vendor assets present: ${VENDOR_DIR}"
 fi
 
 echo "==> Creating venv at ${VENV}"
@@ -77,7 +97,7 @@ build_one "${SCRIPT_DIR}/mines_weighbridge.spec"
 
 echo "==> Assembling Mines-Automation/"
 rm -rf "${BUNDLE}"
-mkdir -p "${BUNDLE}/voice"
+mkdir -p "${BUNDLE}/voice" "${BUNDLE}/vendor"
 
 cp -f "${DIST_DIR}/iot-configuration" "${BUNDLE}/iot-configuration"
 cp -f "${DIST_DIR}/automation" "${BUNDLE}/automation"
@@ -114,6 +134,22 @@ if [[ -d "${REPO_ROOT}/Mines-WB/voice" ]]; then
   rsync -a --delete "${REPO_ROOT}/Mines-WB/voice/" "${BUNDLE}/voice/"
 fi
 
+# Homebrew installer + Mosquitto bottles for offline MQTT broker setup
+if [[ -d "${VENDOR_DIR}/homebrew" ]] || [[ -d "${VENDOR_DIR}/bottles" ]]; then
+  echo "==> Copying vendor Homebrew/Mosquitto assets into bundle"
+  rsync -a --delete \
+    --exclude 'download_vendor.sh' \
+    --exclude 'README.md' \
+    "${VENDOR_DIR}/" "${BUNDLE}/vendor/"
+  cat > "${BUNDLE}/vendor/README.txt" <<'VEOF'
+GMDC vendored Homebrew + Mosquitto bottles.
+Used automatically by iot-configuration / runtimes when Mosquitto is missing.
+Do not delete this folder if you need offline broker install on site Macs.
+VEOF
+else
+  echo "WARN: no vendor/ assets to copy — site Macs will need network for brew/mosquitto" >&2
+fi
+
 # Clear quarantine so Gatekeeper does not block copy-pasted binaries on other Macs
 # (still unsigned — first open may need right-click → Open, or xattr strip again).
 if command -v xattr >/dev/null 2>&1; then
@@ -129,6 +165,7 @@ Layout:
   automation            reads iot_configuration.json and starts the right runtime
   mines-checkpoint      checkpoint family (mines_entry, tracking_*, mines_exit)
   mines-weighbridge     weighbridge family (tare_wb, vadaghat_wb, gross_wb)
+  vendor/               Homebrew installer + Mosquitto bottles (offline MQTT)
   iot_configuration.json
   conversion.py         editable digitizer parse helpers (config UI)
   timeout_config.py     editable timeouts
@@ -136,11 +173,12 @@ Layout:
   voice/                weighbridge announcements
 
 First run on site:
-  1. Ensure Mosquitto is installed and can bind 1883 + 9001 (one-time OS setup).
-  2. Open Terminal in this folder:
+  1. Open Terminal in this folder:
        ./iot-configuration
-  3. Complete commissioning (checkpoint_type saved into iot_configuration.json).
-  4. Start runtime:
+     Mosquitto is installed from vendor/ when possible (no brew download).
+     If vendor/ is missing, Homebrew/Mosquitto may need network once.
+  2. Complete commissioning (checkpoint_type saved into iot_configuration.json).
+  3. Start runtime:
        ./automation
 
 Copy/paste this whole folder to other Macs. No Python install required.

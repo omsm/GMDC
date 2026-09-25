@@ -1,0 +1,14 @@
+flask
+flask-cors
+numpy
+opencv-python
+pyserial
+paho-mqtt
+pymodbus
+minimalmodbus
+requests
+chardet
+charset-normalizer
+pywebview
+PyInstaller
+reportlab

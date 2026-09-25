@@ -11,7 +11,7 @@ Same serial indexing + stable-weight logic, with a **Mines-Checkpoint / Mines-WB
 
 The original `digitizer-app/` PySide UI remains available unchanged.
 
-Product version: **1.10** (see root [`version.md`](../version.md)).
+Product version: **1.11** (see root [`version.md`](../version.md)).
 
 ## Layout
 

@@ -1,0 +1,156 @@
+UC_ID,Positive/Negative,Test Scenario Description,Test Scenario Steps,Remarks,
+UC-001,Positive,Application health check - verify Mines Entry service is up,"1. Start the Mines Entry application.
+2. Send GET request to /.
+3. Verify response service name and status.",Expected HTTP 200 with service=GMDC Mines Entry. Base smoke check before other UCs.,
+UC-002,Positive,View current application state and hardware snapshot,"1. Ensure application is running.
+2. Send GET /api/status.
+3. Verify state (e.g. IDLE) and hardware/transaction fields.",Used by operators/support to confirm IDLE/busy and I/O status.,
+UC-003,Positive,Force reset application to IDLE safe state,"1. Put application in any non-IDLE state if needed.
+2. Send POST /api/reset.
+3. Verify state returns to IDLE.
+4. Verify traffic light RED and boom CLOSED.
+5. Verify RFID reader IDLE prepare (login/mode/start) if cloud enabled.",Emergency / recovery use case. Clears transaction and sensor latch.,
+UC-004,Positive,Idle hardware initialize - TL red and boom closed on startup,"1. Set DEMO_MODE=false and correct Modbus IP.
+2. Start application.
+3. Observe DO coils and logs.
+4. Confirm TrafficLight RED and BoomBarrier CLOSED.",Controller 192.168.31.89:502, DO0=red DO1=green DO2=open DO3=close.
+UC-005,Positive,Connect to real Modbus I/O controller (FC2 DI / FC5 DO),"1. Set DEMO_MODE=false in .env.
+2. Confirm iot_configuration ethernet IP 192.168.31.89 port 502 slave 1.
+3. Start application.
+4. Verify log ModbusTCP connected read_fc=2 write_fc=5.",Must NOT use DemoIOController when running on site hardware.,
+UC-006,Negative,Demo mode uses in-memory I/O instead of real controller,"1. Set DEMO_MODE=true.
+2. Start application.
+3. Verify DemoIOController connected in logs.
+4. Confirm no Modbus TCP connection to controller.",Useful for offline unit/integration testing only.,
+UC-007,Positive,RFID API mode - no TCP client to reader port,"1. Ensure rfids.entry_a.mode=API in iot_configuration.
+2. Start application with DEMO_MODE=false.
+3. Confirm no WinError 10061 RFID client retry logs.
+4. Confirm RFID status type=api.",Tags arrive via HTTP POST /rfid_data, cloud login/start/stop via HTTPS.
+UC-008,Positive,RFID cloud IDLE prepare - login then mode then start,"1. Application reaches IDLE.
+2. Observe RFID cloud calls: localRestLogin (Basic) → mode (Bearer) → start (Bearer).
+3. Confirm reader is scanning for next vehicle.",Runs on bootstrap and after each reset to IDLE.,
+UC-009,Positive,Receive valid RFID tags from fixed reader via /rfid_data,"1. Ensure state is IDLE.
+2. Reader (or tool) POSTs Zebra tag JSON to /rfid_data with idHex.
+3. Verify HTTP 200 status=success and tags list.
+4. Verify RFID cloud stop is called.
+5. Verify OCI rfid-validate is invoked.",Primary site path when Zebra FX pushes tags to self-hosted API.,
+UC-010,Negative,Reject /rfid_data when payload has no idHex tags,"1. POST /rfid_data with empty list [].
+2. Verify HTTP 400.
+3. Verify workflow does not start.",Protects against empty/keepalive noise without tags.,
+UC-011,Negative,Ignore RFID tags when application is not IDLE,"1. Start a cycle so state is not IDLE (e.g. WAIT_CROSSING).
+2. POST another valid /rfid_data payload.
+3. Verify new cycle is not started.
+4. Verify log Ignoring RFID tags while in state …",Prevents overlapping vehicle transactions.,
+UC-012,Positive,RFID management keepalive from reader,"1. POST /rfid_management with any JSON body.
+2. Verify HTTP 200 status=success.",Reader keepalive, does not start workflow.
+UC-013,Positive,Mobile app RFID fallback - valid tag returns OCI validate response,"1. Ensure state IDLE (fixed reader unavailable/damaged tag case).
+2. Mobile app POSTs {""rfid_data"":""<tag>""} to /rfid_data_from_mobile_app.
+3. Verify HTTP 200.
+4. Verify response body is exactly OCI rfid-validate JSON.
+5. Verify background flow continues (ANPR etc.).",Mobile replaces physical reader when RFID cannot be read at gate.,
+UC-014,Negative,Mobile RFID - missing rfid_data key,"1. POST /rfid_data_from_mobile_app with {}.
+2. Verify HTTP 500.
+3. Verify body status=500 rfid_data=null message Error: …",Client validation failure, workflow not started.
+UC-015,Negative,Mobile RFID - blank rfid_data value,"1. POST {""rfid_data"":""   ""}.
+2. Verify HTTP 500 and rfid_data=null.
+3. Verify workflow not started.",Blank/whitespace treated as invalid.,
+UC-016,Positive,OCI RFID validate success - display truck and proceed to ANPR,"1. Trigger RFID (reader or mobile) with a tag OCI accepts.
+2. Verify OCI rfid-tag returns status 200 with truck_details.
+3. Verify display shows vehicle number.
+4. Verify ANPR /api/detect is called next.",truck_details pipe string parsed for vehicle_no token_no device_ip.,
+UC-017,Negative,OCI RFID validate failure - RFID ERR 1 then auto IDLE,"1. Trigger RFID with invalid/unknown tag.
+2. Verify OCI returns non-200 (e.g. status 500).
+3. Verify display shows RFID ERR 1.
+4. Wait RFID error display timeout (~10s).
+5. Verify state returns IDLE; boom closed TL red.",For mobile path HTTP to client is still 200 with OCI error body.,
+UC-018,Positive,ANPR match (anpr_status=1) - grant entry after boom-close OK,"1. Complete successful RFID validate.
+2. ANPR /api/detect returns anpr_status=1.
+3. Verify invalid-truck-number is posted.
+4. Verify boom-close API called with close-type=auto.
+5. If boom-close status=200: boom OPEN TL GREEN; display Entry Granted.
+6. State WAIT_CROSSING.",Happy-path automatic grant.,
+UC-019,Negative,ANPR match but boom-close fails - boom must not open,"1. Reach ANPR anpr_status=1 path.
+2. boom-close returns status != 200.
+3. Verify boom remains CLOSED.
+4. Verify log Boom NOT opened.",Safety gate: physical boom open only after OCI boom-close success.,
+UC-020,Positive,ANPR mismatch (anpr_status=0) - ANPR ERR 1 and manual status_check loop,"1. RFID valid.
+2. ANPR returns anpr_status=0.
+3. Verify invalid-truck posted.
+4. Verify display ANPR ERR 1.
+5. Verify periodic status_check polling starts.",Operator/manual correction path via OCI status_check.,
+UC-021,Positive,Manual loop vehicleStatus=1 - grant entry,"1. Enter MANUAL_UPDATE after anpr_status=0.
+2. status_check returns vehicleStatus=1.
+3. Verify boom-close then boom open / TL green / Entry Granted.
+4. Enter WAIT_CROSSING.",Manual approval after mismatch.,
+UC-022,Negative,Manual loop vehicleStatus=2 - reject and reset IDLE,"1. Enter MANUAL_UPDATE.
+2. status_check returns vehicleStatus=2.
+3. Verify reset to IDLE; boom closed TL red.",Manual reject / abort transaction.,
+UC-023,Positive,Manual loop vehicleStatus=0 - continue waiting,"1. Enter MANUAL_UPDATE.
+2. status_check returns vehicleStatus=0 multiple times.
+3. Verify application stays in manual loop and keeps polling.",Pending operator action, no grant yet.
+UC-024,Negative,ANPR anpr_status=2 - ANPR Err-2 then wait and reset,"1. RFID valid.
+2. ANPR returns anpr_status=2.
+3. Verify display ANPR Err-2.
+4. Wait configured ANPR Err-2 display seconds.
+5. Verify IDLE; boom not opened.",Hard ANPR reject path (no manual loop).,
+UC-025,Negative,ANPR API unreachable - retry 3 times then ANPR API ERR,"1. RFID valid.
+2. Make ANPR host unreachable / throw connection error.
+3. Verify up to 3 detect attempts with delay.
+4. Verify display ANPR API ERR.
+5. Verify reset IDLE; boom not opened.",Transport failure handling, does not call invalid-truck if ANPR never succeeds.
+UC-026,Positive,ANPR recovers on retry - grant after transient failure,"1. RFID valid.
+2. First ANPR call fails; second returns anpr_status=1.
+3. Verify grant path proceeds normally.",Transient network/API flake tolerance.,
+UC-027,Positive,Vehicle crossing - sensor FALSE→TRUE→FALSE closes gate,"1. Complete grant so boom OPEN TL GREEN (WAIT_CROSSING).
+2. Confirm sensor idle FALSE.
+3. Truck on sensor → TRUE (occupied).
+4. Truck clears → FALSE (falling edge).
+5. Verify boom CLOSED TL RED state IDLE.
+6. Verify RFID IDLE prepare for next vehicle.",Falling-after-occupied edge detection, DI0 entry sensor.
+UC-028,Negative,Sensor rising edge alone must not close boom,"1. Reach WAIT_CROSSING with boom open.
+2. Drive sensor to TRUE and keep it TRUE.
+3. Verify boom stays OPEN and state remains WAIT_CROSSING.",Close only after clear (TRUE then FALSE).,
+UC-029,Negative,Sensor activity during IDLE/validation must not reset cycle,"1. While IDLE or during RFID/ANPR validation pulse sensor TRUE then FALSE.
+2. Verify boom/TL not incorrectly changed by crossing clear.
+3. Verify no premature IDLE reset of an active validation cycle.",Crossing-clear ignored unless ENTRY_GRANTED/WAIT_CROSSING.,
+UC-030,Positive,Crossing timeout - auto IDLE if truck never clears sensor,"1. Grant entry (WAIT_CROSSING).
+2. Do not complete sensor clear sequence.
+3. Wait vehicle_crossing_timeout from iot_configuration.
+4. Verify auto IDLE; boom closed TL red.",Safety timeout if sensor miss or vehicle stalled.,
+UC-031,Positive,Simulate sensor clear via API (demo/helper),"1. Reach WAIT_CROSSING (demo I/O or configured simulate).
+2. POST /api/simulate-exit.
+3. Verify pulse TRUE then FALSE and reset to IDLE hardware.",Lab/demo helper when physical sensor not available.,
+UC-032,Positive,Display publishes RFID ERR 1 on validate failure,"1. Trigger invalid RFID.
+2. Verify MQTT/display shows RFID ERR 1.",Operator-visible error messaging.,
+UC-033,Positive,Display publishes truck number after RFID success,"1. Trigger valid RFID.
+2. Verify display shows vehicle number from truck_details.",Driver/operator feedback before ANPR.,
+UC-034,Positive,Display publishes Entry Granted after successful grant,"1. Complete ANPR match or manual approve with boom-close OK.
+2. Verify display shows {truck} Entry Granted.",Confirms gate open authorization to user.,
+UC-035,Positive,End-to-end happy path - reader RFID to IDLE after clear,"1. IDLE.
+2. POST /rfid_data valid tag.
+3. OCI RFID 200.
+4. ANPR anpr_status=1.
+5. boom-close 200 → boom open TL green.
+6. Sensor TRUE then FALSE.
+7. Verify IDLE ready for next truck.",Full production reader path.,
+UC-036,Positive,End-to-end happy path - mobile RFID to IDLE after clear,"1. IDLE.
+2. POST /rfid_data_from_mobile_app with valid rfid_data.
+3. Client receives OCI validate JSON (HTTP 200).
+4. ANPR 1 + boom-close 200.
+5. Sensor TRUE then FALSE → IDLE.",Full production mobile fallback path.,
+UC-037,Positive,End-to-end manual approve path after ANPR mismatch,"1. RFID valid.
+2. ANPR anpr_status=0 → ANPR ERR 1.
+3. status_check eventually vehicleStatus=1.
+4. Grant hardware.
+5. Sensor clear → IDLE.",Covers mismatch + operator correction.,
+UC-038,Negative,Concurrent second RFID ignored while cycle busy,"1. Start first RFID cycle.
+2. Immediately send second RFID (reader or mobile).
+3. Verify second is rejected/ignored.
+4. Verify first cycle completes without corruption.",Single-transaction lock / state guard.,
+UC-039,Positive,OCI payloads include configured DEVICE_IP,"1. Set DEVICE_IP in .env.
+2. Trigger RFID validate / boom-close / invalid-truck.
+3. Verify device_ip in request bodies matches env.",Site identity for OCI checkpoint APIs.,
+UC-040,Positive,ANPR calls separate host with its own Basic Auth,"1. Configure ANPR_BASE_URL and ANPR_USERNAME/PASSWORD.
+2. Trigger ANPR detect.
+3. Verify request goes to ANPR host /api/detect not OCI base.
+4. Verify ANPR Basic Auth used.",ANPR service is independent of OCI ORDS host.,

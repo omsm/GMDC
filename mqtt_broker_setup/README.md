@@ -17,5 +17,7 @@
 #   ok, msg = ensure_mqtt_broker_ready(app_data_path=...)
 #
 # On Windows the official Mosquitto installer is downloaded when needed.
-# On macOS Homebrew (`brew install mosquitto`) is used.
+# On macOS: prefer vendored Homebrew bottles under Mines-Automation/vendor/
+# (or packaging/macos/vendor/); otherwise brew install (network). Homebrew
+# itself can be bootstrapped from vendor/homebrew/brew.tar.gz or install.sh.
 # Conf is written with listeners 1883 + 9001, then the broker is started as a service.

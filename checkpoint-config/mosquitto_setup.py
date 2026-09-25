@@ -304,6 +304,13 @@ MAC_MOSQUITTO_BINS = [
     "/usr/local/sbin/mosquitto",
     "/usr/local/bin/mosquitto",
     "/usr/local/opt/mosquitto/sbin/mosquitto",
+    os.path.expanduser(
+        "~/Library/Application Support/GMDC/homebrew/sbin/mosquitto"
+    ),
+    os.path.expanduser(
+        "~/Library/Application Support/GMDC/homebrew/opt/mosquitto/sbin/mosquitto"
+    ),
+    os.path.expanduser("~/.gmdc/homebrew/sbin/mosquitto"),
 ]
 MAC_MOSQUITTO_CONFIGS = [
     "/opt/homebrew/etc/mosquitto/mosquitto.conf",
@@ -315,6 +322,27 @@ MAC_BREW_CANDIDATES = [
     "/opt/homebrew/bin/brew",
     "/usr/local/bin/brew",
 ]
+
+# Prefer user-local GMDC Homebrew bootstrap (no /opt/homebrew sudo required)
+MAC_GMDC_BREW_CANDIDATES = [
+    os.path.expanduser("~/Library/Application Support/GMDC/homebrew/bin/brew"),
+    os.path.expanduser("~/.gmdc/homebrew/bin/brew"),
+]
+
+# Homebrew bottle install order (deps before mosquitto)
+MAC_BOTTLE_INSTALL_ORDER = [
+    "ca-certificates",
+    "openssl@3",
+    "cjson",
+    "libevent",
+    "libuv",
+    "libwebsockets",
+    "mosquitto",
+]
+
+HOMEBREW_INSTALL_SCRIPT_URL = (
+    "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+)
 
 # Service name
 MOSQUITTO_SERVICE_NAME = "mosquitto"
@@ -328,12 +356,95 @@ def _subprocess_kwargs():
     return kwargs
 
 
+def resolve_macos_vendor_dir(app_data_path=None):
+    """
+    Locate packaging vendor dir with Homebrew installer + Mosquitto bottles.
+
+    Search order:
+      GMDC_VENDOR_DIR env → <app_data>/vendor → next to frozen exe →
+      repo packaging/macos/vendor (source tree)
+    """
+    candidates = []
+    env = (os.environ.get("GMDC_VENDOR_DIR") or "").strip()
+    if env:
+        candidates.append(env)
+    if app_data_path:
+        candidates.append(os.path.join(str(app_data_path), "vendor"))
+    try:
+        if getattr(sys, "frozen", False):
+            candidates.append(
+                os.path.join(os.path.dirname(os.path.realpath(sys.executable)), "vendor")
+            )
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                candidates.append(os.path.join(meipass, "vendor"))
+    except Exception:
+        pass
+    # mqtt_broker_setup/ → repo/packaging/macos/vendor
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(
+        os.path.normpath(os.path.join(here, "..", "packaging", "macos", "vendor"))
+    )
+    # checkpoint-config sibling layout
+    candidates.append(
+        os.path.normpath(os.path.join(here, "..", "..", "packaging", "macos", "vendor"))
+    )
+
+    seen = set()
+    for path in candidates:
+        if not path:
+            continue
+        path = os.path.abspath(path)
+        if path in seen:
+            continue
+        seen.add(path)
+        if not os.path.isdir(path):
+            continue
+        # Accept if bottles or homebrew assets exist
+        bottles = os.path.join(path, "bottles")
+        homebrew = os.path.join(path, "homebrew")
+        if os.path.isdir(bottles) or os.path.isdir(homebrew):
+            logger.info("Using macOS vendor dir: %s", path)
+            return path
+    return None
+
+
+def _host_bottle_arch():
+    machine = (os.uname().machine if hasattr(os, "uname") else "").lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    return machine or "arm64"
+
+
+def resolve_vendor_bottles_dir(vendor_dir):
+    """Return bottles/<arch> directory for this Mac, if present."""
+    if not vendor_dir:
+        return None
+    arch = _host_bottle_arch()
+    path = os.path.join(vendor_dir, "bottles", arch)
+    if os.path.isdir(path):
+        return path
+    # Fall back to any arch folder that has bottles
+    root = os.path.join(vendor_dir, "bottles")
+    if not os.path.isdir(root):
+        return None
+    for name in sorted(os.listdir(root)):
+        candidate = os.path.join(root, name)
+        if os.path.isdir(candidate) and any(
+            f.endswith(".bottle.tar.gz") for f in os.listdir(candidate)
+        ):
+            return candidate
+    return None
+
+
 def find_homebrew():
     """Return path to brew executable, or None."""
     brew = shutil.which("brew")
     if brew:
         return brew
-    for path in MAC_BREW_CANDIDATES:
+    for path in MAC_BREW_CANDIDATES + MAC_GMDC_BREW_CANDIDATES:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
     return None
@@ -356,6 +467,272 @@ def _brew_prefix(brew_path=None):
     except Exception as e:
         logger.debug("brew --prefix failed: %s", e)
     return None
+
+
+def _gmdc_homebrew_prefix():
+    return os.path.expanduser("~/Library/Application Support/GMDC/homebrew")
+
+
+def _bootstrap_homebrew_from_tarball(tarball_path, progress_callback=None):
+    """
+    Extract vendored Homebrew/brew source into a user prefix and return brew path.
+    Does not require sudo or network.
+    """
+    def _progress(percent, message):
+        if progress_callback:
+            progress_callback(percent, message)
+
+    if not tarball_path or not os.path.isfile(tarball_path):
+        return None
+    prefix = _gmdc_homebrew_prefix()
+    brew_bin = os.path.join(prefix, "bin", "brew")
+    if os.path.isfile(brew_bin) and os.access(brew_bin, os.X_OK):
+        logger.info("GMDC Homebrew already present at %s", brew_bin)
+        return brew_bin
+
+    _progress(12, "Bootstrapping Homebrew from local tarball...")
+    logger.info("Extracting Homebrew tarball to %s", prefix)
+    try:
+        if os.path.isdir(prefix):
+            shutil.rmtree(prefix, ignore_errors=True)
+        os.makedirs(prefix, exist_ok=True)
+        subprocess.run(
+            ["tar", "-xzf", tarball_path, "--strip-components=1", "-C", prefix],
+            check=True,
+            timeout=300,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if not (os.path.isfile(brew_bin) and os.access(brew_bin, os.X_OK)):
+            logger.error("brew binary missing after tarball extract: %s", brew_bin)
+            return None
+        # Minimal first-run: ensure dirs brew expects
+        for sub in ("Library/Taps", "Cellar", "cache", "tmp"):
+            os.makedirs(os.path.join(prefix, sub), exist_ok=True)
+        logger.info("Bootstrapped user Homebrew at %s", brew_bin)
+        return brew_bin
+    except Exception as e:
+        logger.error("Homebrew tarball bootstrap failed: %s", e, exc_info=True)
+        return None
+
+
+def _run_homebrew_install_script(script_path, progress_callback=None):
+    """Run official Homebrew install.sh (may need network / password on some Macs)."""
+    def _progress(percent, message):
+        if progress_callback:
+            progress_callback(percent, message)
+
+    if not script_path or not os.path.isfile(script_path):
+        return False
+    _progress(15, "Installing Homebrew from local installer script...")
+    env = os.environ.copy()
+    env["NONINTERACTIVE"] = "1"
+    env["CI"] = "1"
+    try:
+        result = subprocess.run(
+            ["/bin/bash", script_path],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=1200,
+            text=True,
+        )
+        if result.stdout:
+            logger.info("brew install.sh stdout:\n%s", result.stdout[-4000:])
+        if result.stderr:
+            logger.info("brew install.sh stderr:\n%s", result.stderr[-4000:])
+        if result.returncode != 0:
+            logger.error("Homebrew install.sh failed code=%s", result.returncode)
+            return False
+        return find_homebrew() is not None
+    except Exception as e:
+        logger.error("Homebrew install.sh error: %s", e, exc_info=True)
+        return False
+
+
+def _download_url_to_file(url, dest_path, timeout=120):
+    try:
+        import urllib.request
+
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        urllib.request.urlretrieve(url, dest_path)
+        return os.path.isfile(dest_path)
+    except Exception as e:
+        logger.error("Download failed %s → %s: %s", url, dest_path, e)
+        return False
+
+
+def ensure_homebrew(progress_callback=None, vendor_dir=None):
+    """
+    Ensure brew is available.
+
+    Order: existing brew → local brew.tar.gz → local install.sh → download install.sh.
+    Returns brew path or None.
+    """
+    def _progress(percent, message):
+        if progress_callback:
+            progress_callback(percent, message)
+
+    brew = find_homebrew()
+    if brew:
+        return brew
+
+    vendor_dir = vendor_dir or resolve_macos_vendor_dir()
+    homebrew_dir = os.path.join(vendor_dir, "homebrew") if vendor_dir else None
+
+    tarball = (
+        os.path.join(homebrew_dir, "brew.tar.gz")
+        if homebrew_dir and os.path.isdir(homebrew_dir)
+        else None
+    )
+    if tarball and os.path.isfile(tarball):
+        brew = _bootstrap_homebrew_from_tarball(tarball, progress_callback)
+        if brew:
+            return brew
+
+    local_script = (
+        os.path.join(homebrew_dir, "install.sh")
+        if homebrew_dir and os.path.isdir(homebrew_dir)
+        else None
+    )
+    if local_script and os.path.isfile(local_script):
+        if _run_homebrew_install_script(local_script, progress_callback):
+            brew = find_homebrew()
+            if brew:
+                return brew
+
+    # Last resort: download official installer then run
+    _progress(12, "Downloading Homebrew installer...")
+    tmp_script = os.path.join(tempfile.gettempdir(), "gmdc_homebrew_install.sh")
+    if _download_url_to_file(HOMEBREW_INSTALL_SCRIPT_URL, tmp_script):
+        if _run_homebrew_install_script(tmp_script, progress_callback):
+            return find_homebrew()
+    logger.error("Could not install or locate Homebrew")
+    return None
+
+
+def _find_bottle_file(bottles_dir, formula):
+    """Find a .bottle.tar.gz for formula in vendor bottles dir."""
+    if not bottles_dir or not os.path.isdir(bottles_dir):
+        return None
+    matches = []
+    for name in os.listdir(bottles_dir):
+        if not name.endswith(".bottle.tar.gz"):
+            continue
+        # Forms: formula--ver.tag.bottle.tar.gz OR hash--formula--ver.tag.bottle.tar.gz
+        if (
+            name.startswith(f"{formula}--")
+            or f"--{formula}--" in name
+            or name.startswith(f"{formula}-")
+        ):
+            matches.append(os.path.join(bottles_dir, name))
+    if not matches:
+        return None
+    # Prefer un-hashed names that start with the formula
+    preferred = [m for m in matches if os.path.basename(m).startswith(f"{formula}--")]
+    if preferred:
+        preferred.sort(key=len)
+        return preferred[0]
+    matches.sort(key=len)
+    return matches[0]
+
+
+def install_mosquitto_from_local_bottles(brew, bottles_dir, progress_callback=None):
+    """
+    Install Mosquitto (+ deps) from vendored bottle archives.
+    Returns (success, message).
+    """
+    def _progress(percent, message):
+        if progress_callback:
+            progress_callback(percent, message)
+
+    if not brew or not bottles_dir:
+        return False, "missing brew or bottles dir"
+
+    env = os.environ.copy()
+    env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+    env["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
+
+    # Seed brew's download cache so --force-bottle can stay offline
+    try:
+        cache_result = subprocess.run(
+            [brew, "--cache"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            text=True,
+            env=env,
+        )
+        cache_root = (cache_result.stdout or "").strip() if cache_result.returncode == 0 else ""
+        downloads = os.path.join(cache_root, "downloads") if cache_root else ""
+        if downloads:
+            os.makedirs(downloads, exist_ok=True)
+            for name in os.listdir(bottles_dir):
+                src = os.path.join(bottles_dir, name)
+                if not os.path.isfile(src):
+                    continue
+                if not (
+                    name.endswith(".bottle.tar.gz")
+                    or name.endswith(".bottle_manifest.json")
+                ):
+                    continue
+                dest = os.path.join(downloads, name)
+                if not os.path.exists(dest):
+                    shutil.copy2(src, dest)
+    except Exception as e:
+        logger.debug("Could not seed brew cache from vendor: %s", e)
+
+    total = len(MAC_BOTTLE_INSTALL_ORDER)
+    for idx, formula in enumerate(MAC_BOTTLE_INSTALL_ORDER):
+        listed = subprocess.run(
+            [brew, "list", "--versions", formula],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            text=True,
+            env=env,
+        )
+        if listed.returncode == 0 and (listed.stdout or "").strip():
+            logger.info("Formula already installed: %s", formula)
+            continue
+
+        bottle = _find_bottle_file(bottles_dir, formula)
+        pct = 20 + int(60 * (idx / max(total, 1)))
+        if bottle:
+            _progress(pct, f"Installing {formula} from local bottle...")
+            logger.info("brew install --force-bottle %s", bottle)
+            result = subprocess.run(
+                [brew, "install", "--force-bottle", bottle],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=900,
+                text=True,
+                env=env,
+            )
+        else:
+            _progress(pct, f"Local bottle missing for {formula}; brew install...")
+            logger.warning("No local bottle for %s — falling back to brew install", formula)
+            result = subprocess.run(
+                [brew, "install", formula],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=900,
+                text=True,
+                env=env,
+            )
+        if result.stdout:
+            logger.info("brew install %s stdout:\n%s", formula, result.stdout[-2000:])
+        if result.stderr:
+            logger.info("brew install %s stderr:\n%s", formula, result.stderr[-2000:])
+        if result.returncode != 0:
+            if formula == "mosquitto":
+                return False, f"brew install {formula} failed (code {result.returncode})"
+            logger.warning("brew install %s failed; continuing", formula)
+
+    is_installed, install_path = check_mosquitto_installed()
+    if not is_installed:
+        return False, "local bottle install finished but mosquitto binary not found"
+    return True, f"installed_from_bottles:{install_path}"
 
 
 def check_mosquitto_installed():
@@ -429,9 +806,12 @@ def check_mosquitto_installed():
         return False, None
 
 
-def install_mosquitto_macos(progress_callback=None):
+def install_mosquitto_macos(progress_callback=None, app_data_path=None):
     """
     Install Mosquitto on macOS via Homebrew.
+
+    Prefers vendored bottles / Homebrew assets under Mines-Automation/vendor
+    (or packaging/macos/vendor). Falls back to network brew install.
 
     Returns:
         tuple: (success: bool, message: str)
@@ -440,16 +820,20 @@ def install_mosquitto_macos(progress_callback=None):
         if progress_callback:
             progress_callback(percent, message)
 
-    brew = find_homebrew()
+    vendor_dir = resolve_macos_vendor_dir(app_data_path)
+    bottles_dir = resolve_vendor_bottles_dir(vendor_dir) if vendor_dir else None
+
+    brew = ensure_homebrew(progress_callback=progress_callback, vendor_dir=vendor_dir)
     if not brew:
         msg = (
-            "Homebrew is not installed. Install it from https://brew.sh "
-            "then re-run, or run: brew install mosquitto"
+            "Homebrew is not available. Place vendor/homebrew assets in the "
+            "Mines-Automation bundle (see packaging/macos/vendor/README.md), "
+            "or install from https://brew.sh then re-run."
         )
         logger.error(msg)
         return False, msg
 
-    logger.info("Using Homebrew at: %s", brew)
+    logger.info("Using Homebrew at: %s (vendor=%s bottles=%s)", brew, vendor_dir, bottles_dir)
     _progress(10, "Checking Homebrew Mosquitto formula...")
 
     try:
@@ -466,7 +850,17 @@ def install_mosquitto_macos(progress_callback=None):
             _progress(80, "Mosquitto already installed via Homebrew")
             return True, "already_installed"
 
-        _progress(20, "Installing Mosquitto with Homebrew (may take a few minutes)...")
+        if bottles_dir:
+            _progress(20, "Installing Mosquitto from local Homebrew bottles...")
+            ok, detail = install_mosquitto_from_local_bottles(
+                brew, bottles_dir, progress_callback=progress_callback
+            )
+            if ok:
+                _progress(80, "Mosquitto installed from local bottles")
+                return True, detail
+            logger.warning("Local bottle install failed (%s); trying brew install", detail)
+
+        _progress(20, "Installing Mosquitto with Homebrew (may download)...")
         logger.info("Running: brew install mosquitto")
         result = subprocess.run(
             [brew, "install", "mosquitto"],
@@ -894,6 +1288,7 @@ socket_domain ipv4
                 and has_websockets
                 and has_socket_domain
             ):
+                # Log lines are optional; MQTT 1883 + WS 9001 are required.
                 logger.info("Required MQTT/WS settings already present in config file")
                 needs_update = False
                 _ = (
@@ -1163,9 +1558,11 @@ def setup_mosquitto(progress_callback=None, app_data_path=None):
             status["installed"] = True
             update_progress(80, "Mosquitto already installed")
         elif IS_DARWIN:
-            logger.info("Mosquitto not found. Installing via Homebrew...")
+            logger.info("Mosquitto not found. Installing via Homebrew (local vendor preferred)...")
             update_progress(5, "Installing Mosquitto via Homebrew...")
-            ok, detail = install_mosquitto_macos(update_progress)
+            ok, detail = install_mosquitto_macos(
+                update_progress, app_data_path=app_data_path
+            )
             if not ok:
                 status["message"] = detail or "Failed to install Mosquitto via Homebrew"
                 logger.error(status["message"])
