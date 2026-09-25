@@ -183,8 +183,18 @@
 
         <!-- Right Panel: Transaction Flow -->
         <div class="right-panel">
-            <div class="panel-header">
+            <div class="panel-header panel-header-with-controls">
                 <h2 class="panel-title">Transaction Flow</h2>
+                <div class="flow-side-controls" id="flow-side-controls" hidden>
+                    <button id="anpr-toggle-button" class="anpr-toggle-button is-on" type="button" onclick="handleAnprToggle()">ANPR: ON</button>
+                    <button id="free-pass-button" class="free-pass-button" type="button" onclick="handleFreePass()">Free Pass</button>
+                </div>
+            </div>
+
+            <!-- Live digitizer weight (always visible above RFID) -->
+            <div class="live-weight-panel" id="live-weight-panel">
+                <span class="live-weight-label">Current Weight</span>
+                <span class="live-weight-value" id="live-weight-value">--</span>
             </div>
             
             <!-- RFID Display Box -->
@@ -226,6 +236,7 @@
                             </svg>
                         </div>
                         <div class="flow-icon-label">RFID Read</div>
+                        <div class="flow-icon-meta" id="flow-rfid-tag" hidden></div>
                     </div>
                     <div class="flow-icon-connector" aria-hidden="true"></div>
                     <div class="flow-icon-item" data-icon="rfid_validation" data-state="idle">
@@ -408,8 +419,6 @@
     </div>
 
     <div class="demo-controls" id="operator-controls" hidden>
-        <button id="anpr-toggle-button" class="anpr-toggle-button is-on" type="button" onclick="handleAnprToggle()">ANPR: ON</button>
-        <button id="free-pass-button" class="free-pass-button" type="button" onclick="handleFreePass()">Free Pass</button>
         <button id="reset-button" class="reset-button" type="button" onclick="handleResetApplication()">Reset</button>
     </div>
 

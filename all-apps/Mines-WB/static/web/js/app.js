@@ -95,6 +95,30 @@ function resetFlowIcons() {
         el.setAttribute('data-state', 'idle');
     });
     AppState.anprUpdateActive = false;
+    setFlowRfidTag('');
+}
+
+function setFlowRfidTag(tag) {
+    const el = document.getElementById('flow-rfid-tag');
+    if (!el) return;
+    const value = String(tag || '').trim();
+    if (!value) {
+        el.textContent = '';
+        el.hidden = true;
+        return;
+    }
+    el.textContent = value;
+    el.hidden = false;
+}
+
+function extractRfidTagFromMessage(message) {
+    const msg = String(message || '');
+    // Backend: "RFID read: {idHex}" — real reader tag, not OCI truck fields
+    let m = msg.match(/RFID read:\s*([^\s]+)/i);
+    if (m && m[1]) return m[1];
+    m = msg.match(/\b(?:tag|rfid)[=:\s]+([0-9A-Fa-f]{8,})\b/);
+    if (m && m[1]) return m[1];
+    return '';
 }
 
 function clearUiResetTimer() {
@@ -124,6 +148,10 @@ function syncFlowIcons(stepId, state, message) {
     if (stepId === 'rfid_read') {
         // Green as soon as a tag is read (before OCI)
         setFlowIcon('rfid_read', stepDomState('rfid_read'));
+        if (state === 'success') {
+            const tag = extractRfidTagFromMessage(msg);
+            if (tag) setFlowRfidTag(tag);
+        }
         if ((state === 'in_progress' || state === 'success') && stepDomState('reading_weight') === 'success') {
             setFlowIcon('weight_read', 'success');
         }
@@ -614,6 +642,8 @@ function resetAllSteps() {
     if (weightValue) {
         weightValue.textContent = '--';
     }
+    setFlowRfidTag('');
+    updateLiveWeightDisplay(AppState.currentWeight || 0);
 }
 
 // Set step state
@@ -817,7 +847,7 @@ function applyIdleUi() {
     AppState.failedFromStep = null;
     applyDefaultStepContents();
     AppState.currentPosition = -1;
-    AppState.currentWeight = 0;
+    // Keep last live digitizer reading on Current Weight panel; transaction reset clears RFID/tag.
     resetFlowIcons();
     closeFlowDetailsModal();
     updateCheckSensorPopup();
@@ -877,8 +907,10 @@ async function handleAnprToggle() {
 function setOperatorUnlocked(unlocked) {
     operatorLoggedIn = !!unlocked;
     const controls = document.getElementById('operator-controls');
+    const flowControls = document.getElementById('flow-side-controls');
     const loginBtn = document.getElementById('login-button');
     if (controls) controls.hidden = !operatorLoggedIn;
+    if (flowControls) flowControls.hidden = !operatorLoggedIn;
     if (loginBtn) {
         loginBtn.textContent = operatorLoggedIn ? 'Logout' : 'Login';
         loginBtn.classList.toggle('is-logout', operatorLoggedIn);
@@ -1458,7 +1490,7 @@ function handlePositionMessage(position) {
     
     if (position === -1) {
         applyIdleUi();
-        updateWeightDisplay(0);
+        // Do not force live weight to 0 — digitizer stream keeps Current Weight updated.
     } else {
         updateCheckSensorPopup();
     }
@@ -1478,6 +1510,18 @@ function showTransactionInfoBox() {
     // RFID / ANPR / Weight panel stays visible; values update in place.
 }
 
+function updateLiveWeightDisplay(weightKg) {
+    const el = document.getElementById('live-weight-value');
+    const panel = document.getElementById('live-weight-panel');
+    const total = Math.max(0, Math.floor(Number(weightKg) || 0));
+    if (el) {
+        el.textContent = total > 0 ? formatWeightTonKg(total) : (weightKg === 0 || weightKg === '0' ? '0 T 0 kg' : '--');
+    }
+    if (panel) {
+        panel.classList.toggle('has-weight', total > 0);
+    }
+}
+
 function updateInfoBoxWeight(weightKg) {
     const weightValue = document.getElementById('weight-value');
     const rfidBox = document.getElementById('rfid-display-box');
@@ -1489,12 +1533,14 @@ function updateInfoBoxWeight(weightKg) {
         rfidBox.classList.add('has-weight');
         showTransactionInfoBox();
     }
+    updateLiveWeightDisplay(weightKg);
 }
 
 function updateWeightDisplay(weight) {
     AppState.currentWeight = weight;
     AppState.transactionData.weight = weight;
     updateInfoBoxWeight(weight);
+    updateLiveWeightDisplay(weight);
 
     // Update reading_weight step based on current position
     if (AppState.currentPosition === 3) {
@@ -1767,13 +1813,14 @@ function handleRfidData(rfidData) {
         return;
     }
     
-    // Update RFID value
+    // Update RFID value (raw reader tag from /rfid_data — not OCI fields)
     if (rfidData.rfid) {
         rfidValue.textContent = rfidData.rfid;
         rfidBox.classList.add('has-rfid');
         
         // Update AppState
         AppState.transactionData.rfid = rfidData.rfid;
+        setFlowRfidTag(rfidData.rfid);
     }
     
     // Update truck number

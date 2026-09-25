@@ -99,4 +99,26 @@ def start_api_server(host: str = "0.0.0.0", port: int = 8080) -> Flask:
 
     _thread = threading.Thread(target=_run, name="FlaskAPI", daemon=True)
     _thread.start()
+    _open_dashboard_when_ready(int(port))
     return app
+
+
+def _open_dashboard_when_ready(port: int, *, delay_sec: float = 1.25) -> None:
+    """Open the operator UI in the default browser once Flask is listening."""
+    if os.environ.get("GMDC_NO_BROWSER", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("Skipping browser open (GMDC_NO_BROWSER set)")
+        return
+
+    def _open():
+        import time
+        import webbrowser
+
+        time.sleep(max(0.2, float(delay_sec)))
+        url = f"http://127.0.0.1:{int(port)}/"
+        try:
+            webbrowser.open(url)
+            logger.info("Opened dashboard in browser: %s", url)
+        except Exception as exc:
+            logger.warning("Could not open browser for %s: %s", url, exc)
+
+    threading.Thread(target=_open, name="OpenDashboard", daemon=True).start()

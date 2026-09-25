@@ -489,6 +489,18 @@ class MinesWbWorkflow:
         if sm and sm.current_state == State.IDLE:
             self._maybe_announce_idle_s2_s3()
         self._maybe_notify_digitizer_hang()
+        # Push live weight to operator UI (Current Weight above RFID)
+        dig = getattr(self.ctx, "digitizer", None)
+        fe = self._frontend()
+        if not dig or not fe or not hasattr(dig, "get_current_weight"):
+            return
+        weight = dig.get_current_weight()
+        if weight is None:
+            return
+        try:
+            fe.publish_digitizer(weight)
+        except Exception:
+            logger.debug("Live digitizer publish failed", exc_info=True)
 
     def _schedule_digitizer_hang_check(self) -> None:
         dig = getattr(self.ctx, "digitizer", None)
