@@ -81,3 +81,4 @@ cursor_*.md
 **/cursor_*.md
 packaging/macos/build/
 packaging/macos/dist/
+dist.zip
