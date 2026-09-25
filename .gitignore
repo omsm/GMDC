@@ -79,14 +79,21 @@ Desktop.ini
 # ---------------------------------------------------------------------------
 cursor_*.md
 **/cursor_*.md
+
+# ---------------------------------------------------------------------------
+# Packaging / large archives (never commit build zips)
+# ---------------------------------------------------------------------------
 packaging/macos/build/
 packaging/macos/dist/
 packaging/macos/vendor/homebrew/
 packaging/macos/vendor/bottles/
 packaging/macos/vendor/VENDOR_INFO.txt
+packaging/macos/app.zip
+packaging/macos/*.zip
 dist.zip
+*.zip
+all-apps/
+all-apps.zip
 # Keep vendor tooling tracked
 !packaging/macos/vendor/README.md
 !packaging/macos/vendor/download_vendor.sh
-all-apps/
-all-apps.zip
