@@ -10,6 +10,10 @@ Shipped on Mines-Checkpoint / Mines-WB dashboards.
 - Digitizer mode API|MQTT; hardcoded `gmdc/digitizer/status`; Mines-WB MQTT client + idle weight=0 + hang notify
 - Server module removed from `/devices`; config reused on re-run; field edit → `validated: false`
 
+### Flow Details icons (v1.9)
+- RFID Read green on tag read; RFID Validation green on OCI success
+- ANPR Update green only on `status_check` `statusCode: 201` + `vehicleStatus: 1`
+
 ---
 
 ## Pending

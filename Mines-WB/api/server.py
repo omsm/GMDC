@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 from typing import Optional
 
@@ -16,9 +17,26 @@ logger = logging.getLogger("mines_wb.api.server")
 _app: Optional[Flask] = None
 _thread: Optional[threading.Thread] = None
 
-STATIC_WEB_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "static", "web")
-)
+
+def _resolve_static_web_dir() -> str:
+    """Source tree, or PyInstaller _MEIPASS / install-dir when frozen."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        candidates = []
+        if meipass:
+            candidates.append(os.path.join(meipass, "static", "web"))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "static", "web"))
+        for path in candidates:
+            if os.path.isdir(path):
+                return os.path.abspath(path)
+        return os.path.abspath(candidates[0])
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "static", "web")
+    )
+
+
+STATIC_WEB_DIR = _resolve_static_web_dir()
 
 
 def _add_cors(app: Flask) -> None:

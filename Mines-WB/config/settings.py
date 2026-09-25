@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,7 +16,15 @@ from config.wb_branding import get_brand, normalize_checkpoint_type
 
 logger = logging.getLogger("mines_wb.config")
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _package_root() -> Path:
+    """Install folder when frozen; Mines-WB/ when running from source."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _package_root()
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 DEFAULT_CONFIG_CANDIDATES = (
     PROJECT_ROOT / "iot_configuration.json",
@@ -260,6 +269,11 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     env = os.getenv("IOT_CONFIG_PATH")
     if env:
         return Path(env)
+    install = os.getenv("GMDC_INSTALL_ROOT")
+    if install:
+        candidate = Path(install) / "iot_configuration.json"
+        if candidate.is_file():
+            return candidate
     for candidate in DEFAULT_CONFIG_CANDIDATES:
         if candidate.is_file():
             return candidate

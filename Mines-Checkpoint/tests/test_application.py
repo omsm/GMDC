@@ -737,11 +737,15 @@ class TestWorkflow(unittest.TestCase):
         self.tl.set_green.assert_called()
         self.display.send.assert_any_call("OD14P7339 Entry Granted")
 
-    def test_anpr_disabled_calls_invalid_truck_not_status_check(self):
+    def test_anpr_disabled_calls_invalid_truck_then_status_check(self):
+        """ANPR off still posts invalid-truck(anpr_status=2) then polls status_check."""
         self.ctx.settings.anpr_enabled = False
         self._rfid_ok()
         self.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
         )
         self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
 
@@ -751,7 +755,7 @@ class TestWorkflow(unittest.TestCase):
         self.oci.invalid_truck_number.assert_called()
         inv = self.oci.invalid_truck_number.call_args.kwargs
         self.assertEqual(inv.get("anpr_status"), 2)
-        self.oci.update_truck_number.assert_not_called()
+        self.oci.update_truck_number.assert_called()
         self.boom.open.assert_called()
 
     def test_ce_anpr_match_polls_check_status_until_status_code_200(self):

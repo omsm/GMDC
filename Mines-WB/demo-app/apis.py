@@ -223,13 +223,14 @@ def status_check():
                 "message": "Waiting for operator",
             }
         )
-    # success / status_ok / default: continue
+    # success / status_ok / default: continue (statusCode 201 = manual update)
     return jsonify(
         {
             "status": 200,
-            "statusCode": 200,
+            "statusCode": 201,
             "vehicleStatus": 1,
-            "message": "Vehicle approved",
+            "statusMessage": "Vehicle is updated manually",
+            "message": "Vehicle is updated manually",
         }
     )
 

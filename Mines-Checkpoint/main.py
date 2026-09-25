@@ -43,10 +43,15 @@ logger = logging.getLogger("mines_checkpoint.main")
 def _ensure_local_mqtt_broker() -> None:
     """Install/start Mosquitto if 1883 (MQTT) or 9001 (WS) is not listening."""
     try:
-        repo_root = Path(__file__).resolve().parent.parent
-        for path in (str(repo_root / "mqtt_broker_setup"), str(repo_root)):
-            if path not in sys.path:
-                sys.path.insert(0, path)
+        if getattr(sys, "frozen", False):
+            roots = [Path(sys.executable).resolve().parent]
+        else:
+            roots = [Path(__file__).resolve().parent.parent]
+            roots.append(roots[0].parent)
+        for root in roots:
+            for path in (str(root / "mqtt_broker_setup"), str(root)):
+                if path not in sys.path:
+                    sys.path.insert(0, path)
         from mqtt_broker_setup import bootstrap_local_mqtt
 
         bootstrap_local_mqtt(__file__)
@@ -186,7 +191,15 @@ def bootstrap() -> AppContext:
         anpr_username=settings.anpr_username,
         anpr_password=settings.anpr_password,
         endpoint_auth=settings.endpoint_auth,
+        debug_wait_sec=(
+            settings.api_wait_after_response if settings.api_debug else 0.0
+        ),
     )
+    if settings.api_debug and settings.api_wait_after_response > 0:
+        logger.info(
+            "API_DEBUG on - pause %ss after each GMDC API response (not ANPR)",
+            settings.api_wait_after_response,
+        )
 
     ctx.display = create_display_service(
         display_type=settings.display_type,

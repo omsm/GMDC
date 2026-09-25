@@ -183,13 +183,17 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         inv = ctx.oci.invalid_truck_number.call_args.kwargs
         self.assertEqual(inv.get("top_image"), top_name)
 
-    def test_anpr_disabled_calls_invalid_truck_not_status_check(self):
+    def test_anpr_disabled_calls_invalid_truck_then_status_check(self):
+        """ANPR off still posts invalid-truck(anpr_status=2) then polls status_check."""
         from services.oci_client import OCIResponse
 
         wf, ctx = self._make_workflow()
         ctx.settings.anpr_enabled = False
         ctx.oci.invalid_truck_number.return_value = OCIResponse(
             ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
         )
         ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
         ctx.oci.weight_details.return_value = OCIResponse(ok=True, status=200)
@@ -200,7 +204,7 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         ctx.oci.invalid_truck_number.assert_called()
         inv = ctx.oci.invalid_truck_number.call_args.kwargs
         self.assertEqual(inv.get("anpr_status"), 2)
-        ctx.oci.update_truck_number.assert_not_called()
+        ctx.oci.update_truck_number.assert_called()
         ctx.oci.weight_details.assert_called()
 
     def test_anpr_status_0_uses_status_check_then_boom_close_filled(self):

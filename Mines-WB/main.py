@@ -46,10 +46,15 @@ logger = logging.getLogger("mines_wb.main")
 def _ensure_local_mqtt_broker() -> None:
     """Install/start Mosquitto if 1883 (MQTT) or 9001 (WS) is not listening."""
     try:
-        repo_root = Path(__file__).resolve().parent.parent
-        for path in (str(repo_root / "mqtt_broker_setup"), str(repo_root)):
-            if path not in sys.path:
-                sys.path.insert(0, path)
+        if getattr(sys, "frozen", False):
+            roots = [Path(sys.executable).resolve().parent]
+        else:
+            roots = [Path(__file__).resolve().parent.parent]
+            roots.append(roots[0].parent)
+        for root in roots:
+            for path in (str(root / "mqtt_broker_setup"), str(root)):
+                if path not in sys.path:
+                    sys.path.insert(0, path)
         from mqtt_broker_setup import bootstrap_local_mqtt
 
         bootstrap_local_mqtt(__file__)
@@ -310,11 +315,15 @@ def bootstrap() -> AppContext:
         ctx.digitizer.start()
 
     if settings.use_audio():
+        if getattr(sys, "frozen", False):
+            voice_base = Path(sys.executable).resolve().parent
+        else:
+            voice_base = Path(__file__).resolve().parent
         ctx.voice = VoiceService(
             voice_directory=settings.voice_path or settings.voice_directory,
             error_prefix=settings.voice_error_prefix,
             hardware_enabled=True,
-            base_path=str(Path(__file__).resolve().parent),
+            base_path=str(voice_base),
         )
         if ctx.voice.is_enabled():
             ctx.voice.welcome()

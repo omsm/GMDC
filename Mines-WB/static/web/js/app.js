@@ -122,6 +122,7 @@ function syncFlowIcons(stepId, state, message) {
     }
 
     if (stepId === 'rfid_read') {
+        // Green as soon as a tag is read (before OCI)
         setFlowIcon('rfid_read', stepDomState('rfid_read'));
         if ((state === 'in_progress' || state === 'success') && stepDomState('reading_weight') === 'success') {
             setFlowIcon('weight_read', 'success');
@@ -129,27 +130,45 @@ function syncFlowIcons(stepId, state, message) {
     }
 
     if (stepId === 'validating_rfid') {
+        // Green only after OCI validate success
         setFlowIcon('rfid_validation', stepDomState('validating_rfid'));
-        if (state === 'in_progress' || state === 'success') {
-            if (stepDomState('rfid_read') === 'idle') {
-                setFlowIcon('rfid_read', 'success');
-            }
+        if (state === 'in_progress' || state === 'success' || state === 'error') {
+            setFlowIcon('rfid_read', 'success');
         }
     }
 
     if (stepId === 'validating_anpr') {
         if (state === 'in_progress') {
-            setFlowIcon('anpr_read', 'loading');
+            if (/check-status|status-check|Waiting for/i.test(msg)) {
+                setFlowIcon('anpr_update', 'loading');
+                AppState.anprUpdateActive = true;
+            } else {
+                setFlowIcon('anpr_read', 'loading');
+            }
         } else if (state === 'warning' || state === 'error') {
             setFlowIcon('anpr_read', 'error');
             setFlowIcon('anpr_update', 'loading');
             AppState.anprUpdateActive = true;
         } else if (state === 'success') {
-            setFlowIcon('anpr_read', 'success');
-            if (AppState.anprUpdateActive) {
+            if (/skipped|disabled/i.test(msg)) {
+                setFlowIcon('anpr_read', 'skipped');
+                setFlowIcon('anpr_update', 'loading');
+                AppState.anprUpdateActive = true;
+            } else if (/updated manually/i.test(msg)) {
+                // Only statusCode 201 + vehicleStatus 1 marks Update green
+                if (iconState('anpr_read') === 'idle') {
+                    setFlowIcon('anpr_read', 'error');
+                }
                 setFlowIcon('anpr_update', 'success');
             } else {
-                setFlowIcon('anpr_update', 'skipped');
+                setFlowIcon('anpr_read', 'success');
+                if (
+                    iconState('anpr_update') === 'loading' ||
+                    iconState('anpr_update') === 'idle' ||
+                    AppState.anprUpdateActive
+                ) {
+                    setFlowIcon('anpr_update', 'skipped');
+                }
             }
         } else if (/Err-0|Err-2|mismatch|not readable/i.test(msg)) {
             setFlowIcon('anpr_read', 'error');
@@ -166,10 +185,9 @@ function syncFlowIcons(stepId, state, message) {
                     setFlowIcon('weight_read', 'success');
                 }
             }
-            if (AppState.anprUpdateActive) {
-                if (iconState('anpr_update') === 'loading') {
-                    setFlowIcon('anpr_update', 'success');
-                }
+            // Do not force Update green here — only statusCode 201 does that.
+            if (iconState('anpr_update') === 'loading') {
+                setFlowIcon('anpr_update', 'skipped');
             } else if (iconState('anpr_update') === 'idle') {
                 setFlowIcon('anpr_update', 'skipped');
             }
@@ -191,10 +209,8 @@ function syncFlowIcons(stepId, state, message) {
             ) {
                 setFlowIcon('weight_validation', 'success');
             }
-            if (AppState.anprUpdateActive) {
-                if (iconState('anpr_update') === 'loading') {
-                    setFlowIcon('anpr_update', 'success');
-                }
+            if (iconState('anpr_update') === 'loading') {
+                setFlowIcon('anpr_update', 'skipped');
             } else if (iconState('anpr_update') === 'idle') {
                 setFlowIcon('anpr_update', 'skipped');
             }

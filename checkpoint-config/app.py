@@ -473,6 +473,49 @@ def _bootstrap_iot_instance_guard() -> None:
     )
     acquire_runtime_mutex(IOT_CONFIGURATION_INSTANCE_KEY, logger_name=logger_name)
 
+
+_POSIX_INSTANCE_LOCK_FH = None
+
+
+def _acquire_posix_single_instance_lock() -> None:
+    """
+    macOS/Linux: keep a single iot-configuration process via flock.
+    Prevents the Cocoa/argv-emulation re-entry loop from stacking copies on :8080.
+    """
+    global _POSIX_INSTANCE_LOCK_FH
+    if sys.platform == "win32":
+        return
+    try:
+        import fcntl
+    except ImportError:
+        return
+
+    lock_path = os.path.join(app_data_path, ".iot-configuration.lock")
+    try:
+        fh = open(lock_path, "a+", encoding="utf-8")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(os.getpid()))
+        fh.flush()
+        _POSIX_INSTANCE_LOCK_FH = fh  # keep alive for process lifetime
+        logger.info("Single-instance lock acquired: %s", lock_path)
+    except OSError:
+        logger.error(
+            "Another iot-configuration instance is already running (lock %s). Exiting.",
+            lock_path,
+        )
+        try:
+            fatal_exit(
+                "IoT Configuration is already running.\n\n"
+                "Close the existing window, or stop the other process, then try again.",
+                title=APP_NAME,
+                log_path=log_file,
+            )
+        except Exception:
+            pass
+        os._exit(1)
+
 # ============== Main Routes ==============
 
 @app.route('/')
@@ -1894,7 +1937,16 @@ def close_application():
 
 if __name__ == '__main__':
     try:
+        # Required for frozen apps on macOS if any library touches multiprocessing.
+        try:
+            import multiprocessing as _mp
+
+            _mp.freeze_support()
+        except Exception:
+            pass
+
         _bootstrap_iot_instance_guard()
+        _acquire_posix_single_instance_lock()
 
         logger.info(f"Device Info Required: {REQUIRE_DEVICE_INFO}")
         logger.info(f"\n{'='*50}")
@@ -1910,7 +1962,16 @@ if __name__ == '__main__':
         install_webview_stderr_filter()
 
         def start_flask():
-            app.run(debug=RUNTIME_DEBUG, host=HOST, port=PORT, use_reloader=False)
+            # Never enable Werkzeug debugger in a frozen binary: on macOS it
+            # pulls multiprocessing/mmap and can collide with pywebview.
+            flask_debug = bool(RUNTIME_DEBUG) and not getattr(sys, "frozen", False)
+            app.run(
+                debug=flask_debug,
+                host=HOST,
+                port=PORT,
+                use_reloader=False,
+                threaded=True,
+            )
 
         flask_thread = threading.Thread(target=start_flask, daemon=True)
         flask_thread.start()

@@ -1088,7 +1088,7 @@ DEFAULT_CONFIG = {
     "status": False,
     "voice": {
         "enabled": True,
-        "directory": "static/voice",
+        "directory": "voice",
         "error_prefix": True,
         "validated": False
     },

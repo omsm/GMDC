@@ -29,6 +29,7 @@ from gmdc_common.hardware.camera import (
     get_local_ip,
 )
 from services.oci_client import (
+    is_manual_anpr_update_response,
     parse_truck_details,
     replace_truck_details_tolerance,
     rto_weight_band,
@@ -1229,6 +1230,15 @@ class MinesWbWorkflow:
         self._stop_rfid_reader()
 
         txn.tags = list(id_hexes)
+        # RFID Read icon: green as soon as a tag is present (before OCI)
+        if id_hexes:
+            self._ui_status(STEP_RFID_READ, "success", f"RFID read: {id_hexes[0]}")
+            fe = self._frontend()
+            if fe:
+                fe.publish_rfid(id_hexes[0], None)
+                fe.publish_position(0)
+        self._ui_status(STEP_VALIDATING_RFID, "info", "Validating RFID with OCI.")
+
         valid = False
         service_alert = None
         last_resp = None
@@ -1296,6 +1306,7 @@ class MinesWbWorkflow:
         if fe:
             fe.publish_rfid(txn.rfid, txn.vehicle_no or None)
             fe.publish_position(0)
+        # RFID Validation icon: green only after OCI confirms the tag
         self._ui_status(
             STEP_VALIDATING_RFID,
             "success",
@@ -1330,8 +1341,9 @@ class MinesWbWorkflow:
         anpr_status 1: weight → weight_details → boom_close → exit
                        (no status-check)
         anpr_status 0/2: status_check loop until vehicleStatus=1 → same weight path
-        ANPR disabled: skip detect → invalid-truck(anpr_status=2) → weight path
-                       (no status-check)
+                         (mandatory whether ANPR was enabled or skipped)
+        ANPR disabled: skip detect → invalid-truck(anpr_status=2) → status_check
+                       → weight path on vehicleStatus=1
         """
         sm = self.ctx.state_machine
         oci = self.ctx.oci
@@ -1342,11 +1354,11 @@ class MinesWbWorkflow:
         parsed = parse_truck_details(txn.truck_details)
 
         # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2
-        # then continue weight/exit (no status-check — not a CE checkpoint).
+        # then status_check (same as ANPR mismatch 0/2).
         if not bool(getattr(settings, "anpr_enabled", True)):
             logger.info(
-                "ANPR disabled - skipping /api/detect and status_check; "
-                "invalid-truck anpr_status=2 then weight details"
+                "ANPR disabled - skipping /api/detect; invalid-truck anpr_status=2 "
+                "then status_check"
             )
             txn.anpr_status = 2
             txn.anpr_raw = {
@@ -1366,6 +1378,7 @@ class MinesWbWorkflow:
             txn.top_image = top_photo_name
             txn.anpr_raw = dict(txn.anpr_raw or {})
             txn.anpr_raw["top_image"] = top_photo_name
+            sm.trigger(Event.ANPR_MISMATCH)
             invalid_resp = oci.invalid_truck_number(
                 rfid=txn.rfid,
                 truck_number=txn.vehicle_no,
@@ -1381,10 +1394,15 @@ class MinesWbWorkflow:
                     invalid_resp,
                     fallback="Invalid-truck service not reachable",
                 )
-            sm.trigger(Event.ANPR_MATCH)
-            self._final_weight_and_details(
-                boom_close_after=txn.truck_details
-            )
+            if self._manual_update_loop():
+                sm.trigger(Event.UPDATE_STATUS_1)
+                sm.trigger(Event.MANUAL_OK)
+                self._final_weight_and_details(
+                    boom_close_after=txn.truck_details
+                )
+            else:
+                logger.warning("Manual update aborted (ANPR disabled) - grant exit")
+                self._enter_exit_granted(reason="manual_abort")
             return
 
         anpr = oci.anpr_detect(
@@ -1417,7 +1435,7 @@ class MinesWbWorkflow:
             STEP_VALIDATING_ANPR, "info", "Validating vehicle number (ANPR)."
         )
 
-        # Always invalid-truck. Status-check only for ANPR mismatch 0/2.
+        # Always invalid-truck. Status-check mandatory for anpr_status 0/2.
         self._capture_top_photo()
         top_photo_name = (txn.top_image or "").strip() or "error.jpg"
         txn.top_image = top_photo_name
@@ -1613,6 +1631,13 @@ class MinesWbWorkflow:
                 if sm:
                     sm.trigger(Event.UPDATE_STATUS_1)
                 logger.info("Manual truck validation OK (status=%s)", vehicle_status)
+                # ANPR Update icon: green only for statusCode 201 + vehicleStatus 1
+                if is_manual_anpr_update_response(resp):
+                    self._ui_status(
+                        STEP_VALIDATING_ANPR,
+                        "success",
+                        "Vehicle is updated manually",
+                    )
                 return True
 
             if vehicle_status == 2:

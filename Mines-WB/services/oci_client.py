@@ -53,6 +53,39 @@ class OCIResponse:
     popup_title: str = ""
 
 
+def status_code_from_response(resp: OCIResponse) -> Optional[int]:
+    """Read numeric statusCode from status_check / OCI JSON body."""
+    raw = getattr(resp, "raw", None) or {}
+    if "statusCode" not in raw:
+        return None
+    try:
+        return int(raw["statusCode"])
+    except (TypeError, ValueError):
+        return None
+
+
+def vehicle_status_from_response(resp: OCIResponse) -> Optional[int]:
+    """Read vehicleStatus from status_check JSON (0=retry, 1=ok, 2=abort)."""
+    raw = getattr(resp, "raw", None) or {}
+    if "vehicleStatus" not in raw:
+        return None
+    try:
+        return int(raw["vehicleStatus"])
+    except (TypeError, ValueError):
+        return None
+
+
+def is_manual_anpr_update_response(resp: OCIResponse) -> bool:
+    """
+    ANPR Update icon turns green only for manual update confirmation:
+      {"statusCode": 201, "vehicleStatus": 1, "statusMessage": "Vehicle is updated manually"}
+    """
+    return (
+        status_code_from_response(resp) == 201
+        and vehicle_status_from_response(resp) == 1
+    )
+
+
 def parse_truck_details(truck_details: str) -> Dict[str, str]:
     """
     Parse T|V|G|{rfid}|{vehicle_no}|{rto_gross}|{rto_tare}|{tolerance}|{token}|{device_ip}|…

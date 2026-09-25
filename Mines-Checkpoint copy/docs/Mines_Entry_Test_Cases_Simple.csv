@@ -1,0 +1,39 @@
+Sl.,TC_ID,Module,Title,Pre-Condition,Expected Result,Status
+1,TC-01,Setup,App starts for Mines Entry site,Site settings file is ready and app is installed,App opens without error and shows Mines Entry ready,Success
+2,TC-02,Setup,Real equipment mode works,Demo mode is off and controller is connected,App connects to lights boom and sensor (not demo),Success
+3,TC-03,Setup,Demo mode works without hardware,Demo mode is on,App runs using simulated lights and sensor,Success
+4,TC-04,Screen,Home / status screen opens,App is running,Operator screen loads and shows Ready,Success
+5,TC-05,Screen,Reset returns to Ready,App is in any mid-process state,After reset: red light on boom closed Ready again,Success
+6,TC-06,Tag reader,Valid tag starts the process,Gate is Ready and cloud is available,Tag is accepted and truck check starts,Success
+7,TC-07,Tag reader,Empty or bad tag is rejected,Gate is Ready,Error shown process does not start,Success
+8,TC-08,Tag reader,Second tag ignored while busy,First truck process already running,Second tag is ignored first process continues,Success
+9,TC-09,Mobile tag,Valid mobile tag works like reader,Gate is Ready,Cloud reply returned and process continues,Success
+10,TC-10,Mobile tag,Invalid mobile tag shows error,Gate is Ready cloud rejects tag,Error on display then back to Ready,Success
+11,TC-11,Cloud,Valid tag accepted by cloud,Valid RFID tag,Truck number shown process continues to plate check,Success
+12,TC-12,Cloud,Invalid tag rejected by cloud,Unknown or bad tag,Error shown boom stays closed then Ready,Success
+13,TC-13,Number plate,Plate match allows entry,Tag already validated plate check on,Plate matches boom opens green light Entry Granted,Success
+14,TC-14,Number plate,Plate mismatch waits for office,Tag validated plate does not match,Error shown system waits for office approval,Success
+15,TC-15,Number plate,Plate unreadable waits for office,Tag validated plate not readable,Error shown system waits for office approval,Success
+16,TC-16,Number plate,Plate check off still needs office approval,Number-plate check turned off,No camera call truck info sent then office approval required before boom opens,Success
+17,TC-17,Number plate,Camera / plate service down,Tag validated plate service unreachable,Error shown boom does not open returns to Ready,Success
+18,TC-18,Office approval,Office says wait keep checking,Waiting for approval,System keeps checking does not open boom yet,Success
+19,TC-19,Office approval,Office approves then entry allowed,Waiting for approval,Boom opens green light Entry Granted,Success
+20,TC-20,Office approval,Office rejects returns to Ready,Waiting for approval,Boom stays closed red light Ready,Success
+21,TC-21,Boom,Cloud allows boom then boom opens,Plate match or office approved,Boom opens and green light on,Success
+22,TC-22,Boom,Cloud boom permission fails boom stays closed,Plate match but cloud boom call fails,Boom does not open safe closed state,Success
+23,TC-23,Sensor,After entry truck on then off clears gate,Boom open green light waiting for truck to pass,After truck leaves: boom closes red light Ready,Success
+24,TC-24,Sensor,Truck only arriving does not close boom yet,Boom already open,Boom stays open until truck has left,Success
+25,TC-25,Sensor,If truck never leaves gate auto-resets,Boom open and timeout time reached,After timeout Ready again boom closed red light,Success
+26,TC-26,Lights & boom,Ready state is red and boom down,App start or after reset,Red light on green off boom closed,Success
+27,TC-27,Lights & boom,Entry allowed is green and boom up,Successful validation,Green light on red off boom open,Success
+28,TC-28,Controller,Sensor read works (read mode),Real controller connected,Entry sensor reading works,Success
+29,TC-29,Controller,Coil write mode FC5 works for lights and boom,Write mode set to FC5 real controller,Red green boom open close respond correctly,Success
+30,TC-30,Controller,Register write mode FC6 works for lights and boom,Write mode set to FC6 real controller,Same lights and boom behaviour as coil mode,Success
+31,TC-31,Display,Error text shown for bad tag,Invalid tag,Display shows tag error,Success
+32,TC-32,Display,Truck number shown after valid tag,Valid tag accepted,Display shows truck number,Success
+33,TC-33,Display,Entry Granted shown,Entry allowed,Display shows truck Entry Granted,Success
+34,TC-34,Full journey,Happy path tag to Ready again,All systems up,Tag → plate OK → boom open → truck passes → Ready boom closed,Success
+35,TC-35,Full journey,Mismatch then office approve then Ready,All systems up,Tag → plate fail → office OK → boom open → truck passes → Ready,Success
+36,TC-36,Full journey,Plate check off then office approve then Ready,Plate check off,Tag → office approval → boom open → truck passes → Ready,Success
+37,TC-37,Login,Operator login required for free pass / reset actions,Not logged in,Restricted actions stay blocked until login,Success
+38,TC-38,Install,Installed app opens dashboard,Copy-paste Mines Automation package,Dashboard opens without missing screen error,Success

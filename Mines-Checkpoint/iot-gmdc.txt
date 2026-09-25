@@ -1,6 +1,0 @@
-just like wb-old/IoT-configuration we need to create a commom application  for all the check point. 
-In mine entry,Tracking point-1,tracking point-2,mine Exit the hardware are : 1-traffic light,sensor,RFID reader,MQTT based display,annoucement system,handheld rfid reader,1-boom barrier,I/O controller.
-In Tare weight bridge,vadghat point,finall gross weight bridge point the hardware are : multiple traffic light,entry sensor,weightbridge sensor,exit sensor,RFID reader,MQTT based display,annoucement system,handheld rfid reader,multiple boom barrier,I/O controller,digitizer.in weight bridge case it can be unidirectional or bidirectional.
-if unidirectional then two traffic light and two boom barrier,one for entry and one for exit.
-if bidirectional then four traffic light,two boom barrier,two TL and one BB for entry and two TL and one BB for exit.
-just like wb-old/IoT-configuration we need to create a commom application  that will all the check point:mines entry,unidirectional tare weight bridge,Bidirectional tare weight bridge,tracking point,unidirectional vadghat point,Bidirectional vadghat point ,unidirectional gross weight bridge,Bidirectional gross weight bridge,Mines exit. 

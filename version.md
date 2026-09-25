@@ -1,13 +1,31 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.8**
+**Current version: 1.9**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB / digitizer-decoder `1.8.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.9.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.8 — 2026-09-11 (latest)
+## 1.9 — 2026-09-25 (latest)
+
+Dashboard Flow Details icons aligned with real workflow events; status-check manual-update confirmation for ANPR Update.
+
+### Flow Details icons (Mines-Checkpoint + Mines-WB)
+- **RFID Read** turns green as soon as a tag is read (before OCI validate)
+- **RFID Validation** turns green only when OCI RFID validate succeeds
+- **ANPR Update** turns green only when `status_check` returns  
+  `statusCode: 201` + `vehicleStatus: 1` (`"Vehicle is updated manually"`)
+- ANPR match / CE `statusCode: 200` / entry-granted paths no longer force Update green
+
+### Workflow / UI wiring
+- Publish `rfid_read` success on tag capture; `validating_rfid` success only after OCI OK
+- Publish `"Vehicle is updated manually"` on manual update confirmation so the dashboard can tick Update
+- ANPR-disabled path still runs invalid-truck then status-check (mismatch 0/2 behaviour unchanged)
+
+---
+
+## 1.8 — 2026-09-11
 
 Digitizer MQTT commissioning polish, checkpoint-config wizard cleanup, and config persistence across re-runs.
 
@@ -223,6 +241,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.9** | Flow icons: RFID Read on tag; RFID Validation on OCI; ANPR Update only on statusCode 201 |
 | **1.8** | Digitizer MQTT E2E; hardcoded status topic; no Server wizard step; config reuse on re-run; invalidate-on-edit |
 | **1.7** | Digitizer Decoder; Mosquitto ensure; change-only UI MQTT; digitizer MQTT in config/Mines-WB; idle weight=0 + hang sync |
 | **1.6** | Retuned default Zebra RFID `DEFAULT_MODE_PAYLOAD` in `gmdc_common` (0.2.8); optional per-site `mode_payload` override |

@@ -99,32 +99,55 @@ function scheduleUiResetAfterExit() {
 
 function syncFlowIcons(stepId, state, message) {
     const msg = String(message || '');
+    const iconState = (iconId) =>
+        document.querySelector(`[data-icon="${iconId}"]`)?.getAttribute('data-state') || 'idle';
 
     if (stepId === 'rfid_read') {
+        // Green as soon as a tag is read (before OCI)
         setFlowIcon('rfid_read', stepDomState('rfid_read'));
     }
     if (stepId === 'validating_rfid') {
+        // Green only after OCI validate success
         setFlowIcon('rfid_validation', stepDomState('validating_rfid'));
-        if (state === 'in_progress' || state === 'success') {
-            if (stepDomState('rfid_read') === 'idle') {
-                setFlowIcon('rfid_read', 'success');
-            }
+        // Keep Read green while / after validation
+        if (state === 'in_progress' || state === 'success' || state === 'error') {
+            setFlowIcon('rfid_read', 'success');
         }
     }
 
     if (stepId === 'validating_anpr') {
         if (state === 'in_progress') {
-            setFlowIcon('anpr_read', 'loading');
+            // Detect vs status-check wait: keep ANPR Read error, spin Update
+            if (/check-status|status-check|Waiting for/i.test(msg)) {
+                setFlowIcon('anpr_update', 'loading');
+                AppState.anprUpdateActive = true;
+            } else {
+                setFlowIcon('anpr_read', 'loading');
+            }
         } else if (state === 'warning' || state === 'error') {
             setFlowIcon('anpr_read', 'error');
             setFlowIcon('anpr_update', 'loading');
             AppState.anprUpdateActive = true;
         } else if (state === 'success') {
-            setFlowIcon('anpr_read', 'success');
-            if (AppState.anprUpdateActive) {
+            if (/skipped|disabled/i.test(msg)) {
+                // Operator skipped detect — status-check still runs → Update loading
+                setFlowIcon('anpr_read', 'skipped');
+                setFlowIcon('anpr_update', 'loading');
+                AppState.anprUpdateActive = true;
+            } else if (/updated manually/i.test(msg)) {
+                // Only statusCode 201 + vehicleStatus 1 marks Update green
+                if (iconState('anpr_read') === 'idle') {
+                    setFlowIcon('anpr_read', 'error');
+                }
                 setFlowIcon('anpr_update', 'success');
             } else {
-                setFlowIcon('anpr_update', 'skipped');
+                // ANPR matched (no manual update) → skip Update
+                setFlowIcon('anpr_read', 'success');
+                if (iconState('anpr_update') === 'loading' || AppState.anprUpdateActive) {
+                    setFlowIcon('anpr_update', 'skipped');
+                } else if (iconState('anpr_update') === 'idle') {
+                    setFlowIcon('anpr_update', 'skipped');
+                }
             }
         } else if (/Err-0|Err-2|mismatch|not readable/i.test(msg)) {
             setFlowIcon('anpr_read', 'error');
@@ -136,18 +159,16 @@ function syncFlowIcons(stepId, state, message) {
     if (stepId === 'entry_granted') {
         const st = stepDomState('entry_granted');
         setFlowIcon('vehicle_exit', st);
-        if (AppState.anprUpdateActive && (state === 'success' || state === 'in_progress')) {
-            setFlowIcon('anpr_update', state === 'success' ? 'success' : 'loading');
-            if (stepDomState('anpr_read') === 'idle') {
-                setFlowIcon('anpr_read', 'error');
+        if (state === 'success' || state === 'in_progress') {
+            const upd = iconState('anpr_update');
+            // Do not force Update green here — only statusCode 201 does that.
+            if (upd === 'loading') {
+                setFlowIcon('anpr_update', 'skipped');
+            } else if (state === 'success' && upd === 'idle') {
+                setFlowIcon('anpr_update', 'skipped');
             }
-        } else if (state === 'success' && !AppState.anprUpdateActive) {
-            if (stepDomState('anpr_read') === 'idle' || document.querySelector('[data-icon="anpr_read"]')?.getAttribute('data-state') === 'idle') {
-                // ANPR matched path may skip update icon if not set yet
-                const anprEl = document.querySelector('[data-icon="anpr_update"]');
-                if (anprEl && anprEl.getAttribute('data-state') === 'idle') {
-                    setFlowIcon('anpr_update', 'skipped');
-                }
+            if (AppState.anprUpdateActive && iconState('anpr_read') === 'idle') {
+                setFlowIcon('anpr_read', 'error');
             }
         }
     }

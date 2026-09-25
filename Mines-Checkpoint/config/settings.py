@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,7 +16,15 @@ from config.checkpoint_branding import get_brand, normalize_checkpoint_type
 
 logger = logging.getLogger("mines_checkpoint.config")
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _package_root() -> Path:
+    """Install folder when frozen; Mines-Checkpoint/ when running from source."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _package_root()
 
 
 def _join_url(base: str, path_or_url: str) -> str:
@@ -92,6 +101,10 @@ class Settings:
     # When False, skip /api/detect; invalid-truck uses anpr_status=0
     anpr_enabled: bool = True
 
+    # Pause after each GMDC OCI response when API_DEBUG=true (not ANPR)
+    api_debug: bool = False
+    api_wait_after_response: float = 0.0
+
     mqtt_broker: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_ws_port: int = 9001
@@ -161,6 +174,11 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     path = Path(
         config_path
         or os.getenv("IOT_CONFIG_PATH")
+        or (
+            Path(os.getenv("GMDC_INSTALL_ROOT")) / "iot_configuration.json"
+            if os.getenv("GMDC_INSTALL_ROOT")
+            else None
+        )
         or (PROJECT_ROOT / "iot_configuration.json")
     )
     raw: Dict[str, Any] = {}
@@ -317,6 +335,14 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         anpr_enabled=_env_bool(
             "ANPR_ENABLED",
             bool(raw.get("anpr_enabled", True)),
+        ),
+        api_debug=_env_bool("API_DEBUG", False) or _env_bool(
+            "GMDC_API_DEBUG", False
+        ),
+        api_wait_after_response=float(
+            os.getenv("API_WAIT_AFTER_RESPONSE")
+            or os.getenv("GMDC_API_WAIT_AFTER_RESPONSE")
+            or 0
         ),
         mqtt_broker=os.getenv("MQTT_BROKER")
         or display.get("ip")

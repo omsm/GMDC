@@ -32,6 +32,7 @@ from services.frontend_mqtt import (
 from services.oci_client import (
     OCIResponse,
     is_ce_truck_details,
+    is_manual_anpr_update_response,
     parse_truck_details,
     status_code_from_response,
 )
@@ -380,7 +381,8 @@ class CheckpointWorkflow:
 
             sm.trigger(Event.RFID_RECEIVED)  # IDLE -> RFID_READ
             self._ui_position(0)
-            self._ui_status(STEP_RFID_READ, "info", "Reading RFID; present a valid tag.")
+            # RFID Read icon: green as soon as a tag is present (before OCI)
+            self._ui_status(STEP_RFID_READ, "success", f"RFID read: {rfid}")
             self._ui_rfid(rfid)
             self._stop_rfid_reader()
             sm.trigger(Event.RFID_RECEIVED)  # RFID_READ -> RFID_VALIDATE
@@ -568,9 +570,12 @@ class CheckpointWorkflow:
 
         sm.trigger(Event.RFID_RECEIVED)  # IDLE -> RFID_READ
         self._ui_position(0)
-        self._ui_status(STEP_RFID_READ, "info", "Reading RFID; present a valid tag.")
+        # RFID Read icon: green as soon as a tag is present (before OCI)
         if id_hexes:
+            self._ui_status(STEP_RFID_READ, "success", f"RFID read: {id_hexes[0]}")
             self._ui_rfid(id_hexes[0])
+        else:
+            self._ui_status(STEP_RFID_READ, "info", "Reading RFID; present a valid tag.")
         # 6. Stop reader, then 7. OCI RFID validate
         self._stop_rfid_reader()
         sm.trigger(Event.RFID_RECEIVED)  # RFID_READ -> RFID_VALIDATE
@@ -663,15 +668,22 @@ class CheckpointWorkflow:
             return
 
         sm.trigger(Event.RFID_VALID)  # -> DISPLAY_TRUCK
-        self._ui_status(STEP_VALIDATING_RFID, "success", f"Truck No: {txn.vehicle_no or txn.validated_rfid}")
+        # RFID Validation icon: green only after OCI confirms the tag
+        self._ui_status(
+            STEP_VALIDATING_RFID,
+            "success",
+            f"Truck No: {txn.vehicle_no or txn.validated_rfid}",
+        )
         self._ui_rfid(txn.validated_rfid, txn.vehicle_no or None)
         self._announce(txn.vehicle_no or txn.validated_rfid)
 
         # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2.
-        # Status-check only for CE trips (all ANPR paths); non-CE disabled grants.
+        # After invalid-truck, anpr_status 0/2 always requires status_check (same as
+        # ANPR-enabled mismatch) — including when ANPR was skipped by the operator.
         if not bool(getattr(settings, "anpr_enabled", True)):
             logger.info(
-                "ANPR disabled - skipping /api/detect; invalid-truck anpr_status=2"
+                "ANPR disabled - skipping /api/detect; invalid-truck anpr_status=2 "
+                "then status_check"
             )
             self._ui_status(
                 STEP_VALIDATING_ANPR,
@@ -686,6 +698,7 @@ class CheckpointWorkflow:
                 "device_ip": txn.device_ip or settings.device_ip,
                 "anpr_status": 2,
             }
+            sm.trigger(Event.ANPR_MISMATCH)
             invalid_resp = oci.invalid_truck_number(
                 rfid=txn.validated_rfid,
                 truck_number=txn.vehicle_no,
@@ -701,11 +714,9 @@ class CheckpointWorkflow:
                     fallback="Invalid-truck service not reachable",
                 )
             if is_ce_truck_details(txn.truck_details or ""):
-                sm.trigger(Event.ANPR_MISMATCH)
                 self._ce_check_status_loop(sm, txn, oci, settings.device_ip)
-                return
-            sm.trigger(Event.ANPR_MATCH)
-            self._do_grant_entry(txn.truck_no or txn.vehicle_no)
+            else:
+                self._manual_update_loop(sm, txn, oci, settings.device_ip)
             return
 
         self._ui_status(STEP_VALIDATING_ANPR, "info", "ANPR validation in progress.")
@@ -744,7 +755,8 @@ class CheckpointWorkflow:
         txn.anpr_raw = anpr.raw
 
         # Always invalid-truck. Status-check: CE → all ANPR 0/1/2 (statusCode 200 loop);
-        # non-CE → only mismatch 0/2 (vehicleStatus loop); match grants without it.
+        # non-CE → mismatch 0/2 always (vehicleStatus loop), whether ANPR was on or off;
+        # match (1) grants without status_check.
         sm.trigger(Event.ANPR_MISMATCH)
         invalid_resp = oci.invalid_truck_number(
             rfid=txn.validated_rfid,
@@ -913,6 +925,13 @@ class CheckpointWorkflow:
                     )
                     txn.vehicle_no = txn.truck_no
                 sm.trigger(Event.UPDATE_STATUS_1)
+                # ANPR Update icon: green only for statusCode 201 + vehicleStatus 1
+                if is_manual_anpr_update_response(resp):
+                    self._ui_status(
+                        STEP_VALIDATING_ANPR,
+                        "success",
+                        "Vehicle is updated manually",
+                    )
                 self._do_grant_entry(txn.truck_no or txn.vehicle_no)
                 return
 
@@ -989,6 +1008,13 @@ class CheckpointWorkflow:
                     )
                     txn.vehicle_no = txn.truck_no
                 sm.trigger(Event.UPDATE_STATUS_1)
+                # ANPR Update icon: green only for statusCode 201 + vehicleStatus 1
+                if is_manual_anpr_update_response(resp):
+                    self._ui_status(
+                        STEP_VALIDATING_ANPR,
+                        "success",
+                        "Vehicle is updated manually",
+                    )
                 self._do_grant_entry(txn.truck_no or txn.vehicle_no)
                 return
 

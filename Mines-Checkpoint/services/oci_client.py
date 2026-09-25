@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
@@ -104,6 +105,28 @@ def status_code_from_response(resp: OCIResponse) -> Optional[int]:
         return int(raw["statusCode"])
     except (TypeError, ValueError):
         return None
+
+
+def vehicle_status_from_response(resp: OCIResponse) -> Optional[int]:
+    """Read vehicleStatus from status_check JSON (0=retry, 1=ok, 2=abort)."""
+    raw = getattr(resp, "raw", None) or {}
+    if "vehicleStatus" not in raw:
+        return None
+    try:
+        return int(raw["vehicleStatus"])
+    except (TypeError, ValueError):
+        return None
+
+
+def is_manual_anpr_update_response(resp: OCIResponse) -> bool:
+    """
+    ANPR Update icon turns green only for manual update confirmation:
+      {"statusCode": 201, "vehicleStatus": 1, "statusMessage": "Vehicle is updated manually"}
+    """
+    return (
+        status_code_from_response(resp) == 201
+        and vehicle_status_from_response(resp) == 1
+    )
 
 
 def build_invalid_truck_payload(
@@ -314,6 +337,7 @@ class OCIClient:
         anpr_password: Optional[str] = None,
         endpoint_auth: Optional[Dict[str, Tuple[str, str]]] = None,
         timeout: float = TIMEOUTS.OCI_REQUEST_TIMEOUT_SEC,
+        debug_wait_sec: float = 0.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.auth: Tuple[str, str] = (username, password)
@@ -334,6 +358,7 @@ class OCIClient:
             self.base_url + "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
         )
         self.timeout = timeout
+        self.debug_wait_sec = max(0.0, float(debug_wait_sec or 0.0))
         self._session = requests.Session()
 
     def _auth_for(self, key: str, default: Optional[Tuple[str, str]] = None) -> Tuple[str, str]:
@@ -341,6 +366,17 @@ class OCIClient:
         if creds and creds[0] and creds[1]:
             return creds
         return default or self.auth
+
+    def _maybe_debug_wait(self, label: str) -> None:
+        """Pause after GMDC OCI calls so request/response logs can be inspected."""
+        if self.debug_wait_sec <= 0:
+            return
+        if str(label).lower().startswith("anpr"):
+            return
+        logger.info(
+            "API_DEBUG: waiting %ss after %s", self.debug_wait_sec, label
+        )
+        time.sleep(self.debug_wait_sec)
 
     def _post(
         self,
@@ -363,6 +399,7 @@ class OCIClient:
             except ValueError:
                 data = {"raw_text": resp.text}
             _log_api_exchange(url, payload, data)
+            self._maybe_debug_wait(label)
             status_val = data.get("status", http_status if resp.ok else 0)
             try:
                 status_int = int(status_val)
@@ -380,6 +417,7 @@ class OCIClient:
         except requests.RequestException as e:
             _log_api_exchange(url, payload, {"error": str(e)})
             logger.error("OCI %s ERROR: %s", label, e)
+            self._maybe_debug_wait(label)
             result = OCIResponse(
                 ok=False, status=0, message=str(e), raw={}, http_status=0
             )
