@@ -88,3 +88,4 @@ dist.zip
 # Keep vendor tooling tracked
 !packaging/macos/vendor/README.md
 !packaging/macos/vendor/download_vendor.sh
+all-apps/
