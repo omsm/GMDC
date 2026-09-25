@@ -63,6 +63,35 @@ def _resolve_mqtt_ws_port(raw: Any) -> int:
     return port if port > 0 else 9001
 
 
+def _display_ips_from_config(
+    display: Dict[str, Any], *, bidirectional: bool = False
+) -> list:
+    """Collect Display device IP(s). Uni: ip. Bi: ip + ip_b."""
+    ips = []
+    primary = str(display.get("ip") or "").strip()
+    if primary:
+        ips.append(primary)
+    secondary = str(
+        display.get("ip_b")
+        or display.get("ip_entry_b")
+        or display.get("secondary_ip")
+        or ""
+    ).strip()
+    if bidirectional and secondary and secondary not in ips:
+        ips.append(secondary)
+    nested = display.get("displays")
+    if isinstance(nested, list):
+        for item in nested:
+            if not isinstance(item, dict):
+                continue
+            ip = str(item.get("ip") or "").strip()
+            if not ip or ip in ips:
+                continue
+            if bidirectional or not ips:
+                ips.append(ip)
+    return ips
+
+
 @dataclass
 class Settings:
     demo_mode: bool = True
@@ -131,9 +160,11 @@ class Settings:
     mqtt_broker: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_ws_port: int = 9001
-    mqtt_topic_tx: str = "iot_display/application_to_display"
-    mqtt_topic_rx: str = "iot_display/display_to_application"
+    mqtt_topic_tx: str = "data_info/a"
+    mqtt_topic_rx: str = "display_info"
     display_type: str = "mqtt"
+    display_ips: list = field(default_factory=list)
+    display_pcb_mode: str = "a"
 
     voice_enabled: bool = True
     voice_validated: bool = True
@@ -539,28 +570,37 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             or top_cam.get("rtsp_url")
             or ""
         ).strip(),
-        mqtt_broker=os.getenv("MQTT_BROKER") or (display.get("ip") or "").strip() or "",
+        mqtt_broker=os.getenv("MQTT_BROKER") or "127.0.0.1",
         mqtt_port=_resolve_mqtt_tcp_port(
-            os.getenv("MQTT_PORT")
-            or (
-                display.get("port")
-                if (display.get("ip") or "").strip()
-                else "1883"
-            )
-            or "1883"
+            os.getenv("MQTT_PORT") or display.get("port") or "1883"
         ),
         mqtt_ws_port=_resolve_mqtt_ws_port(os.getenv("MQTT_WS_PORT") or "9001"),
-        mqtt_topic_tx=display.get(
-            "mqtt_topic_tx", "iot_display/application_to_display"
+        mqtt_topic_tx=display.get("mqtt_topic_tx")
+        or (
+            "data_info/b"
+            if str(raw.get("wb_type") or "").strip().lower() == "bidirectional"
+            else "data_info/a"
         ),
-        mqtt_topic_rx=display.get(
-            "mqtt_topic_rx", "iot_display/display_to_application"
-        ),
-        # Empty IP → console (avoids MQTT hang on bogus 127.0.0.1:8000)
+        mqtt_topic_rx=display.get("mqtt_topic_rx") or "display_info",
+        # Empty IP list → console
         display_type=(
             "console"
-            if not (display.get("ip") or "").strip()
+            if not _display_ips_from_config(
+                display,
+                bidirectional=str(raw.get("wb_type") or "").strip().lower()
+                == "bidirectional",
+            )
             else (display.get("type") or "mqtt").lower()
+        ),
+        display_ips=_display_ips_from_config(
+            display,
+            bidirectional=str(raw.get("wb_type") or "").strip().lower()
+            == "bidirectional",
+        ),
+        display_pcb_mode=(
+            "b"
+            if str(raw.get("wb_type") or "").strip().lower() == "bidirectional"
+            else "a"
         ),
         voice_enabled=_env_bool(
             "VOICE_ENABLED",

@@ -1,13 +1,36 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.9**
+**Current version: 1.10**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.9.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.10.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.9 — 2026-09-25 (latest)
+## 1.10 — 2026-09-26 (latest)
+
+MQTT LED display protocol (Display IP identity), transaction message strings with `@` line breaks, and bi-directional dual TX.
+
+### MQTT display protocol (`gmdc_common` + runtimes)
+- Device identity = **Display IP** (not broker host): subscribe `display_info/{ip}`, answer `pcb_id/{ip}` with `a`|`b`
+- Transaction text on `data_info/a` (uni / checkpoint) or **both** `data_info/a` and `data_info/b` (bi-directional WB)
+- Bi PCB letters: Entry A (first IP) → `a`, Entry B (second IP) → `b`
+- Publish **Welcome** once when the display MQTT client first connects
+- Broker remains localhost Mosquitto (`1883`); Display IP fields are separate in IoT config
+
+### checkpoint-config
+- Uni / checkpoint: one **Display IP**; bi WB: **Display IP (Entry A)** + **Display IP (Entry B)**
+- Check & Save handshake waits for `display_info`, replies `pcb_id`, then test-TX on the matching `data_info` topic(s)
+
+### Display message strings
+- LED line break uses `@` (e.g. `RFID VALID@GJ01AB1234`)
+- Checkpoint RFID OK: `RFID VALID@{truck}`
+- WB RFID OK: `{truck}@{weight} Kg` (T → tare / unladen weight; V/G → gross / laden)
+- Dual announce kept: LED MQTT + `wb_frontend/display` for the operator UI
+
+---
+
+## 1.9 — 2026-09-25
 
 Dashboard Flow Details icons aligned with real workflow events; status-check manual-update confirmation for ANPR Update.
 
@@ -241,6 +264,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.10** | MQTT display protocol (Display IP / pcb_id / data_info); bi TX a+b; Welcome on connect; `@` message strings |
 | **1.9** | Flow icons: RFID Read on tag; RFID Validation on OCI; ANPR Update only on statusCode 201 |
 | **1.8** | Digitizer MQTT E2E; hardcoded status topic; no Server wizard step; config reuse on re-run; invalidate-on-edit |
 | **1.7** | Digitizer Decoder; Mosquitto ensure; change-only UI MQTT; digitizer MQTT in config/Mines-WB; idle weight=0 + hang sync |

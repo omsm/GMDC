@@ -1,26 +1,42 @@
 {
   "schema_version": 1,
   "checkpoint_type": "tare_wb",
-  "wb_type": "unidirectional",
+  "wb_type": "bidirectional",
   "device_ip": "",
   "server": {
     "ip": "",
     "port": "",
     "validated": false
   },
-  "rfid": {
-    "ip": "192.168.31.5",
-    "port": "5555",
-    "mode": "API",
-    "make": "Zebra",
-    "model": "fx900",
-    "username": "admin",
-    "password": "Csmpl@123",
-    "validated": true,
-    "manual_match_start": 0,
-    "manual_match_length": 24,
-    "manual_match_sample": "",
-    "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+  "rfids": {
+    "entry_a": {
+      "ip": "",
+      "port": "443",
+      "mode": "API",
+      "make": "Zebra",
+      "model": "fx900",
+      "username": "admin",
+      "password": "",
+      "validated": false,
+      "manual_match_start": 0,
+      "manual_match_length": 24,
+      "manual_match_sample": "",
+      "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+    },
+    "entry_b": {
+      "ip": "",
+      "port": "443",
+      "mode": "API",
+      "make": "Zebra",
+      "model": "fx900",
+      "username": "admin",
+      "password": "",
+      "validated": false,
+      "manual_match_start": 0,
+      "manual_match_length": 24,
+      "manual_match_sample": "",
+      "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+    }
   },
   "handheld_rfid": {
     "enabled": true,
@@ -49,13 +65,16 @@
   },
   "display": {
     "type": "mqtt",
-    "ip": "127.0.0.1",
+    "ip": "192.168.0.1",
+    "ip_b": "192.168.0.2",
     "port": "1883",
-    "mqtt_topic_tx": "iot_display/application_to_display",
-    "mqtt_topic_rx": "iot_display/display_to_application",
-    "validated": true,
+    "broker": "127.0.0.1",
+    "pcb_mode": "b",
+    "mqtt_topic_tx": "data_info/b",
+    "mqtt_topic_rx": "display_info",
     "make": "okok",
-    "model": "okok"
+    "model": "okok",
+    "validated": true
   },
   "digitizer": {
     "mode": "mqtt",
@@ -80,10 +99,10 @@
   },
   "io_controller": {
     "type": "ethernet",
-    "output_mode": "direct",
+    "output_mode": "relay",
     "connection": {
       "ethernet": {
-        "ip": "192.168.31.89",
+        "ip": "192.168.31.10",
         "port": "502",
         "timeout": "1"
       },
@@ -112,9 +131,9 @@
       "write_multiple_registers": "16"
     },
     "digital_inputs": {
-      "start_address": "0",
+      "start_address": "8",
       "count": "8",
-      "function_code": "2",
+      "function_code": "1",
       "mapping": {
         "sensor_entry": {
           "address": "0",
@@ -166,24 +185,21 @@
       }
     },
     "sensors": {
-      "entry_sensor": {
+      "sensor1": {
         "pin": "0",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       },
-      "wb_sensor": {
+      "sensor2": {
         "pin": "1",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       },
-      "exit_sensor": {
+      "sensor3": {
         "pin": "2",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       }
     },
     "traffic_lights": {
-      "mode": "direct",
+      "mode": "relay",
       "relay_logic": {
         "description": "Relay ON (coil=HIGH) = NO contact = RED, Relay OFF (coil=LOW) = NC contact = GREEN",
         "on_state": "red",
@@ -191,37 +207,35 @@
       },
       "direct": {
         "entry": {
-          "red_pin": "0",
-          "green_pin": "1"
+          "red_pin": "",
+          "green_pin": ""
         },
         "exit": {
-          "red_pin": "2",
-          "green_pin": "3"
+          "red_pin": "",
+          "green_pin": ""
         }
       },
       "relay": {
         "entry": {
-          "pin": "",
-          "description": "Relay 1: NO=Red, NC=Green"
+          "pin": "0",
+          "description": "Relay 1: NO=Green, NC=Red"
         },
         "exit": {
-          "pin": "",
-          "description": "Relay 2: NO=Red, NC=Green"
+          "pin": "1",
+          "description": "Relay 2: NO=Green, NC=Red"
         }
       },
       "entry": {
-        "make": "okok",
-        "model": "okok",
-        "validated": true
+        "make": "",
+        "model": ""
       },
       "exit": {
-        "make": "okok",
-        "model": "okok",
-        "validated": true
+        "make": "",
+        "model": ""
       }
     },
     "boom_barriers": {
-      "mode": "direct",
+      "mode": "relay",
       "relay_logic": {
         "description": "Relay ON (coil=HIGH) = NO contact = OPEN, Relay OFF (coil=LOW) = NC contact = CLOSE",
         "on_state": "open",
@@ -236,37 +250,35 @@
         "exit": {
           "open_pin": "",
           "close_pin": null,
-          "enabled": false
+          "enabled": true
         }
       },
       "relay": {
         "entry": {
-          "pin": "",
+          "pin": "2",
           "enabled": false,
           "description": "Relay 3: NO=Open, NC=Close"
         },
         "exit": {
-          "pin": "",
+          "pin": "3",
           "enabled": false,
           "description": "Relay 4: NO=Open, NC=Close"
         }
       },
       "entry": {
         "make": "",
-        "model": "",
-        "validated": null
+        "model": ""
       },
       "exit": {
         "make": "",
-        "model": "",
-        "validated": null
+        "model": ""
       }
     },
     "validated": true,
-    "make": "ok",
-    "model": "ok"
+    "make": "wittleIB",
+    "model": "8DI-DO"
   },
-  "status": false,
+  "status": true,
   "voice": {
     "enabled": true,
     "directory": "static/voice",
@@ -317,8 +329,8 @@
     "setup_timestamp": "2026-09-11T12:43:16.308Z"
   },
   "ip_range": {
-    "start_ip": "192.168.31.1",
-    "end_ip": "192.168.31.254"
+    "start_ip": "192.168.0.1",
+    "end_ip": "192.168.0.2"
   },
   "_meta": {
     "layout_change_pending": true

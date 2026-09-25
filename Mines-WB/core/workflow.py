@@ -11,13 +11,18 @@ from typing import Any, Dict, List, Optional
 from config.constants import (
     MSG_ANPR_ERR,
     MSG_ANPR_ERR_2,
+    MSG_ANPR_API_ERR,
     MSG_EXIT,
     MSG_FREE_PASS,
+    MSG_IDLE,
     MSG_MOVE_BACKWARD,
     MSG_MOVE_FORWARD,
     MSG_NO_RFID_READ,
     MSG_RFID_ERR,
+    MSG_RFID_OK_FMT,
+    MSG_WEIGHT_DETAILS_FMT,
     MSG_WEIGHING,
+    MSG_WEIGHING_FMT,
     TIMEOUTS,
     Event,
     State,
@@ -168,7 +173,7 @@ class MinesWbWorkflow:
             if self.ctx.exit_boom:
                 self.ctx.exit_boom.close()
         if self.ctx.display:
-            self.ctx.display.clear()
+            self.ctx.display.send(MSG_IDLE)
         fe = self._frontend()
         if fe:
             fe.reset_idle()
@@ -1164,6 +1169,12 @@ class MinesWbWorkflow:
         min_kg = settings.min_weight_kg or TIMEOUTS.MIN_WEIGHT_KG
         if self.ctx.transactions:
             self.ctx.transactions.weight_kg = float(weight)
+        # LED: Checking Weight@{current digitizer weight}
+        try:
+            weight_disp = int(round(float(weight)))
+        except (TypeError, ValueError):
+            weight_disp = weight
+        self._announce(MSG_WEIGHING_FMT.format(weight=weight_disp))
         fe = self._frontend()
         if fe:
             fe.publish_digitizer(weight)
@@ -1312,6 +1323,36 @@ class MinesWbWorkflow:
             "success",
             f"RFID validated: {txn.vehicle_no or txn.rfid}",
         )
+        self._announce(self._rfid_ok_display(parsed, txn))
+
+    def _rfid_ok_display(self, parsed: Dict[str, str], txn) -> str:
+        """
+        WB RFID OK LED text: {truck}@{weight} Kg
+        T (tare) → unladen (rto_tare); V/G (vadhghat/gross) → laden (rto_gross).
+        Falls back to captured digitizer weight when RTO field is missing.
+        """
+        truck = (parsed.get("vehicle_no") or getattr(txn, "vehicle_no", None) or getattr(txn, "rfid", None) or "TRUCK")
+        trip = (parsed.get("trip_type") or "").upper()[:1]
+        if trip == "T":
+            # Unladen
+            raw = parsed.get("rto_tare") or ""
+        else:
+            # Laden (Vadhghat / Gross / unknown)
+            raw = parsed.get("rto_gross") or parsed.get("weight") or ""
+        weight = None
+        try:
+            if str(raw).strip() != "":
+                weight = int(round(float(raw)))
+        except (TypeError, ValueError):
+            weight = None
+        if weight is None and getattr(txn, "weight_kg", None) is not None:
+            try:
+                weight = int(round(float(txn.weight_kg)))
+            except (TypeError, ValueError):
+                weight = None
+        if weight is None:
+            weight = 0
+        return MSG_RFID_OK_FMT.format(truck=truck, weight=weight)
 
     def _enter_rfid_error(
         self,
@@ -1412,7 +1453,7 @@ class MinesWbWorkflow:
             token_no=parsed.get("token_no") or "",
         )
         if is_api_failure(anpr):
-            self._announce(MSG_ANPR_ERR)
+            self._announce(MSG_ANPR_API_ERR)
             self._ui_api_failure(
                 STEP_VALIDATING_ANPR, anpr, fallback="ANPR not reachable"
             )
@@ -1786,6 +1827,14 @@ class MinesWbWorkflow:
         logger.info(
             "OCI weight-details top_image_name=%s (success/failure naming)",
             top_photo_name,
+        )
+        truck_disp = txn.vehicle_no or "TRUCK"
+        try:
+            weight_disp = int(txn.weight_kg or 0)
+        except (TypeError, ValueError):
+            weight_disp = txn.weight_kg
+        self._announce(
+            MSG_WEIGHT_DETAILS_FMT.format(truck=truck_disp, weight=weight_disp)
         )
         details = oci.weight_details(
             current_weight=str(int(txn.weight_kg)),

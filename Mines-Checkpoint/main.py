@@ -203,12 +203,20 @@ def bootstrap() -> AppContext:
 
     ctx.display = create_display_service(
         display_type=settings.display_type,
-        broker=settings.mqtt_broker,
+        broker=settings.mqtt_broker or "127.0.0.1",
         port=settings.mqtt_port,
-        topic_tx=settings.mqtt_topic_tx,
+        topic_tx=settings.mqtt_topic_tx or "data_info/a",
+        display_ips=getattr(settings, "display_ips", None) or [],
+        pcb_mode=getattr(settings, "display_pcb_mode", None) or "a",
+        is_bidirectional=False,
         demo_fallback=True,
+        client_id="mines_checkpoint_display",
     )
-    # create_display_service already connects MQTT when available
+    # MQTT path publishes "Welcome" on first broker connect; console needs explicit send
+    if ctx.display and getattr(ctx.display, "get_status", None):
+        st = ctx.display.get_status() or {}
+        if st.get("type") == "console":
+            ctx.display.send("Welcome")
 
     _build_hardware(ctx)
 
@@ -224,15 +232,16 @@ def bootstrap() -> AppContext:
         )
         fe_port = 1883
     import services.frontend_mqtt as frontend_mqtt_mod
+    from config.constants import MSG_IDLE
 
-    frontend_mqtt_mod.IDLE_DISPLAY = settings.display_name
+    frontend_mqtt_mod.IDLE_DISPLAY = MSG_IDLE
     ctx.frontend = FrontendMqtt(
         broker=fe_broker,
         port=fe_port,
         client_id="mines_checkpoint_frontend",
         ctx=ctx,
     )
-    ctx.frontend.display = settings.display_name
+    ctx.frontend.display = MSG_IDLE
     ctx.frontend.register_reset_handler(
         lambda: ctx.workflow.force_reset() if ctx.workflow else None
     )

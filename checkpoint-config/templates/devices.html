@@ -519,7 +519,7 @@
             <div class="section-header">
                 <div class="section-header-main">
                     <h2><i class="bi bi-display"></i> Display Configuration</h2>
-                    <p class="text-muted">Configure the weighbridge display unit (API or MQTT)</p>
+                    <p class="text-muted">Configure LED display unit(s) — MQTT handshake uses Display IP in topic paths</p>
                 </div>
                 <button class="btn btn-outline btn-sm section-help-btn" onclick="openModuleHelp('display')">
                     <i class="bi bi-question-circle"></i> Help
@@ -548,11 +548,11 @@
                     <label for="displayType">Display Type</label>
                     <select class="form-control" id="displayType" onchange="toggleDisplayFields()">
                         <option value="api">API (HTTP)</option>
-                        <option value="mqtt">MQTT</option>
+                        <option value="mqtt" selected>MQTT</option>
                     </select>
                 </div>
                 <div class="form-group" id="displayIpGroup">
-                    <label for="displayIpSelect">Display IP Address</label>
+                    <label for="displayIpSelect" id="displayIpLabel">Display IP Address</label>
                     <div class="input-with-dropdown">
                         <select class="form-control" id="displayIpSelect" onchange="onDeviceSelect('displayIp', this.value)">
                             <option value="">Select discovered device...</option>
@@ -565,21 +565,39 @@
                         </div>
                         <input type="text" class="form-control manual-input hidden" id="displayIp" placeholder="192.168.1.70">
                     </div>
+                    <small class="text-muted" id="displayIpHint">Checkpoint / unidirectional: one display. Used in topic display_info/{ip}.</small>
+                </div>
+                <div class="form-group" id="displayIpBGroup" style="display: none;">
+                    <label for="displayIpBSelect">Display IP Address (Entry B)</label>
+                    <div class="input-with-dropdown">
+                        <select class="form-control" id="displayIpBSelect" onchange="onDeviceSelect('displayIpB', this.value)">
+                            <option value="">Select discovered device...</option>
+                        </select>
+                        <div class="manual-input-toggle">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="displayIpBManual" onchange="toggleManualInput('displayIpB')">
+                                <span>Enter manually</span>
+                            </label>
+                        </div>
+                        <input type="text" class="form-control manual-input hidden" id="displayIpB" placeholder="192.168.1.71">
+                    </div>
+                    <small class="text-muted">Bi-directional WB only — second display for Entry B side.</small>
                 </div>
                 <div class="form-group" id="displayPortGroup">
-                    <label for="displayPort">Display Port</label>
-                    <input type="text" class="form-control" id="displayPort" value="8000" placeholder="8000">
+                    <label for="displayPort">Display Port (API) / Broker Port (MQTT)</label>
+                    <input type="text" class="form-control" id="displayPort" value="1883" placeholder="1883">
                 </div>
                 
                 <div class="mqtt-info" id="mqttInfo" style="display: none;">
                     <div class="info-box">
                         <i class="bi bi-info-circle"></i>
                         <div>
-                            <strong>MQTT Configuration</strong>
-                            <p>Broker TCP: localhost:1883 (backend / display)</p>
-                            <p>WebSocket: ws://localhost:9001 (dashboard)</p>
-                            <p>Publish: iot_display/application_to_display</p>
-                            <p>Subscribe: iot_display/display_to_application</p>
+                            <strong>MQTT Display Protocol</strong>
+                            <p>Broker TCP: localhost:1883 (Mosquitto on this PC)</p>
+                            <p>Display publishes: <code>display_info/{DisplayIP}</code></p>
+                            <p>App answers: <code>pcb_id/{DisplayIP}</code> → <code>a</code> (checkpoint/uni) or <code>b</code> (bi-directional)</p>
+                            <p>Transactions: <code>data_info/a</code> or <code>data_info/b</code></p>
+                            <p id="displayModeHint">This site mode: <strong>a</strong></p>
                         </div>
                     </div>
                 </div>

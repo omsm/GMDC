@@ -96,10 +96,12 @@ def apply_timeouts_from_env() -> None:
             logger.warning("Ignoring invalid %s=%r", attr, raw)
 
 
-# Display messages (PDF)
-MSG_RFID_ERR = "RFID ERR 1"
-MSG_ANPR_ERR = "ANPR ERR 1"
-MSG_ANPR_ERR_2 = "ANPR Err-2"
-MSG_ANPR_API_ERR = "ANPR API ERR"
-MSG_ENTRY_GRANTED_FMT = "{truck} Entry Granted"
+# Display messages (`@` = LED line break)
+MSG_IDLE = "Scan@RFID Card"
+MSG_RFID_ERR = "RFID ERR@ASK OPERATOR"
+MSG_RFID_OK_FMT = "RFID VALID@{truck}"
+MSG_ANPR_ERR = "ANPR ERROR@ERR-0"
+MSG_ANPR_ERR_2 = "ANPR ERROR@ERR-2"
+MSG_ANPR_API_ERR = "ANPR ERROR@ASK OPERATOR"
+MSG_ENTRY_GRANTED_FMT = "Granted {truck}@Thank You"
 MSG_FREE_PASS = "FREE PASS"

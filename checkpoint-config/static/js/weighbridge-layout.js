@@ -119,6 +119,12 @@ async function confirmWeighbridgeLayoutChoice() {
                 resetLayoutDependentTestState();
             }
         }
+        if (typeof syncDisplayIpFieldsVisibility === 'function') {
+            syncDisplayIpFieldsVisibility();
+        }
+        if (typeof toggleDisplayFields === 'function') {
+            toggleDisplayFields();
+        }
     } catch (e) {
         console.warn('[Layout] Failed to persist checkpoint type:', e);
     }

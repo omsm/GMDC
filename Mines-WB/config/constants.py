@@ -119,12 +119,18 @@ def apply_timeouts_from_env() -> None:
             logger.warning("Ignoring invalid %s=%r", attr, raw)
     MOVE_FORWARD_INTERVAL_SEC = TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC
 
+MSG_IDLE = "Enter The@Vehicle"
 MSG_MOVE_FORWARD = "MOVE FORWARD"
 MSG_MOVE_BACKWARD = "MOVE BACKWARD"
-MSG_WEIGHING = "WEIGHING"
-MSG_RFID_ERR = "RFID ERR"
-MSG_ANPR_ERR = "ANPR ERR 1"
-MSG_ANPR_ERR_2 = "ANPR Err-2"
+MSG_WEIGHING_FMT = "Checking Weight@{weight}"
+MSG_WEIGHING = "Checking Weight@"
+MSG_RFID_ERR = "RFID ERR@ASK OPERATOR"
+# Tare (T): unladen; Vadaghat/Gross (V/G): laden — see Workflow._rfid_ok_display
+MSG_RFID_OK_FMT = "{truck}@{weight} Kg"
+MSG_ANPR_ERR = "ANPR ERROR@ERR-0"
+MSG_ANPR_ERR_2 = "ANPR ERROR@ERR-2"
+MSG_ANPR_API_ERR = "ANPR ERROR@ASK OPERATOR"
+MSG_WEIGHT_DETAILS_FMT = "{truck} Weight@{weight} Kg"
 MSG_EXIT = "EXIT GRANTED"
 MSG_FREE_PASS = "FREE PASS"
 MSG_TARE_WT_ERR = "TARE WT ERR"

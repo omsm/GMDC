@@ -1255,12 +1255,49 @@ def stop_camera(camera_id):
 
 @app.route('/api/display/check', methods=['POST'])
 def check_display():
-    """Check display connectivity"""
-    data = request.json
+    """Check display connectivity (API or MQTT handshake for 1–2 Display IPs)."""
+    data = request.json or {}
     display_type = data.get('type', 'api')
     display_ip = data.get('ip', '')
     display_port = data.get('port', '80')
-    result = display_service.check_connection(display_type, display_ip, display_port)
+    display_ips = data.get('display_ips') or data.get('ips') or []
+    if isinstance(display_ips, str):
+        display_ips = [display_ips]
+    if not display_ips and display_ip:
+        display_ips = [display_ip]
+    ip_b = str(data.get('ip_b') or '').strip()
+    if ip_b and ip_b not in display_ips:
+        display_ips = list(display_ips) + [ip_b]
+
+    pcb_mode = str(data.get('pcb_mode') or data.get('mode') or '').strip().lower()[:1]
+    if pcb_mode not in ('a', 'b'):
+        # Derive from wb_type when not provided
+        try:
+            wb_type = config_manager.get_wb_type()
+        except Exception:
+            wb_type = 'unidirectional'
+        pcb_mode = 'b' if wb_type == 'bidirectional' else 'a'
+
+    broker = str(data.get('broker') or 'localhost').strip() or 'localhost'
+    try:
+        broker_port = int(data.get('broker_port') or 1883)
+    except (TypeError, ValueError):
+        broker_port = 1883
+    try:
+        wait_sec = float(data.get('wait_sec') or 8)
+    except (TypeError, ValueError):
+        wait_sec = 8.0
+
+    result = display_service.check_connection(
+        display_type,
+        display_ip,
+        display_port,
+        display_ips=display_ips,
+        pcb_mode=pcb_mode,
+        broker=broker,
+        broker_port=broker_port,
+        wait_sec=wait_sec,
+    )
     return jsonify(result)
 
 # ============== Digitizer Configuration Routes ==============

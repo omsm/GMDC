@@ -1,42 +1,58 @@
 {
   "schema_version": 1,
-  "device_ip": "10.10.180.11",
-  "checkpoint_type": "gross_wb",
-  "wb_type": "unidirectional",
+  "checkpoint_type": "tare_wb",
+  "wb_type": "bidirectional",
+  "device_ip": "",
   "server": {
-    "ip": "localhost",
-    "port": "8080",
-    "validated": true
+    "ip": "",
+    "port": "",
+    "validated": false
   },
-  "rfid": {
-    "ip": "192.168.31.5",
-    "port": "5555",
-    "mode": "API",
-    "make": "Zebra",
-    "model": "fx900",
-    "username": "admin",
-    "password": "Csmpl@123",
-    "validated": true,
-    "manual_match_start": 0,
-    "manual_match_length": 24,
-    "manual_match_sample": "",
-    "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+  "rfids": {
+    "entry_a": {
+      "ip": "",
+      "port": "443",
+      "mode": "API",
+      "make": "Zebra",
+      "model": "fx900",
+      "username": "admin",
+      "password": "",
+      "validated": false,
+      "manual_match_start": 0,
+      "manual_match_length": 24,
+      "manual_match_sample": "",
+      "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+    },
+    "entry_b": {
+      "ip": "",
+      "port": "443",
+      "mode": "API",
+      "make": "Zebra",
+      "model": "fx900",
+      "username": "admin",
+      "password": "",
+      "validated": false,
+      "manual_match_start": 0,
+      "manual_match_length": 24,
+      "manual_match_sample": "",
+      "note": "API mode: tags via POST /rfid_data; cloud login/mode/start/stop via HTTPS"
+    }
   },
   "handheld_rfid": {
     "enabled": true,
-    "ip": "10.30.1.102",
-    "port": "8800",
-    "make": "zebra",
-    "model": "fgejk",
-    "device_id": "hejekl",
+    "ip": "",
+    "port": "",
+    "make": "demo",
+    "model": "demo",
+    "device_id": "okok",
     "validated": true,
-    "last_rfid_data": "e200001d7507013115006bb9"
+    "last_rfid_data": "Hello WOrld"
   },
   "camera": {
     "top": {
       "rtsp_url": "rtsp://zafir:Csm_12345@192.168.40.69:554/Streaming/Channels/103",
-      "make": "",
-      "model": "",
+      "make": "ok",
+      "model": "ok",
       "validated": true
     },
     "front": {
@@ -44,38 +60,49 @@
       "make": "ok",
       "model": "ok",
       "validated": true
-    }
+    },
+    "validated": true
   },
   "display": {
     "type": "mqtt",
-    "ip": "",
-    "port": "8000",
-    "mqtt_topic_tx": "iot_display/application_to_display",
-    "mqtt_topic_rx": "iot_display/display_to_application",
-    "validated": true,
-    "make": "hgdfkklfl",
-    "model": "jmskleld"
+    "ip": "192.168.0.1",
+    "ip_b": "192.168.0.2",
+    "port": "1883",
+    "broker": "127.0.0.1",
+    "pcb_mode": "b",
+    "mqtt_topic_tx": "data_info/b",
+    "mqtt_topic_rx": "display_info",
+    "make": "okok",
+    "model": "okok",
+    "validated": true
   },
   "digitizer": {
-    "mode": "api",
-    "host": "localhost",
-    "port": "8001",
+    "mode": "mqtt",
+    "host": "",
+    "port": "8100",
     "path": "/read_stable_weight",
-    "timeout": "10",
-    "stable_count": "5",
+    "broker_host": "127.0.0.1",
+    "broker_port": "1883",
+    "username": "",
+    "password": "",
+    "topic_weight": "gmdc/digitizer/weight",
+    "topic_request": "gmdc/digitizer/request",
+    "timeout": "30",
+    "stable_count": "10",
     "validated": true,
-    "make": "ef4",
-    "model": "gg",
+    "make": "ok",
+    "model": "ok",
     "baud_rate": "9600",
     "bytesize": "8",
-    "stopbits": "1"
+    "stopbits": "1",
+    "client_id": ""
   },
   "io_controller": {
     "type": "ethernet",
     "output_mode": "relay",
     "connection": {
       "ethernet": {
-        "ip": "192.168.31.89",
+        "ip": "192.168.31.10",
         "port": "502",
         "timeout": "1"
       },
@@ -104,9 +131,9 @@
       "write_multiple_registers": "16"
     },
     "digital_inputs": {
-      "start_address": "0",
+      "start_address": "8",
       "count": "8",
-      "function_code": "2",
+      "function_code": "1",
       "mapping": {
         "sensor_entry": {
           "address": "0",
@@ -158,20 +185,17 @@
       }
     },
     "sensors": {
-      "entry_sensor": {
+      "sensor1": {
         "pin": "0",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       },
-      "wb_sensor": {
+      "sensor2": {
         "pin": "1",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       },
-      "exit_sensor": {
+      "sensor3": {
         "pin": "2",
-        "default_signal": "low",
-        "validated": true
+        "default_signal": "low"
       }
     },
     "traffic_lights": {
@@ -203,13 +227,11 @@
       },
       "entry": {
         "make": "",
-        "model": "",
-        "validated": true
+        "model": ""
       },
       "exit": {
         "make": "",
-        "model": "",
-        "validated": true
+        "model": ""
       }
     },
     "boom_barriers": {
@@ -228,34 +250,32 @@
         "exit": {
           "open_pin": "",
           "close_pin": null,
-          "enabled": false
+          "enabled": true
         }
       },
       "relay": {
         "entry": {
           "pin": "2",
-          "enabled": true,
+          "enabled": false,
           "description": "Relay 3: NO=Open, NC=Close"
         },
         "exit": {
           "pin": "3",
-          "enabled": true,
+          "enabled": false,
           "description": "Relay 4: NO=Open, NC=Close"
         }
       },
       "entry": {
         "make": "",
-        "model": "",
-        "validated": true
+        "model": ""
       },
       "exit": {
         "make": "",
-        "model": "",
-        "validated": true
+        "model": ""
       }
     },
     "validated": true,
-    "make": "Wavehare",
+    "make": "wittleIB",
     "model": "8DI-DO"
   },
   "status": true,
@@ -264,46 +284,55 @@
     "directory": "static/voice",
     "error_prefix": true,
     "validated": true,
-    "make": "ok",
-    "model": "ok"
+    "make": "",
+    "model": ""
   },
   "api_endpoints": {
     "oci_base_url": "https://gmuatociexp.gmdcltd.co.in",
-    "rfid_validate_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross_rfid_tag",
-    "anpr_base_url": "http://localhost:5001",
+    "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/rfid-tag",
+    "anpr_base_url": "http://192.168.25.79:5001",
     "anpr_detect_url": "/api/detect",
     "invalid_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number",
     "update_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/status_check",
-    "boom_close_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross_boom_close",
+    "boom_close_url": "/ords/gmdc_dicsm/dlms_checkpoint/boom-close",
     "reset_checkpoint_url": "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint",
-    "weight_details_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross-weight-details",
-    "gross_tolerance_confirm_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/gross-tolerance-confirm",
-    "rfid_validate_username": "GMDC_API_USERS",
-    "rfid_validate_password": "GMDC@123",
-    "anpr_detect_username": "superadmin",
-    "anpr_detect_password": "csmpl@2026",
-    "invalid_truck_username": "GMDC_API_USERS",
-    "invalid_truck_password": "GMDC@123",
-    "update_truck_username": "GMDC_API_USERS",
-    "update_truck_password": "GMDC@123",
-    "boom_close_username": "GMDC_API_USERS",
-    "boom_close_password": "GMDC@123",
-    "weight_details_username": "GMDC_API_USERS",
-    "weight_details_password": "GMDC@123",
-    "gross_tolerance_confirm_username": "GMDC_API_USERS",
-    "gross_tolerance_confirm_password": "GMDC@123",
-    "oci_username": "GMDC_API_USERS",
-    "oci_password": "GMDC@123",
-    "anpr_username": "superadmin",
-    "anpr_password": "csmpl@2026"
+    "weight_details_url": "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-details",
+    "vadhghat_weight_adjustment_url": "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment",
+    "rfid_validate_username": "GMDC_API_USER",
+    "rfid_validate_password": "GMDC@1234",
+    "anpr_detect_username": "GMDC_API_USER",
+    "anpr_detect_password": "GMDC@1234",
+    "invalid_truck_username": "GMDC_API_USER",
+    "invalid_truck_password": "GMDC@1234",
+    "update_truck_username": "GMDC_API_USER",
+    "update_truck_password": "GMDC@1234",
+    "boom_close_username": "GMDC_API_USER",
+    "boom_close_password": "GMDC@1234",
+    "reset_checkpoint_username": "GMDC_API_USER",
+    "reset_checkpoint_password": "GMDC@1234",
+    "weight_details_username": "GMDC_API_USER",
+    "weight_details_password": "GMDC@1234",
+    "vadhghat_weight_adjustment_username": "GMDC_API_USER",
+    "vadhghat_weight_adjustment_password": "GMDC@1234",
+    "oci_username": "GMDC_API_USER",
+    "oci_password": "GMDC@1234",
+    "anpr_username": "GMDC_API_USER",
+    "anpr_password": "GMDC@1234"
   },
   "setup_info": {
     "weighbridge_details": "00844",
     "weighbridge_location": "THE GREAT INDIAN WEIGHBRIDGE",
-    "vendor_company": "okkok",
-    "verified_by": "okkojok",
-    "verification_date": "2026-08-06",
+    "vendor_company": "OSM",
+    "verified_by": "OSM",
+    "verification_date": "2026-09-11",
     "remarks": "",
-    "setup_timestamp": "2026-08-06T14:46:13.595Z"
+    "setup_timestamp": "2026-09-11T12:43:16.308Z"
+  },
+  "ip_range": {
+    "start_ip": "192.168.0.1",
+    "end_ip": "192.168.0.2"
+  },
+  "_meta": {
+    "layout_change_pending": true
   }
 }

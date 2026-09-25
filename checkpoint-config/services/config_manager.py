@@ -853,6 +853,18 @@ def _invalidate_layout_dependent_sections(config: dict) -> None:
             if isinstance(reader, dict):
                 reader["validated"] = False
 
+    # Display count / pcb_mode depends on uni vs bi
+    display = config.get("display")
+    if isinstance(display, dict):
+        display["validated"] = False
+        wb = str(
+            config.get("wb_type") or config.get("weighbridge_layout") or ""
+        ).strip().lower()
+        display["pcb_mode"] = "b" if wb == "bidirectional" else "a"
+        display["mqtt_topic_tx"] = f"data_info/{display['pcb_mode']}"
+        if wb != "bidirectional":
+            display["ip_b"] = ""
+
     io = config.get("io_controller")
     if isinstance(io, dict):
         io["validated"] = False
@@ -958,10 +970,15 @@ DEFAULT_CONFIG = {
     },
     "display": {
         "type": "mqtt",
-        "ip": "127.0.0.1",
+        "ip": "",
+        "ip_b": "",
         "port": "1883",
-        "mqtt_topic_tx": "iot_display/application_to_display",
-        "mqtt_topic_rx": "iot_display/display_to_application",
+        "broker": "127.0.0.1",
+        "pcb_mode": "a",
+        "mqtt_topic_tx": "data_info/a",
+        "mqtt_topic_rx": "display_info",
+        "make": "",
+        "model": "",
         "validated": False
     },
     # Digitizer: API (HTTP) or MQTT (decoder on another PC; broker on Mines-WB Mac)
@@ -1372,6 +1389,28 @@ class ConfigManager:
             self.config[section] = data
         if section == "digitizer" and isinstance(self.config.get("digitizer"), dict):
             self.config["digitizer"] = _sanitize_digitizer_section(self.config["digitizer"])
+        if section == "display" and isinstance(self.config.get("display"), dict):
+            disp = self.config["display"]
+            wb = self.get_wb_type()
+            mode = "b" if wb == "bidirectional" else "a"
+            disp["pcb_mode"] = mode
+            disp["mqtt_topic_tx"] = f"data_info/{mode}"
+            disp["mqtt_topic_rx"] = "display_info"
+            ip = str(disp.get("ip") or "").strip()
+            ip_b = str(disp.get("ip_b") or "").strip()
+            if disp.get("validated"):
+                if not ip:
+                    logger.warning("display validated but ip missing")
+                    return False
+                if wb == "bidirectional":
+                    if not ip_b:
+                        logger.warning("bi-directional display requires ip_b")
+                        return False
+                    if ip_b == ip:
+                        logger.warning("display ip and ip_b must differ")
+                        return False
+                else:
+                    disp["ip_b"] = ""
         if section == "rfids" and self.get_wb_type() == "bidirectional":
             err = self.validate_bidirectional_rfids(self.config.get("rfids") or {})
             if err:

@@ -814,6 +814,8 @@ function populateDeviceDropdowns() {
     // Display dropdown - show all IPs (filtered)
     const availableDisplayDevices = filterAssignedDevices(discoveredDevices.network || [], displayAssignedIps);
     populateDropdown('displayIpSelect', availableDisplayDevices, 'Select discovered device...', 'display');
+    populateDropdown('displayIpBSelect', availableDisplayDevices, 'Select discovered device...', 'display_b');
+    syncDisplayIpFieldsVisibility();
     
     // I/O Controller dropdown - prioritize Modbus devices (filtered)
     const modbusDevices = filterAssignedDevices(candidates.modbus, ioAssignedIps);
@@ -1249,14 +1251,16 @@ function populateFormFields() {
     if (config.display) {
         const displayTypeEl = document.getElementById('displayType');
         const displayIpEl = document.getElementById('displayIp');
+        const displayIpBEl = document.getElementById('displayIpB');
         const displayPortEl = document.getElementById('displayPort');
         const displayMakeEl = document.getElementById('displayMake');
         const displayModelEl = document.getElementById('displayModel');
         
-        if (displayTypeEl) displayTypeEl.value = config.display.type || 'api';
+        if (displayTypeEl) displayTypeEl.value = config.display.type || 'mqtt';
         if (displayIpEl) displayIpEl.value = config.display.ip || '';
+        if (displayIpBEl) displayIpBEl.value = config.display.ip_b || '';
         if (displayPortEl) {
-            const dtype = (config.display.type || 'api').toLowerCase();
+            const dtype = (config.display.type || 'mqtt').toLowerCase();
             displayPortEl.value = dtype === 'mqtt'
                 ? (config.display.port || '1883')
                 : (config.display.port || '8000');
@@ -1264,6 +1268,7 @@ function populateFormFields() {
         if (displayMakeEl) displayMakeEl.value = config.display.make || '';
         if (displayModelEl) displayModelEl.value = config.display.model || '';
         toggleDisplayFields();
+        syncDisplayIpFieldsVisibility();
     }
     
     // Digitizer (API or MQTT - digitizer-decoder on another PC)
@@ -2523,6 +2528,48 @@ async function stopCamera(cameraId) {
 }
 
 // ============== Display Configuration ==============
+function isDisplayBidirectionalSite() {
+    try {
+        if (typeof isBidirectionalLayout === 'function' && isBidirectionalLayout()) {
+            return true;
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        if (typeof getWeighbridgeLayout === 'function' && getWeighbridgeLayout() === 'bidirectional') {
+            return true;
+        }
+    } catch (e) { /* ignore */ }
+    const wb = (typeof config !== 'undefined' && config && config.wb_type) || '';
+    return String(wb).toLowerCase() === 'bidirectional';
+}
+
+function getDisplayPcbMode() {
+    return isDisplayBidirectionalSite() ? 'b' : 'a';
+}
+
+function syncDisplayIpFieldsVisibility() {
+    const bi = isDisplayBidirectionalSite();
+    const ipBGroup = document.getElementById('displayIpBGroup');
+    const ipLabel = document.getElementById('displayIpLabel');
+    const ipHint = document.getElementById('displayIpHint');
+    const modeHint = document.getElementById('displayModeHint');
+    if (ipBGroup) {
+        ipBGroup.style.display = bi ? 'block' : 'none';
+    }
+    if (ipLabel) {
+        ipLabel.textContent = bi ? 'Display IP Address (Entry A)' : 'Display IP Address';
+    }
+    if (ipHint) {
+        ipHint.textContent = bi
+            ? 'Bi-directional WB: Entry A display. Topics use display_info/{ip}.'
+            : 'Checkpoint / unidirectional: one display. Topics use display_info/{ip}.';
+    }
+    if (modeHint) {
+        const mode = getDisplayPcbMode();
+        modeHint.innerHTML = `This site mode: <strong>${mode}</strong> → data_info/${mode}`;
+    }
+}
+
 function toggleDisplayFields() {
     const displayType = document.getElementById('displayType').value;
     const ipGroup = document.getElementById('displayIpGroup');
@@ -2530,34 +2577,58 @@ function toggleDisplayFields() {
     const mqttInfo = document.getElementById('mqttInfo');
     
     if (displayType === 'mqtt') {
-        ipGroup.style.display = 'none';
-        if (portGroup) portGroup.style.display = 'none';
-        mqttInfo.style.display = 'block';
+        // MQTT still needs Display IP(s) — device identity in topic paths
+        if (ipGroup) ipGroup.style.display = 'block';
+        if (portGroup) portGroup.style.display = 'block';
+        if (mqttInfo) mqttInfo.style.display = 'block';
         const portEl = document.getElementById('displayPort');
         if (portEl && (!portEl.value || ['8000', '80', '81', '8080'].includes(portEl.value))) {
             portEl.value = '1883';
         }
+        syncDisplayIpFieldsVisibility();
     } else {
-        ipGroup.style.display = 'block';
+        if (ipGroup) ipGroup.style.display = 'block';
         if (portGroup) portGroup.style.display = 'block';
-        mqttInfo.style.display = 'none';
+        if (mqttInfo) mqttInfo.style.display = 'none';
+        const ipBGroup = document.getElementById('displayIpBGroup');
+        if (ipBGroup) ipBGroup.style.display = 'none';
     }
+}
+
+function readDisplayIpField(baseId) {
+    const manual = document.getElementById(baseId + 'Manual')?.checked;
+    if (manual) {
+        return (document.getElementById(baseId)?.value || '').trim();
+    }
+    return (
+        document.getElementById(baseId + 'Select')?.value
+        || document.getElementById(baseId)?.value
+        || ''
+    ).trim();
 }
 
 async function checkAndSaveDisplay() {
     const displayType = document.getElementById('displayType').value;
-    const isManual = document.getElementById('displayIpManual')?.checked;
-    const displayIp = isManual 
-        ? document.getElementById('displayIp').value.trim()
-        : (document.getElementById('displayIpSelect')?.value || document.getElementById('displayIp').value.trim());
+    const displayIp = readDisplayIpField('displayIp');
+    const displayIpB = readDisplayIpField('displayIpB');
+    const bi = isDisplayBidirectionalSite();
+    const pcbMode = getDisplayPcbMode();
     const displayPort = displayType === 'mqtt'
-        ? '1883'
+        ? (document.getElementById('displayPort')?.value.trim() || '1883')
         : (document.getElementById('displayPort')?.value.trim() || '8000');
     const displayMake = document.getElementById('displayMake')?.value.trim() || '';
     const displayModel = document.getElementById('displayModel')?.value.trim() || '';
     
-    if (displayType === 'api' && !displayIp) {
+    if (!displayIp) {
         showToast('error', 'Validation Error', 'Please enter Display IP');
+        return;
+    }
+    if (bi && displayType === 'mqtt' && !displayIpB) {
+        showToast('error', 'Validation Error', 'Bi-directional WB requires Display IP for Entry B');
+        return;
+    }
+    if (bi && displayIpB && displayIpB === displayIp) {
+        showToast('error', 'Validation Error', 'Entry A and Entry B Display IPs must be different');
         return;
     }
     if (displayType === 'api' && !displayPort) {
@@ -2565,34 +2636,47 @@ async function checkAndSaveDisplay() {
         return;
     }
     
-    // Validate device info in production mode
     if (!validateDeviceInfo(displayMake, displayModel, 'Display')) {
         return;
     }
     
+    const displayIps = [displayIp];
+    if (bi && displayIpB) displayIps.push(displayIpB);
+
     showLoading(true);
     
     try {
         const response = await fetch('/api/display/check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: displayType, ip: displayIp, port: displayPort })
+            body: JSON.stringify({
+                type: displayType,
+                ip: displayIp,
+                ip_b: bi ? displayIpB : '',
+                display_ips: displayIps,
+                port: displayPort,
+                pcb_mode: pcbMode,
+                broker: 'localhost',
+                broker_port: displayType === 'mqtt' ? parseInt(displayPort, 10) || 1883 : 1883,
+                wait_sec: 8
+            })
         });
         
         const result = await response.json();
         
         if (result.status === 200) {
-            // Save configuration
-            const displayMake = document.getElementById('displayMake')?.value || '';
-            const displayModel = document.getElementById('displayModel')?.value || '';
-            
             await fetch('/api/config/display', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     type: displayType, 
-                    ip: displayIp, 
+                    ip: displayIp,
+                    ip_b: bi ? displayIpB : '',
                     port: displayPort,
+                    broker: '127.0.0.1',
+                    pcb_mode: pcbMode,
+                    mqtt_topic_tx: `data_info/${pcbMode}`,
+                    mqtt_topic_rx: 'display_info',
                     make: displayMake,
                     model: displayModel,
                     validated: true 
@@ -2602,6 +2686,9 @@ async function checkAndSaveDisplay() {
             showToast('success', 'Success', result.message);
             markSectionValidated('display');
             updateAssignedDevice('display', displayIp, true);
+            if (bi && displayIpB) {
+                updateAssignedDevice('display_b', displayIpB, true);
+            }
             navigateToNext('display');
         } else {
             showToast('error', 'Connection Failed', result.message);

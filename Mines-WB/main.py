@@ -294,21 +294,37 @@ def bootstrap() -> AppContext:
             settings.api_wait_after_response,
         )
 
-    # Empty display IP → console only. Avoid MQTT TCP hang on 127.0.0.1:8000.
-    display_ip = str(
-        (settings.raw_config.get("display") or {}).get("ip") or ""
-    ).strip()
-    if not display_ip or settings.display_type == "console":
-        ctx.display = ConsoleDisplayService()
-        logger.info("Display IP empty - using console display")
+    # Empty Display IP(s) → console only.
+    display_ips = list(getattr(settings, "display_ips", None) or [])
+    pcb_mode = getattr(settings, "display_pcb_mode", None) or (
+        "b" if settings.is_bidirectional() else "a"
+    )
+    if not display_ips or settings.display_type == "console":
+        from services.display_service import ConsoleDisplayService
+
+        ctx.display = ConsoleDisplayService(
+            pcb_mode=pcb_mode, display_ips=display_ips
+        )
+        logger.info(
+            "Display IP empty - using console display mode=%s", pcb_mode
+        )
+        ctx.display.send("Welcome")
     else:
         ctx.display = create_display_service(
             display_type=settings.display_type,
-            broker=settings.mqtt_broker,
+            broker=settings.mqtt_broker or "127.0.0.1",
             port=settings.mqtt_port,
-            topic_tx=settings.mqtt_topic_tx,
+            topic_tx=settings.mqtt_topic_tx or f"data_info/{pcb_mode}",
+            display_ips=display_ips,
+            pcb_mode=pcb_mode,
+            is_bidirectional=settings.is_bidirectional(),
             demo_fallback=True,
+            client_id="mines_wb_display",
         )
+        # MQTT publishes Welcome on first connect; console fallback needs it here
+        st = ctx.display.get_status() if hasattr(ctx.display, "get_status") else {}
+        if (st or {}).get("type") == "console":
+            ctx.display.send("Welcome")
 
     ctx.digitizer = create_digitizer_client(settings)
     if hasattr(ctx.digitizer, "start"):
@@ -346,15 +362,16 @@ def bootstrap() -> AppContext:
         )
         fe_port = 1883
     import services.frontend_mqtt as frontend_mqtt_mod
+    from config.constants import MSG_IDLE
 
-    frontend_mqtt_mod.IDLE_DISPLAY = settings.display_name
+    frontend_mqtt_mod.IDLE_DISPLAY = MSG_IDLE
     ctx.frontend = FrontendMqtt(
         broker=fe_broker,
         port=fe_port,
         client_id="mines_wb_frontend",
         ctx=ctx,
     )
-    ctx.frontend.display = settings.display_name
+    ctx.frontend.display = MSG_IDLE
     ctx.frontend.register_reset_handler(
         lambda: ctx.workflow.force_reset(announce_reset=True)
         if ctx.workflow
@@ -377,8 +394,7 @@ def bootstrap() -> AppContext:
         ctx.entry_boom.open()
     if ctx.exit_boom:
         ctx.exit_boom.close()
-    if ctx.display:
-        ctx.display.clear()
+    # Do not clear display at boot — MQTT Welcome stays until first transaction message
 
     # Start sensors after workflow + MQTT exist so an already-cut S1 is
     # published to the dashboard and can start positioning.

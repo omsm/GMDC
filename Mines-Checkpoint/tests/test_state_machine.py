@@ -149,12 +149,12 @@ class TestWorkflowWithMocks(unittest.TestCase):
         saw_err = False
         while time.time() < deadline:
             try:
-                self.display.send.assert_any_call("RFID ERR 1")
+                self.display.send.assert_any_call("RFID ERR@ASK OPERATOR")
                 saw_err = True
                 break
             except AssertionError:
                 time.sleep(0.05)
-        self.assertTrue(saw_err, "Expected display.send('RFID ERR 1') from RFID fail path")
+        self.assertTrue(saw_err, "Expected display.send('RFID ERR@ASK OPERATOR') from RFID fail path")
         while time.time() < deadline:
             if self.ctx.state_machine.current_state == State.IDLE:
                 break
@@ -218,7 +218,7 @@ class TestWorkflowWithMocks(unittest.TestCase):
             if self.ctx.state_machine.current_state == State.WAIT_CROSSING:
                 break
             time.sleep(0.05)
-        self.display.send.assert_any_call("ANPR ERR 1")
+        self.display.send.assert_any_call("ANPR ERROR@ERR-0")
         self.assertEqual(
             self.ctx.state_machine.current_state, State.WAIT_CROSSING
         )

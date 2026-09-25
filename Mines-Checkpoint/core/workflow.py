@@ -13,7 +13,9 @@ from config.constants import (
     MSG_ANPR_ERR_2,
     MSG_ENTRY_GRANTED_FMT,
     MSG_FREE_PASS,
+    MSG_IDLE,
     MSG_RFID_ERR,
+    MSG_RFID_OK_FMT,
     TIMEOUTS,
     Event,
     State,
@@ -154,7 +156,7 @@ class CheckpointWorkflow:
             if boom:
                 boom.close()
         if display:
-            display.clear()
+            display.send(MSG_IDLE)
         logger.info(
             "Hardware reset to IDLE (TL red, boom %s)",
             (
@@ -675,7 +677,7 @@ class CheckpointWorkflow:
             f"Truck No: {txn.vehicle_no or txn.validated_rfid}",
         )
         self._ui_rfid(txn.validated_rfid, txn.vehicle_no or None)
-        self._announce(txn.vehicle_no or txn.validated_rfid)
+        self._announce(MSG_RFID_OK_FMT.format(truck=txn.vehicle_no or txn.validated_rfid))
 
         # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2.
         # After invalid-truck, anpr_status 0/2 always requires status_check (same as

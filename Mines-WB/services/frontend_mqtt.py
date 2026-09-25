@@ -39,7 +39,8 @@ except ImportError:
 
 APP_VERSION_DEFAULT = "0.1.0"
 
-IDLE_DISPLAY = "Mines Weighbridge"
+# Default idle display; bootstrap overrides from MSG_IDLE
+IDLE_DISPLAY = "Enter The@Vehicle"
 
 # Dashboard step ids must match static/web/index.html data-step values.
 STEP_RFID_READ = "rfid_read"
@@ -457,7 +458,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "step": STEP_READING_WEIGHT,
         "status": "info",
         "message": "Vehicle on platform - capturing weight.",
-        "display": "WEIGHING",
+        "display": "Checking Weight@",
     },
     "RFID_READ": {
         "position": 0,
@@ -478,7 +479,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "step": STEP_VALIDATING_RFID,
         "status": "error",
         "message": "RFID validation failed.",
-        "display": "RFID ERR",
+        "display": "RFID ERR@ASK OPERATOR",
     },
     "ANPR_VALIDATE": {
         "position": 0,
@@ -492,21 +493,21 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "step": STEP_VALIDATING_ANPR,
         "status": "warning",
         "message": "ANPR Err-0, Number plate mismatch",
-        "display": "ANPR ERR 1",
+        "display": "ANPR ERROR@ERR-0",
     },
     "FINAL_WEIGHT": {
         "position": 3,
         "step": STEP_READING_WEIGHT,
         "status": "info",
         "message": "Capturing final weight.",
-        "display": "WEIGHING",
+        "display": "Checking Weight@",
     },
     "IMAGE_CAPTURE": {
         "position": 3,
         "step": STEP_VALIDATING_WEIGHT,
         "status": "info",
         "message": "Capturing images.",
-        "display": "WEIGHING",
+        "display": "Checking Weight@",
     },
     "WEIGHT_DETAILS": {
         "position": 3,

@@ -555,7 +555,7 @@ class TestWorkflow(unittest.TestCase):
         )
         self.workflow.on_rfid_tags(["badtag"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.IDLE))
-        self.display.send.assert_any_call("RFID ERR 1")
+        self.display.send.assert_any_call("RFID ERR@ASK OPERATOR")
         self.ctx.rfid_cloud.stop.assert_called()
         self.oci.reset_checkpoint.assert_called()
         kwargs = self.oci.reset_checkpoint.call_args.kwargs
@@ -588,7 +588,7 @@ class TestWorkflow(unittest.TestCase):
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.IDLE))
         self.assertEqual(self.oci.anpr_detect.call_count, 3)
-        self.display.send.assert_any_call("ANPR API ERR")
+        self.display.send.assert_any_call("ANPR ERROR@ASK OPERATOR")
         self.oci.invalid_truck_number.assert_not_called()
         self.boom.open.assert_not_called()
         self.ctx.rfid_cloud.prepare_idle.assert_called()
@@ -634,7 +634,7 @@ class TestWorkflow(unittest.TestCase):
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.IDLE))
         self.assertEqual(self.oci.anpr_detect.call_count, 3)
-        self.display.send.assert_any_call("ANPR API ERR")
+        self.display.send.assert_any_call("ANPR ERROR@ASK OPERATOR")
 
     def test_anpr_succeeds_on_second_retry(self):
         self._rfid_ok()
@@ -678,7 +678,7 @@ class TestWorkflow(unittest.TestCase):
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.IDLE))
-        self.display.send.assert_any_call("ANPR Err-2")
+        self.display.send.assert_any_call("ANPR ERROR@ERR-2")
         self.boom.open.assert_not_called()
         self.assertEqual(self.oci.anpr_detect.call_count, 1)
         self.oci.invalid_truck_number.assert_called()
@@ -704,7 +704,7 @@ class TestWorkflow(unittest.TestCase):
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
-        self.display.send.assert_any_call("ANPR Err-2")
+        self.display.send.assert_any_call("ANPR ERROR@ERR-2")
         self.boom.open.assert_called()
         self.assertEqual(self.oci.anpr_detect.call_count, 1)
         self.oci.update_truck_number.assert_called()
@@ -735,7 +735,7 @@ class TestWorkflow(unittest.TestCase):
         self.assertIn("anpr_image", bc_kwargs["anpr_payload"])
         self.boom.open.assert_called()
         self.tl.set_green.assert_called()
-        self.display.send.assert_any_call("OD14P7339 Entry Granted")
+        self.display.send.assert_any_call("Granted OD14P7339@Thank You")
 
     def test_anpr_disabled_calls_invalid_truck_then_status_check(self):
         """ANPR off still posts invalid-truck(anpr_status=2) then polls status_check."""
@@ -787,7 +787,7 @@ class TestWorkflow(unittest.TestCase):
         self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
         self.assertEqual(self.oci.update_truck_number.call_count, 2)
         self.boom.open.assert_called()
-        self.display.send.assert_any_call("OD14AF2721 Entry Granted")
+        self.display.send.assert_any_call("Granted OD14AF2721@Thank You")
 
     def test_ce_anpr_mismatch_uses_status_code_not_vehicle_status(self):
         """CE mismatch waits on statusCode 200; vehicleStatus 2 must not abort."""
@@ -861,7 +861,7 @@ class TestWorkflow(unittest.TestCase):
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
-        self.display.send.assert_any_call("ANPR ERR 1")
+        self.display.send.assert_any_call("ANPR ERROR@ERR-0")
         self.assertGreaterEqual(self.oci.update_truck_number.call_count, 2)
         # status_check must receive ANPR-derived payload fields
         call_kwargs = self.oci.update_truck_number.call_args.kwargs

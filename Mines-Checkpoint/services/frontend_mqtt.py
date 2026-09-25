@@ -39,8 +39,8 @@ except ImportError:
 
 APP_VERSION_DEFAULT = "1.0.0"
 
-# Default idle display; bootstrap overrides from settings.display_name
-IDLE_DISPLAY = "Mines Checkpoint"
+# Default idle display; bootstrap overrides from MSG_IDLE
+IDLE_DISPLAY = "Scan@RFID Card"
 
 # Dashboard step ids must match static/web/index.html data-step values.
 STEP_RFID_READ = "rfid_read"
@@ -449,7 +449,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "step": STEP_VALIDATING_RFID,
         "status": "error",
         "message": "RFID validation failed.",
-        "display": "RFID ERR",
+        "display": "RFID ERR@ASK OPERATOR",
     },
     "DISPLAY_TRUCK": {
         "position": 1,
@@ -470,7 +470,7 @@ STATE_TO_UI: Dict[str, Dict[str, Any]] = {
         "step": STEP_VALIDATING_ANPR,
         "status": "warning",
         "message": "ANPR Err-0, Number plate mismatch",
-        "display": "ANPR ERR 1",
+        "display": "ANPR ERROR@ERR-0",
     },
     "ENTRY_GRANTED": {
         "position": 2,
