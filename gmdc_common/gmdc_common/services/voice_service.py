@@ -315,8 +315,10 @@ class VoiceService:
         logger.info("Voice: Please Wait")
 
     def welcome(self) -> None:
-        self._play_async(self._info("welcome.wav"))
-        logger.info("Voice: Welcome")
+        """Play information/welcome.wav, replacing any clip already in progress."""
+        path = self._info("welcome.wav")
+        self._play_async(path, interrupt=True, force=True)
+        logger.info("Voice: Welcome %s", path)
 
     def application_reset(self) -> None:
         """Always play information/application_reset.wav (UI Reset button)."""
@@ -425,6 +427,25 @@ class VoiceService:
     def check_weighbridge(self) -> None:
         self._play_error_sequence("weighbridge_0.wav")
         logger.info("Voice: Check Weighbridge")
+
+    def weight_error(self) -> None:
+        """Weight at or below minimum: error_start.wav then weight-error.wav.
+
+        Blocks until both clips finish so the caller can enter IDLE afterwards.
+        """
+        if not self._enabled:
+            return
+        my_id = self._start_multi_play()
+        try:
+            if not self._is_play_valid(my_id):
+                return
+            self._play_safe(self._err("error_start.wav"), interrupt=False)
+            if not self._is_play_valid(my_id):
+                return
+            self._play_safe(self._err("weight-error.wav"), interrupt=False)
+        finally:
+            self._end_multi_play()
+        logger.info("Voice: weight error (error_start + weight-error)")
 
     def weighbridge_0(self) -> None:
         """Platform (s2) and exit (s3) occupied while the lane is IDLE."""

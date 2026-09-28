@@ -289,6 +289,7 @@ def migrate_gmdc_api_defaults(config: dict) -> None:
             if mode in ("CLIENT", "SERVER") and rfid.get("validated"):
                 # Force re-check under API cloud login
                 rfid["validated"] = False
+        rfid.setdefault("api_port", "8080")
 
     rfids = config.get("rfids")
     if isinstance(rfids, dict):
@@ -307,6 +308,7 @@ def migrate_gmdc_api_defaults(config: dict) -> None:
                 )
                 if mode in ("CLIENT", "SERVER") and reader.get("validated"):
                     reader["validated"] = False
+            reader.setdefault("api_port", "8081" if dir_key == "entry_b" else "8080")
 
     if "handheld_rfid" not in config or not isinstance(config.get("handheld_rfid"), dict):
         config["handheld_rfid"] = {
@@ -339,6 +341,7 @@ def order_config_keys(config: dict) -> dict:
 CANONICAL_RFID_READER_KEY_ORDER = (
     "ip",
     "port",
+    "api_port",
     "mode",
     "make",
     "model",
@@ -809,11 +812,12 @@ def validate_bidirectional_traffic_lights(io: dict, wb_type: str) -> Optional[st
     return None
 
 
-def _default_rfid_reader_dict() -> dict:
+def _default_rfid_reader_dict(api_port: str = "8080") -> dict:
     """Default Zebra API-mode reader block (uni or bi entry)."""
     return {
         "ip": "",
         "port": "443",
+        "api_port": str(api_port),
         "mode": "API",
         "make": "Zebra",
         "model": "fx900",
@@ -832,8 +836,8 @@ def _default_rfid_reader_dict() -> dict:
 
 def _deep_copy_default_rfids() -> dict:
     return {
-        "entry_a": _default_rfid_reader_dict(),
-        "entry_b": _default_rfid_reader_dict(),
+        "entry_a": _default_rfid_reader_dict("8080"),
+        "entry_b": _default_rfid_reader_dict("8081"),
     }
 
 
@@ -902,6 +906,7 @@ DEFAULT_CONFIG = {
     "rfid": {
         "ip": "",
         "port": "5555",
+        "api_port": "8080",
         "mode": "API",
         "make": "Zebra",
         "model": "fx900",
@@ -918,6 +923,7 @@ DEFAULT_CONFIG = {
         "entry_a": {
             "ip": "",
             "port": "443",
+            "api_port": "8080",
             "mode": "API",
             "make": "Zebra",
             "model": "fx900",
@@ -932,6 +938,7 @@ DEFAULT_CONFIG = {
         "entry_b": {
             "ip": "",
             "port": "443",
+            "api_port": "8081",
             "mode": "API",
             "make": "Zebra",
             "model": "fx900",
@@ -1287,7 +1294,9 @@ class ConfigManager:
                 rfids = config["rfids"]
                 for dir_key in ("entry_a", "entry_b"):
                     if not isinstance(rfids.get(dir_key), dict):
-                        rfids[dir_key] = _default_rfid_reader_dict()
+                        rfids[dir_key] = _default_rfid_reader_dict(
+                            "8081" if dir_key == "entry_b" else "8080"
+                        )
             io = config.get("io_controller")
             if isinstance(io, dict):
                 tl = io.get("traffic_lights")
@@ -1331,7 +1340,7 @@ class ConfigManager:
         _strip_camera_if_disabled(config)
 
     def validate_bidirectional_rfids(self, rfids: dict) -> Optional[str]:
-        """Return error message if entry_a and entry_b share the same IP."""
+        """Return error if entry_a/entry_b share IP or RFID_API_PORT."""
         if not isinstance(rfids, dict):
             return None
         a = rfids.get("entry_a") or {}
@@ -1345,6 +1354,16 @@ class ConfigManager:
                 f"{bidirectional_entry_label(BIDIRECTIONAL_ENTRY_A_KEY)} and "
                 f"{bidirectional_entry_label(BIDIRECTIONAL_ENTRY_B_KEY)} cannot use the same RFID IP address. "
                 "Assign a unique IP to each reader."
+            )
+        mode_a = str(a.get("mode") or "").strip().upper()
+        mode_b = str(b.get("mode") or "").strip().upper()
+        port_a = str(a.get("api_port") or "").strip()
+        port_b = str(b.get("api_port") or "").strip()
+        if mode_a == "API" and mode_b == "API" and port_a and port_b and port_a == port_b:
+            return (
+                f"{bidirectional_entry_label(BIDIRECTIONAL_ENTRY_A_KEY)} and "
+                f"{bidirectional_entry_label(BIDIRECTIONAL_ENTRY_B_KEY)} must use different "
+                "RFID_API_PORT values."
             )
         return None
 

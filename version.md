@@ -1,13 +1,31 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.11**
+**Current version: 1.12**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.11.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.12.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.11 — 2026-09-26 (latest)
+## 1.12 — 2026-09-29 (latest)
+
+checkpoint-config RFID API commissioning (including two ports on a bidirectional weighbridge), and Mines-WB voice on startup and low weight.
+
+### checkpoint-config — RFID API port
+- API mode shows **RFID_API_PORT** (uni) or two fields (bi): **ENTRY A** (default **8080**) and **ENTRY B** (default **8081**). The two bi ports must differ.
+- **Check & Save** logs into the Zebra reader, sets mode, and starts inventory, then listens for **120 seconds**
+- Temporary endpoints on that port: `http://{Mac IP}:{RFID_API_PORT}/rfid_data` and `/rfid_management` (the main config UI port is reused when it matches)
+- A tag POST to `/rfid_data` marks the check successful and saves `api_port`
+- Right-click and copy/paste are allowed in the config UI
+
+### Mines-WB — voice
+- On startup, after hardware is up, play `voice/information/welcome.wav` (when voice is enabled and validated)
+- Weight **≤ `MIN_WEIGHT_KG`**: play `error/error_start.wav` then `error/weight-error.wav`, then return to IDLE. RFID login / mode / start is not run
+- Weight **> `MIN_WEIGHT_KG`**: RFID login → set mode → start, then wait for `/rfid_data` (unchanged)
+
+---
+
+## 1.11 — 2026-09-26
 
 macOS offline packaging vendors Homebrew + Mosquitto bottles so site Macs can install the MQTT broker without downloading brew packages.
 
@@ -283,6 +301,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.12** | RFID_API_PORT Check & Save (120s, bi two ports); welcome.wav on WB start; low weight plays weight-error then IDLE |
 | **1.11** | macOS vendor Homebrew + Mosquitto bottles; local-first broker install in Mines-Automation bundle |
 | **1.10** | MQTT display protocol (Display IP / pcb_id / data_info); bi TX a+b; Welcome on connect; `@` message strings |
 | **1.9** | Flow icons: RFID Read on tag; RFID Validation on OCI; ANPR Update only on statusCode 201 |

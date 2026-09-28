@@ -13,6 +13,9 @@ try:
 except ImportError:
     _CONFIG_APP_PORT = 8080
 
+# API-mode Check & Save: wait this long for Zebra POST /rfid_data
+RFID_API_WAIT_SEC = 120
+
 
 def _load_rfid_recv_size() -> int:
     """
@@ -156,6 +159,9 @@ class RFIDService:
         self._api_cloud_ctrl = None
         self._extract_id_hexes = None
         self._last_check_port = None
+        self._api_listen_port = None
+        self._temp_push_server = None
+        self._temp_push_thread = None
     
     def get_local_ip(self):
         """Get local IP address"""
@@ -191,16 +197,19 @@ class RFIDService:
         preferred_mode=None,
         username=None,
         password=None,
+        api_port=None,
     ):
         """Check RFID connection with optional preferred mode."""
         logger.info(f"\n{'='*50}")
         logger.info(f"[RFID] Starting connection check...")
-        logger.info(f"[RFID] RFID IP: {rfid_ip}, Port: {port}")
+        logger.info(f"[RFID] RFID IP: {rfid_ip}, Port: {port}, api_port={api_port}")
         logger.info(f"{'='*50}")
 
         preferred = (preferred_mode or "").upper()
         if preferred in ("API", "HTTP", "CLOUD", "REST", "HTTPS"):
-            return self._try_api_mode(rfid_ip, username=username, password=password)
+            return self._try_api_mode(
+                rfid_ip, username=username, password=password, api_port=api_port
+            )
 
         if not rfid_ip or not port:
             logger.info("[RFID] ERROR: IP or Port missing!")
@@ -246,7 +255,9 @@ class RFIDService:
                 return result
 
         # Default / auto: prefer Zebra cloud API (Mine-entry), then legacy TCP.
-        api_result = self._try_api_mode(rfid_ip, username=username, password=password)
+        api_result = self._try_api_mode(
+            rfid_ip, username=username, password=password, api_port=api_port
+        )
         if api_result.get("status") == 200:
             return api_result
         logger.info(f"[RFID] API mode failed: {api_result.get('message')}")
@@ -271,10 +282,11 @@ class RFIDService:
         logger.info(f"[RFID] Server mode result: {result}")
         return result
 
-    def _try_api_mode(self, rfid_ip, username=None, password=None):
+    def _try_api_mode(self, rfid_ip, username=None, password=None, api_port=None):
         """
-        Zebra cloud REST login - Application is HTTP server for tags (/rfid_data).
-        Validates reader reachability via HTTPS Basic Auth login.
+        Zebra cloud REST login + mode/start, then wait for tag POST on
+        http://{mac_ip}:{RFID_API_PORT}/rfid_data (temporary listener when
+        RFID_API_PORT differs from the config UI port).
         """
         if not rfid_ip:
             return {"status": 400, "message": "RFID IP is required for API mode"}
@@ -282,11 +294,30 @@ class RFIDService:
         user = (username or "admin").strip() or "admin"
         pwd = password if password is not None else ""
 
-        logger.info(f"\n[RFID] === TRYING API MODE (Zebra cloud login @ {rfid_ip}) ===")
+        try:
+            listen_port = int(api_port) if api_port not in (None, "") else int(_CONFIG_APP_PORT)
+        except (TypeError, ValueError):
+            return {
+                "status": 400,
+                "mode": "API",
+                "message": "RFID_API_PORT must be a valid port number (1–65535).",
+            }
+        if listen_port < 1 or listen_port > 65535:
+            return {
+                "status": 400,
+                "mode": "API",
+                "message": "RFID_API_PORT must be between 1 and 65535.",
+            }
+
+        logger.info(
+            f"\n[RFID] === TRYING API MODE (Zebra cloud login @ {rfid_ip}, "
+            f"RFID_API_PORT={listen_port}) ==="
+        )
         self.stop()
         self.rfid_ip = rfid_ip
         self.mode = "API"
         self.laptop_ip = self.get_local_ip()
+        self._api_listen_port = listen_port
 
         try:
             from gmdc_common.services.rfid_control import RFIDCloudControl
@@ -307,10 +338,20 @@ class RFIDService:
 
             self._api_cloud_ctrl = ctrl
 
+            # Temporary (or reuse main) HTTP endpoints for Zebra push
+            started, start_err = self._start_temp_rfid_push_server(listen_port)
+            if not started:
+                return {
+                    "status": 500,
+                    "mode": "API",
+                    "message": start_err
+                    or f"Could not listen on port {listen_port} for /rfid_data",
+                }
+
             with self._test_lock:
                 self._test_status = {
                     "testing": True,
-                    "time_remaining": 30,
+                    "time_remaining": RFID_API_WAIT_SEC,
                     "card_read": False,
                     "card_data": None,
                     "card_display": None,
@@ -318,12 +359,16 @@ class RFIDService:
                     "test_complete": False,
                     "mode": "API",
                     "message": None,
+                    "api_port": listen_port,
                 }
 
-            push_url = f"http://{self.laptop_ip}:{_CONFIG_APP_PORT}/rfid_data"
+            push_url = f"http://{self.laptop_ip}:{listen_port}/rfid_data"
+            mgmt_url = f"http://{self.laptop_ip}:{listen_port}/rfid_management"
             logger.info("[RFID][API] Expecting tag push at %s", push_url)
+            logger.info("[RFID][API] Management keepalive at %s", mgmt_url)
             with self._test_lock:
                 self._test_status["push_url"] = push_url
+                self._test_status["management_url"] = mgmt_url
 
             test_thread = threading.Thread(target=self._run_api_tag_wait_test, daemon=True)
             test_thread.start()
@@ -331,27 +376,140 @@ class RFIDService:
             return {
                 "status": 200,
                 "mode": "API",
-                "message": "Reader connected. Waiting for RFID data (30 seconds)...",
+                "message": (
+                    f"Reader connected. Waiting for RFID data ({RFID_API_WAIT_SEC} seconds)... "
+                    f"POST tags to {push_url}"
+                ),
                 "testing": True,
                 "test_complete": False,
                 "card_read": False,
-                "time_remaining": 30,
+                "time_remaining": RFID_API_WAIT_SEC,
                 "push_url": push_url,
+                "management_url": mgmt_url,
+                "api_port": listen_port,
             }
         except ImportError:
             logger.exception("[RFID] gmdc_common not installed")
+            self._stop_temp_rfid_push_server()
             return {
                 "status": 500,
                 "mode": "API",
-                "message": "gmdc_common is not installed. Run: pip install -e ..\\gmdc_common",
+                "message": "gmdc_common is not installed. Run: pip install -e ../gmdc_common",
             }
         except Exception as e:
             logger.exception("[RFID] API mode check failed")
+            self._stop_temp_rfid_push_server()
             return {
                 "status": 400,
                 "mode": "API",
                 "message": f"API mode check failed: {e}",
             }
+
+    def _start_temp_rfid_push_server(self, listen_port: int):
+        """
+        Bind temporary /rfid_data + /rfid_management on listen_port.
+
+        If listen_port is the main checkpoint-config PORT, reuse the existing
+        Flask routes (already registered) and do not start a second server.
+        """
+        self._stop_temp_rfid_push_server()
+        if int(listen_port) == int(_CONFIG_APP_PORT):
+            logger.info(
+                "[RFID][API] Using main app port %s for /rfid_data "
+                "(no temporary server)",
+                listen_port,
+            )
+            return True, None
+
+        try:
+            from flask import Flask, jsonify, request
+            from werkzeug.serving import make_server
+        except ImportError as e:
+            return False, f"Flask/Werkzeug required for temporary RFID API: {e}"
+
+        # Probe bind before starting
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", int(listen_port)))
+        except OSError as e:
+            probe.close()
+            return (
+                False,
+                f"Port {listen_port} is not available ({e}). "
+                "Choose another RFID_API_PORT or free the port.",
+            )
+        finally:
+            try:
+                probe.close()
+            except Exception:
+                pass
+
+        app = Flask("gmdc_rfid_temp_push")
+
+        @app.post("/rfid_data")
+        def _temp_rfid_data():
+            try:
+                payload = request.get_json(force=True, silent=False)
+            except Exception as exc:
+                return jsonify({"status": "error", "message": str(exc)}), 400
+            if payload is None:
+                return jsonify({"status": "error", "message": "Empty body"}), 400
+            logger.info(
+                "[RFID][API][temp] POST /rfid_data from %s",
+                request.remote_addr,
+            )
+            http_status, body = self.accept_api_payload(payload)
+            return jsonify(body), http_status
+
+        @app.route("/rfid_management", methods=["GET", "POST"])
+        def _temp_rfid_management():
+            logger.debug(
+                "[RFID][API][temp] /rfid_management from %s",
+                request.remote_addr,
+            )
+            return jsonify({"status": "success"}), 200
+
+        try:
+            server = make_server("0.0.0.0", int(listen_port), app, threaded=True)
+        except OSError as e:
+            return False, f"Could not bind RFID_API_PORT {listen_port}: {e}"
+
+        self._temp_push_server = server
+
+        def _serve():
+            logger.info(
+                "[RFID][API] Temporary push server listening on 0.0.0.0:%s "
+                "(/rfid_data, /rfid_management)",
+                listen_port,
+            )
+            try:
+                server.serve_forever()
+            except Exception:
+                logger.exception("[RFID][API] Temporary push server stopped with error")
+
+        self._temp_push_thread = threading.Thread(
+            target=_serve, name="RfidTempPush", daemon=True
+        )
+        self._temp_push_thread.start()
+        time.sleep(0.15)
+        return True, None
+
+    def _stop_temp_rfid_push_server(self):
+        server = self._temp_push_server
+        self._temp_push_server = None
+        self._temp_push_thread = None
+        if not server:
+            return
+        try:
+            server.shutdown()
+        except Exception:
+            logger.debug("[RFID][API] temp server shutdown error", exc_info=True)
+        try:
+            server.server_close()
+        except Exception:
+            pass
+        logger.info("[RFID][API] Temporary push server stopped")
 
     def accept_api_payload(self, payload):
         """
@@ -405,9 +563,12 @@ class RFIDService:
         return 200, {"status": "success", "tags": id_hexes}
 
     def _run_api_tag_wait_test(self):
-        """30s wait for POST /rfid_data while reader inventory runs."""
+        """Wait for POST /rfid_data while reader inventory runs (RFID_API_WAIT_SEC)."""
         try:
-            logger.info("[RFID][API] Starting 30-second wait for RFID data...")
+            logger.info(
+                "[RFID][API] Starting %s-second wait for RFID data...",
+                RFID_API_WAIT_SEC,
+            )
             ctrl = getattr(self, "_api_cloud_ctrl", None)
             if ctrl:
                 try:
@@ -421,7 +582,7 @@ class RFIDService:
                 except Exception:
                     logger.exception("[RFID][API] prepare inventory failed")
 
-            end_time = time.time() + 30.0
+            end_time = time.time() + float(RFID_API_WAIT_SEC)
             while time.time() < end_time:
                 with self._test_lock:
                     if not self._test_status.get("testing", False):
@@ -443,7 +604,10 @@ class RFIDService:
                     logger.info("[RFID][API] Wait complete - tag=%s", tag)
                 else:
                     self._test_status["message"] = "No RFID data received. Please try again."
-                    logger.info("[RFID][API] Wait complete - no tag within 30 seconds")
+                    logger.info(
+                        "[RFID][API] Wait complete - no tag within %s seconds",
+                        RFID_API_WAIT_SEC,
+                    )
 
             # Ensure inventory stopped if timed out
             if not card_read and ctrl:
@@ -459,6 +623,8 @@ class RFIDService:
                 self._test_status["test_complete"] = True
                 self._test_status["card_read"] = False
                 self._test_status["message"] = "RFID wait failed. Please try again."
+        finally:
+            self._stop_temp_rfid_push_server()
     
     def _try_client_mode_connection_only(self):
         """Try connecting as client (RFID is server) - connection test only"""
@@ -1158,6 +1324,8 @@ class RFIDService:
                 except Exception:
                     pass
                 self._api_cloud_ctrl = None
+
+            self._stop_temp_rfid_push_server()
             
             # Now close connections
             if self.client_conn:

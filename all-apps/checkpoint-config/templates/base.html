@@ -6,13 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="renderer" content="webkit">
     <title>{% block title %}Device Configuration{% endblock %}</title>
-    <!-- Disable right-click / context menu in the application UI -->
     <script>
-        document.addEventListener('contextmenu', function (e) {
-            e.preventDefault();
-            return false;
-        }, true);
-
         // Fullscreen helpers: start fullscreen; Esc restores window controls / minimize
         (function appFullscreenControls() {
             var lockedFullscreen = true;

@@ -341,8 +341,6 @@ def bootstrap() -> AppContext:
             hardware_enabled=True,
             base_path=str(voice_base),
         )
-        if ctx.voice.is_enabled():
-            ctx.voice.welcome()
     else:
         ctx.voice = None
         logger.info("Voice announcements skipped (voice.enabled/validated false)")
@@ -405,6 +403,9 @@ def bootstrap() -> AppContext:
         ctx.frontend.republish_snapshot()
     logger.info("RFID cloud idle at boot - login/mode/start deferred until weight OK")
     logger.info("Hardware reset to IDLE (entry green/open, exit red/closed)")
+
+    if ctx.voice and ctx.voice.is_enabled():
+        ctx.voice.welcome()
 
     logger.info(
         "Mines WB bootstrapped demo=%s config=%s state=%s digitizer=%s",

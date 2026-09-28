@@ -169,6 +169,15 @@
                             </div>
                         </div>
                     </div>
+                    <div class="form-group" id="rfidApiPortGroup">
+                        <label for="rfidApiPort">RFID_API_PORT</label>
+                        <input type="number" class="form-control" id="rfidApiPort" placeholder="8080" value="8080" min="1" max="65535">
+                        <small class="form-text text-muted">
+                            Temporary listen port for Check &amp; Save:
+                            <code>http://&lt;this Mac IP&gt;:&lt;port&gt;/rfid_data</code>
+                            and <code>/rfid_management</code>
+                        </small>
+                    </div>
                 </div>
                 <div class="form-group" id="rfidPortGroup">
                     <label for="rfidPort">RFID Reader Port (TCP legacy)</label>
@@ -196,6 +205,10 @@
 
             <div id="rfidBidirectionalBlock" style="display: none;">
                 <div class="config-card mb-3">
+                    <p class="text-muted mb-2">
+                        Bidirectional layout uses <b>two</b> RFID_API_PORT values
+                        (ENTRY A and ENTRY B). Each reader pushes tags to its own port on this Mac Mini.
+                    </p>
                     <p class="text-muted mb-2">Exchange all settings between ENTRY A and ENTRY B. Both readers must be re-tested after a swap.</p>
                     <button type="button" class="btn btn-outline" onclick="swapBidirectionalRfidReaders()">
                         <i class="bi bi-arrow-left-right"></i> Swap ENTRY A ↔ B
@@ -255,6 +268,15 @@
                                     <input type="password" class="form-control" id="rfidAPassword" placeholder="Reader password" autocomplete="off">
                                 </div>
                             </div>
+                        </div>
+                        <div class="form-group" id="rfidAApiPortGroup">
+                            <label for="rfidAApiPort">RFID_API_PORT (ENTRY A)</label>
+                            <input type="number" class="form-control" id="rfidAApiPort" placeholder="8080" value="8080" min="1" max="65535">
+                            <small class="form-text text-muted">
+                                Listen port for ENTRY A reader push:
+                                <code>http://&lt;Mac IP&gt;:&lt;port&gt;/rfid_data</code>
+                                and <code>/rfid_management</code>
+                            </small>
                         </div>
                     </div>
                     <div class="form-group" id="rfidAPortGroup">
@@ -328,6 +350,15 @@
                                     <input type="password" class="form-control" id="rfidBPassword" placeholder="Reader password" autocomplete="off">
                                 </div>
                             </div>
+                        </div>
+                        <div class="form-group" id="rfidBApiPortGroup">
+                            <label for="rfidBApiPort">RFID_API_PORT (ENTRY B)</label>
+                            <input type="number" class="form-control" id="rfidBApiPort" placeholder="8081" value="8081" min="1" max="65535">
+                            <small class="form-text text-muted">
+                                Listen port for ENTRY B reader push (must differ from ENTRY A):
+                                <code>http://&lt;Mac IP&gt;:&lt;port&gt;/rfid_data</code>
+                                and <code>/rfid_management</code>
+                            </small>
                         </div>
                     </div>
                     <div class="form-group" id="rfidBPortGroup">
@@ -1819,7 +1850,7 @@
                         <i class="bi bi-hourglass-split"></i>
                     </div>
                     <div style="font-size: 36px; font-weight: bold; color: var(--primary-color); margin-bottom: 6px;">
-                        <span id="rfidModalCountdown">30</span>
+                        <span id="rfidModalCountdown">120</span>
                     </div>
                     <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 16px;">
                         seconds remaining

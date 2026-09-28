@@ -1070,13 +1070,14 @@ def check_rfid():
     mode = (data.get('mode', '') or '').upper()
     username = data.get('username') or data.get('user') or 'admin'
     password = data.get('password') if data.get('password') is not None else ''
+    api_port = data.get('api_port') or data.get('RFID_API_PORT') or data.get('rfid_api_port')
     
     # POST to /api/rfid/check should ALWAYS start a new test
     # This endpoint is called when user clicks "Check & Save" button
     # Status polling should use /api/rfid/status endpoint instead
     
     # Reset test status and start fresh
-    logger.info(f"[RFID API] Starting new check (IP/port: {ip}:{port}, mode={mode or 'auto'}). Resetting test status...")
+    logger.info(f"[RFID API] Starting new check (IP/port: {ip}:{port}, mode={mode or 'auto'}, api_port={api_port}). Resetting test status...")
     rfid_service.reset_test_status()
     rfid_service._last_check_ip = ip
     rfid_service._last_check_port = port
@@ -1093,6 +1094,7 @@ def check_rfid():
         mode or None,
         username=username,
         password=password,
+        api_port=api_port,
     )
     
     # Update last check tracking after successful connection
@@ -1146,8 +1148,17 @@ def check_rfid():
         elif result.get("mode") == "API":
             if not result.get("push_url") and test_status.get("push_url"):
                 result["push_url"] = test_status.get("push_url")
+            if not result.get("management_url") and test_status.get("management_url"):
+                result["management_url"] = test_status.get("management_url")
+            if not result.get("api_port") and test_status.get("api_port"):
+                result["api_port"] = test_status.get("api_port")
             if result.get("testing") or not test_status.get("test_complete"):
-                result["message"] = "Reader connected. Waiting for RFID data (30 seconds)..."
+                wait_sec = test_status.get("time_remaining") or 120
+                push = result.get("push_url") or ""
+                result["message"] = (
+                    f"Reader connected. Waiting for RFID data ({wait_sec}s remaining)"
+                    + (f" at {push}" if push else "...")
+                )
             elif test_status.get("test_complete"):
                 result["card_read"] = test_status.get("card_read", False)
                 result["card_data"] = test_status.get("card_data")
@@ -1178,8 +1189,9 @@ def stop_rfid():
 @app.route('/rfid_data', methods=['POST'])
 def rfid_data_intake():
     """
-    Zebra reader push endpoint (same contract as Mine-entry / TareWb-App).
-    Used during RFID Configuration Check & Save (API mode) 30s wait.
+    Zebra reader push endpoint (same contract as Mines-Checkpoint / Mines-WB).
+    Used during RFID Configuration Check & Save (API mode) when RFID_API_PORT
+    equals the main config UI port; otherwise a temporary listener is used.
     """
     try:
         payload = request.get_json(force=True, silent=False)
@@ -1196,7 +1208,7 @@ def rfid_data_intake():
     return jsonify(body), http_status
 
 
-@app.route('/rfid_management', methods=['POST'])
+@app.route('/rfid_management', methods=['GET', 'POST'])
 def rfid_management_intake():
     """Zebra keepalive / management - acknowledge during commissioning."""
     return jsonify({"status": "success"}), 200

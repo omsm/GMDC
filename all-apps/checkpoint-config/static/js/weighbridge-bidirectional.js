@@ -52,14 +52,16 @@ function getRfidFieldIds(directionKey) {
         return {
             make: 'rfidMake', model: 'rfidModel', ipSelect: 'rfidIpSelect', ipManual: 'rfidIpManual',
             ip: 'rfidIp', port: 'rfidPort', modeSelect: 'rfidModeSelect', status: 'rfidStatus', mode: 'rfidMode',
-            username: 'rfidUsername', password: 'rfidPassword', apiCreds: 'rfidApiCreds', portGroup: 'rfidPortGroup'
+            username: 'rfidUsername', password: 'rfidPassword', apiCreds: 'rfidApiCreds', portGroup: 'rfidPortGroup',
+            apiPort: 'rfidApiPort', apiPortGroup: 'rfidApiPortGroup'
         };
     }
     const p = RFID_DIRECTION_UI[directionKey]?.prefix;
     return {
         make: `${p}Make`, model: `${p}Model`, ipSelect: `${p}IpSelect`, ipManual: `${p}IpManual`,
         ip: `${p}Ip`, port: `${p}Port`, modeSelect: `${p}ModeSelect`, status: `${p}Status`, mode: `${p}Mode`,
-        username: `${p}Username`, password: `${p}Password`, apiCreds: `${p}ApiCreds`, portGroup: `${p}PortGroup`
+        username: `${p}Username`, password: `${p}Password`, apiCreds: `${p}ApiCreds`, portGroup: `${p}PortGroup`,
+        apiPort: `${p}ApiPort`, apiPortGroup: `${p}ApiPortGroup`
     };
 }
 
@@ -76,8 +78,10 @@ function onRfidDirectionModeChange(directionKey) {
     const mode = (document.getElementById(ids.modeSelect)?.value || 'API').toUpperCase();
     const apiCreds = document.getElementById(ids.apiCreds);
     const portGroup = document.getElementById(ids.portGroup);
+    const apiPortGroup = document.getElementById(ids.apiPortGroup);
     if (apiCreds) apiCreds.style.display = mode === 'API' ? '' : 'none';
     if (portGroup) portGroup.style.display = mode === 'API' ? 'none' : '';
+    if (apiPortGroup) apiPortGroup.style.display = mode === 'API' ? '' : 'none';
 }
 
 function applyWeighbridgeLayoutUI() {
@@ -179,13 +183,14 @@ function readRfidDirectionFromForm(directionKey, options = {}) {
     const ip = getRfidDirectionIpFromForm(directionKey);
     const mode = (document.getElementById(ids.modeSelect)?.value || 'API').toUpperCase();
     const port = (document.getElementById(ids.port)?.value || (mode === 'API' ? '443' : '6000')).trim();
+    const apiPort = (document.getElementById(ids.apiPort)?.value || '').trim();
     const make = document.getElementById(ids.make)?.value.trim() || '';
     const model = document.getElementById(ids.model)?.value.trim() || '';
     const username = document.getElementById(ids.username)?.value.trim() || 'admin';
     const password = document.getElementById(ids.password)?.value || '';
     const existing = (config.rfids && config.rfids[directionKey]) || {};
     const validated = validatedOverride !== undefined ? validatedOverride : existing.validated;
-    return buildOrderedRfidReader(ip, port, mode, make, model, validated, {
+    const extra = {
         username,
         password,
         note: existing.note || (
@@ -196,7 +201,13 @@ function readRfidDirectionFromForm(directionKey, options = {}) {
         manual_match_start: existing.manual_match_start,
         manual_match_length: existing.manual_match_length,
         manual_match_sample: existing.manual_match_sample
-    });
+    };
+    if (mode === 'API' && apiPort) {
+        extra.api_port = apiPort;
+    } else if (existing.api_port != null) {
+        extra.api_port = existing.api_port;
+    }
+    return buildOrderedRfidReader(ip, port, mode, make, model, validated, extra);
 }
 
 function buildBidirectionalRfidsPayload(activeDirectionKey, activeReader) {
@@ -248,10 +259,12 @@ function populateBidirectionalRfidFields() {
         const modeEl = document.getElementById(ids.modeSelect);
         const userEl = document.getElementById(ids.username);
         const passEl = document.getElementById(ids.password);
+        const apiPortEl = document.getElementById(ids.apiPort);
         if (makeEl) makeEl.value = data.make || '';
         if (modelEl) modelEl.value = data.model || '';
         if (modeEl) modeEl.value = data.mode || 'API';
         if (portEl) portEl.value = data.port || (String(data.mode || 'API').toUpperCase() === 'API' ? '443' : '6000');
+        if (apiPortEl) apiPortEl.value = data.api_port || (dir === 'entry_b' ? '8081' : '8080');
         if (userEl) userEl.value = data.username || 'admin';
         if (passEl && data.password != null) passEl.value = data.password;
         setRfidDirectionIpField(dir, data.ip || '');
@@ -334,6 +347,18 @@ function validateBidirectionalRfidsPayload(payload) {
         );
         return false;
     }
+    const modeA = String(payload?.entry_a?.mode || '').toUpperCase();
+    const modeB = String(payload?.entry_b?.mode || '').toUpperCase();
+    const portA = String(payload?.entry_a?.api_port || '').trim();
+    const portB = String(payload?.entry_b?.api_port || '').trim();
+    if (modeA === 'API' && modeB === 'API' && portA && portB && portA === portB) {
+        showToast(
+            'error',
+            'Duplicate RFID_API_PORT',
+            'ENTRY A and ENTRY B must use different RFID_API_PORT values.'
+        );
+        return false;
+    }
     return true;
 }
 
@@ -390,6 +415,9 @@ function buildOrderedRfidReader(ip, port, mode, rfidMake, rfidModel, validated, 
         manual_match_length: calibrationData.manual_match_length ?? 0,
         manual_match_sample: calibrationData.manual_match_sample ?? ''
     };
+    if (calibrationData.api_port != null && calibrationData.api_port !== '') {
+        reader.api_port = String(calibrationData.api_port);
+    }
     if (calibrationData.note) {
         reader.note = calibrationData.note;
     } else if (String(mode || '').toUpperCase() === 'API') {
@@ -415,6 +443,7 @@ function orderExistingRfidReader(reader = {}) {
             username: reader.username,
             password: reader.password,
             note: reader.note,
+            api_port: reader.api_port,
             manual_match_start: reader.manual_match_start,
             manual_match_length: reader.manual_match_length,
             manual_match_sample: reader.manual_match_sample
@@ -550,6 +579,8 @@ async function resetRfidDirection(directionKey) {
     });
     const portEl = document.getElementById(ids.port);
     if (portEl) portEl.value = '443';
+    const apiPortEl = document.getElementById(ids.apiPort);
+    if (apiPortEl) apiPortEl.value = directionKey === 'entry_b' ? '8081' : '8080';
     const userEl = document.getElementById(ids.username);
     if (userEl) userEl.value = 'admin';
     const passEl = document.getElementById(ids.password);
@@ -568,6 +599,7 @@ async function resetRfidDirection(directionKey) {
     const clearedReader = buildOrderedRfidReader('', '443', 'API', '', '', false, {
         username: 'admin',
         password: '',
+        api_port: directionKey === 'entry_b' ? '8081' : '8080',
         manual_match_start: -1,
         manual_match_length: 0,
         manual_match_sample: ''
@@ -769,6 +801,7 @@ function allRequiredTrafficLightsSatisfied() {
         const rfidModel = document.getElementById(ids.model)?.value.trim() || '';
         const username = document.getElementById(ids.username)?.value.trim() || 'admin';
         const password = document.getElementById(ids.password)?.value || '';
+        const apiPort = document.getElementById(ids.apiPort)?.value.trim() || '';
         const label = RFID_DIRECTION_UI[directionKey].label;
         if (!ip) {
             showToast('error', 'Validation Error', `Please enter RFID reader IP for ${label}`);
@@ -777,6 +810,24 @@ function allRequiredTrafficLightsSatisfied() {
         if (mode !== 'API' && !port) {
             showToast('error', 'Validation Error', `Please enter both IP and Port for ${label}`);
             return;
+        }
+        if (mode === 'API' && !apiPort) {
+            showToast('error', 'Validation Error', `Please enter RFID_API_PORT for ${label}`);
+            return;
+        }
+        if (mode === 'API' && apiPort) {
+            const otherKey = directionKey === 'entry_a' ? 'entry_b' : 'entry_a';
+            const otherIds = getRfidFieldIds(otherKey);
+            const otherMode = (document.getElementById(otherIds.modeSelect)?.value || 'API').toUpperCase();
+            const otherApiPort = document.getElementById(otherIds.apiPort)?.value.trim() || '';
+            if (otherMode === 'API' && otherApiPort && otherApiPort === apiPort) {
+                showToast(
+                    'error',
+                    'Duplicate RFID_API_PORT',
+                    `${label} RFID_API_PORT must differ from ${RFID_DIRECTION_UI[otherKey].label}.`
+                );
+                return;
+            }
         }
         if (!validateDeviceInfo(rfidMake, rfidModel, `${label} RFID Reader`)) return;
 
@@ -793,7 +844,8 @@ function allRequiredTrafficLightsSatisfied() {
                     port: port || '443',
                     mode,
                     username,
-                    password
+                    password,
+                    api_port: apiPort || undefined,
                 })
             });
             const result = await response.json();
@@ -867,10 +919,12 @@ function allRequiredTrafficLightsSatisfied() {
                         const tag = result.parsed_tag || result.card_display || result.card_data || '';
                         const username = document.getElementById(ids.username)?.value.trim() || 'admin';
                         const password = document.getElementById(ids.password)?.value || '';
+                        const apiPort = document.getElementById(ids.apiPort)?.value.trim() || '';
                         showToast('success', 'RFID', 'RFID tag data received');
                         saveRfidConfig(ip, port || '443', 'API', rfidMake, rfidModel, true, {
                             username,
-                            password
+                            password,
+                            api_port: apiPort || undefined,
                         });
                     } else {
                         showToast('warning', 'RFID', result.message || 'No RFID data received. Please try again.');

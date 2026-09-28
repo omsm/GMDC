@@ -1192,11 +1192,15 @@ class MinesWbWorkflow:
             fe.publish_digitizer(weight)
 
         if float(weight) <= min_kg:
-            logger.warning("Weight %.1f kg <= min %.1f - reset", weight, min_kg)
+            logger.warning(
+                "Weight %.1f kg <= min %.1f - announce weight error then IDLE",
+                weight,
+                min_kg,
+            )
             if voice:
-                voice.check_weighbridge()
+                voice.weight_error()
             sm.trigger(Event.WEIGHT_LOW)
-            self.force_reset()
+            self.force_reset(stop_audio=False)
             return
 
         sm.trigger(Event.WEIGHT_OK)

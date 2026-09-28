@@ -47,7 +47,7 @@ ROWS = [
     ["TC-SEN-007", "Sensor", "Timeout", "Exit wait timeout resets IDLE", "EXIT_GRANTED; no exit sensor", "1. Wait EXIT_WAIT_SEC", "120s", "IDLE; boom close immediate on timeout", "P1", "Positive", "Automated"],
     # ------------------------------------------------------------------ Digitizer / Weight
     ["TC-WT-001", "Digitizer", "Stable weight", "Weight > 5 t continues to RFID", "WEIGHT_CAPTURE; digitizer OK", "1. Digitizer returns weight > 5000 kg", "e.g. 12500", "WEIGHT_OK → RFID_READ; RFID login/mode/start for selected direction", "P0", "Positive", "Manual"],
-    ["TC-WT-002", "Digitizer", "Low weight", "Weight ≤ 5 t resets IDLE", "WEIGHT_CAPTURE", "1. Digitizer returns ≤ 5000 kg", "e.g. 3000", "WEIGHT_LOW; IDLE; RFID never started", "P0", "Negative", "Manual"],
+    ["TC-WT-002", "Digitizer", "Low weight", "Weight ≤ 5 t announces then IDLE", "WEIGHT_CAPTURE", "1. Digitizer returns ≤ 5000 kg", "e.g. 3000", "error_start + weight-error.wav, then WEIGHT_LOW → IDLE; RFID never started", "P0", "Negative", "Manual"],
     ["TC-WT-003", "Digitizer", "Fail", "Digitizer fail resets IDLE", "WEIGHT_CAPTURE", "1. Digitizer ok=false or no weight", '{"ok":false}', "WEIGHT_FAIL; digitizer_error voice; IDLE", "P0", "Negative", "Manual"],
     ["TC-WT-004", "Digitizer", "Demo", "Demo digitizer returns fixed weight", "DEMO_MODE=true", "1. Call read_stable_weight", "demo 12500", "ok=true weight=12500.0", "P2", "Positive", "Automated"],
     ["TC-WT-005", "Digitizer", "HTTP", "Calls digitizer-app /read_stable_weight", "Real digitizer PC", "1. Capture HTTP from Mines WB", "host:port from config", "POST /read_stable_weight; not local COM", "P1", "Positive", "Manual"],

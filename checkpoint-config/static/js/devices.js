@@ -141,8 +141,10 @@ function onRfidModeChange() {
     const mode = (document.getElementById('rfidModeSelect')?.value || 'API').toUpperCase();
     const apiCreds = document.getElementById('rfidApiCreds');
     const portGroup = document.getElementById('rfidPortGroup');
+    const apiPortGroup = document.getElementById('rfidApiPortGroup');
     if (apiCreds) apiCreds.style.display = mode === 'API' ? '' : 'none';
     if (portGroup) portGroup.style.display = mode === 'API' ? 'none' : '';
+    if (apiPortGroup) apiPortGroup.style.display = mode === 'API' ? '' : 'none';
 }
 
 /** User-facing sensor role label (matches I/O pin UI). */
@@ -1199,6 +1201,7 @@ function populateFormFields() {
     if (config.rfid) {
         const rfidIpEl = document.getElementById('rfidIp');
         const rfidPortEl = document.getElementById('rfidPort');
+        const rfidApiPortEl = document.getElementById('rfidApiPort');
         const rfidModeEl = document.getElementById('rfidModeSelect');
         const rfidMakeEl = document.getElementById('rfidMake');
         const rfidModelEl = document.getElementById('rfidModel');
@@ -1206,6 +1209,7 @@ function populateFormFields() {
         const rfidPassEl = document.getElementById('rfidPassword');
         if (rfidIpEl) rfidIpEl.value = config.rfid.ip || '';
         if (rfidPortEl) rfidPortEl.value = config.rfid.port || '6000';
+        if (rfidApiPortEl) rfidApiPortEl.value = config.rfid.api_port || '8080';
         if (rfidModeEl) rfidModeEl.value = config.rfid.mode || 'API';
         if (rfidMakeEl) rfidMakeEl.value = config.rfid.make || '';
         if (rfidModelEl) rfidModelEl.value = config.rfid.model || '';
@@ -1724,6 +1728,7 @@ async function checkAndSaveRFID() {
         ? document.getElementById('rfidIp').value.trim()
         : (document.getElementById('rfidIpSelect')?.value || document.getElementById('rfidIp').value.trim());
     const port = document.getElementById('rfidPort')?.value.trim() || '';
+    const apiPort = document.getElementById('rfidApiPort')?.value.trim() || '';
     const mode = (document.getElementById('rfidModeSelect')?.value || 'API').toUpperCase();
     const rfidMake = document.getElementById('rfidMake')?.value.trim() || '';
     const rfidModel = document.getElementById('rfidModel')?.value.trim() || '';
@@ -1736,6 +1741,10 @@ async function checkAndSaveRFID() {
     }
     if (mode !== 'API' && !port) {
         showToast('error', 'Validation Error', 'Please enter both IP and Port');
+        return;
+    }
+    if (mode === 'API' && !apiPort) {
+        showToast('error', 'Validation Error', 'Please enter RFID_API_PORT');
         return;
     }
     
@@ -1752,7 +1761,14 @@ async function checkAndSaveRFID() {
         const response = await fetch('/api/rfid/check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, port: port || '443', mode, username, password })
+            body: JSON.stringify({
+                ip,
+                port: port || '443',
+                mode,
+                username,
+                password,
+                api_port: apiPort || undefined,
+            })
         });
         
         const result = await response.json();
@@ -1787,7 +1803,7 @@ const MODULE_HELP_CONTENT = {
     },
     rfid: {
         title: 'RFID Configuration Help',
-        html: `<h4>What to Enter</h4><ul><li>RFID make and model number from the reader sticker.</li><li>RFID IP address and port number.</li><li>RFID connection mode.</li><li><b>RFID is Server, Application is Client:</b> the application continuously requests data from the reader.</li><li><b>RFID is Client, Application is Server:</b> the reader sends data to the application when a card is scanned (common in devices like Identium).</li></ul><h4>Validation Flow</h4><ul><li>Run <b>Check & Save</b>, then scan a card during the 30-second test window.</li><li>In the calibration popup, paste the RFID value shown in your RFID Reader application.</li><li>Click <b>Save Match</b>. The application verifies that the entered RFID exists in the raw data. This is a critical step; otherwise, truck validation can fail.</li></ul><h4>Tips</h4><ul><li>Make and model of the RFID reader are mandatory.</li><li>If RFID communication fails, first confirm that RFID data is visible in the RFID Reader application. Also enable options like heartbeat (or equivalent keep-alive) to ensure stable communication.</li></ul>`
+        html: `<h4>What to Enter</h4><ul><li>RFID make and model number from the reader sticker.</li><li>RFID IP address.</li><li>RFID connection mode (API for Zebra).</li><li>In <b>API</b> mode: cloud username/password and <b>RFID_API_PORT</b> (temporary listen port on this Mac Mini for <code>/rfid_data</code> and <code>/rfid_management</code>).</li><li><b>Bidirectional weighbridge:</b> configure <b>two</b> RFID_API_PORT values — one for ENTRY A and one for ENTRY B (must be different).</li><li><b>RFID is Server, Application is Client:</b> the application continuously requests data from the reader.</li><li><b>RFID is Client, Application is Server:</b> the reader sends data to the application when a card is scanned (common in devices like Identium).</li></ul><h4>Validation Flow</h4><ul><li>Run <b>Check & Save</b>, then scan a card during the 120-second test window.</li><li>When the reader POSTs a tag to <code>/rfid_data</code>, the check is marked successful (same as Checkpoint / WB).</li><li>In the calibration popup (legacy TCP modes), paste the RFID value shown in your RFID Reader application.</li><li>Click <b>Save Match</b>. The application verifies that the entered RFID exists in the raw data. This is a critical step; otherwise, truck validation can fail.</li></ul><h4>Tips</h4><ul><li>Make and model of the RFID reader are mandatory.</li><li>If RFID communication fails, first confirm that RFID data is visible in the RFID Reader application. Also enable options like heartbeat (or equivalent keep-alive) to ensure stable communication.</li></ul>`
     },
     camera: {
         title: 'Camera Configuration Help',
@@ -1889,8 +1905,10 @@ function showRfidCardReadModal(mode, ip, port, pushUrl) {
         directionKey: (typeof currentRfidDirectionKey !== 'undefined') ? currentRfidDirectionKey : null,
     };
 
-    modeText.textContent = 'Please scan an RFID tag.';
-    countdownEl.textContent = '30';
+    modeText.textContent = pushUrl
+        ? `Please scan an RFID tag. Waiting at ${pushUrl}`
+        : 'Please scan an RFID tag.';
+    countdownEl.textContent = '120';
     if (dataBox) dataBox.style.display = 'none';
     if (dataValue) dataValue.textContent = '';
 
@@ -2235,7 +2253,7 @@ async function pollRfidTestStatus(ip, port, rfidMake, rfidModel, mode) {
         }
     }, 500);
     
-    // Timeout after 35 seconds (safety - slightly longer than 30 second test)
+    // Timeout after 125 seconds (safety - slightly longer than 120 second API wait)
     // Store handle so we can cancel it once test completes successfully
     if (window.rfidTestTimeoutDevices) {
         clearTimeout(window.rfidTestTimeoutDevices);
@@ -2250,7 +2268,7 @@ async function pollRfidTestStatus(ip, port, rfidMake, rfidModel, mode) {
         showLoading(false);
         updateRfidModalStatus('failed', 'No RFID data received. Please try again.', false, true, true);
         showToast('warning', 'Timeout', 'No RFID data received. Please try again.');
-    }, 35000);
+    }, 125000);
 }
 
 function handleRfidResult(result, ip, port, rfidMake, rfidModel) {
@@ -2277,7 +2295,12 @@ function handleRfidResult(result, ip, port, rfidMake, rfidModel) {
                 }
                 const username = document.getElementById('rfidUsername')?.value.trim() || 'admin';
                 const password = document.getElementById('rfidPassword')?.value || '';
-                saveRfidConfig(ip, port || '443', 'API', rfidMake, rfidModel, true, { username, password });
+                const apiPort = document.getElementById('rfidApiPort')?.value.trim() || '';
+                saveRfidConfig(ip, port || '443', 'API', rfidMake, rfidModel, true, {
+                    username,
+                    password,
+                    api_port: apiPort || undefined,
+                });
             } else {
                 showToast('warning', 'RFID', result.message || 'No RFID data received. Please try again.');
             }
@@ -2339,12 +2362,11 @@ async function saveRfidConfig(ip, port, mode, rfidMake, rfidModel, validated, ca
             ?? (document.getElementById('rfidUsername')?.value.trim() || 'admin');
         const password = calibrationData.password
             ?? (document.getElementById('rfidPassword')?.value || '');
-        const { username: _u, password: _p, ...restCal } = calibrationData;
+        const apiPort = calibrationData.api_port
+            ?? (document.getElementById('rfidApiPort')?.value.trim() || '');
+        const { username: _u, password: _p, api_port: _ap, ...restCal } = calibrationData;
         console.log(`[RFID] Saving config - validated: ${validated}, mode: ${mode}`);
-        await fetch('/api/config/rfid', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
+        const payload = { 
                 ip, 
                 port, 
                 mode, 
@@ -2354,7 +2376,14 @@ async function saveRfidConfig(ip, port, mode, rfidMake, rfidModel, validated, ca
                 password,
                 validated: validated,
                 ...restCal
-            })
+            };
+        if (String(mode || '').toUpperCase() === 'API' && apiPort) {
+            payload.api_port = String(apiPort);
+        }
+        await fetch('/api/config/rfid', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
         
         // Only mark as validated and navigate if validated is true
