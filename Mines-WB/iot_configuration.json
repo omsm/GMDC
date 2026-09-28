@@ -90,7 +90,7 @@
     "timeout": "30",
     "stable_count": "10",
     "validated": true,
-    "make": "ok",
+    "make": "okij",
     "model": "ok",
     "baud_rate": "9600",
     "bytesize": "8",
