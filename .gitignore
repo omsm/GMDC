@@ -92,9 +92,7 @@ packaging/macos/app.zip
 packaging/macos/*.zip
 dist.zip
 *.zip
-all-apps/
-all-apps.zip
+GMDC-APP/
 # Keep vendor tooling tracked
 !packaging/macos/vendor/README.md
 !packaging/macos/vendor/download_vendor.sh
-all-apps-copy/
