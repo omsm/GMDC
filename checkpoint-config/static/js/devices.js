@@ -1,4 +1,4 @@
-// E-Rawanna IoT - Device Configuration JavaScript
+// GMDC IoT - Device Configuration JavaScript
 // Device configuration page logic
 
 /** Server URL / port - no prefilled defaults; operator must enter both. */
@@ -62,7 +62,7 @@ const APP_CONFIG = window.APP_CONFIG || {
     debug: true,
     requireDeviceInfo: false,
     enableCamera: true,
-    appName: 'E-Rawanna',
+    appName: 'GMDC',
     appVersion: '1.0.0',
     validCardsStartIndex: [],
     validCardCharLengths: [24, 32]
@@ -168,6 +168,7 @@ function getSensorFromConfig(sensors, sensorNum) {
 
 /** Traffic light setup test tri-state for JSON: true = passed, null = skipped, false = not tested. */
 function getTrafficLightValidatedForSave(location) {
+    if (location === 'exit' && isCheckpointFamily()) return null;
     if (location === 'entry') return ioTestStatus.entryTLValidated;
     if (location === 'exit') return ioTestStatus.exitTLValidated;
     return false;
@@ -232,10 +233,23 @@ function skipTrafficLightTest(location) {
 
 function isBoomBarrierEnabled(location, outputMode) {
     if (location !== 'entry' && location !== 'exit') return false;
+    // Checkpoint has one boom at entry. The exit cards are hidden.
+    if (location === 'exit' && isCheckpointFamily()) return false;
     if (outputMode === 'direct') {
         return document.getElementById(`${location}BoomEnabled`)?.checked || false;
     }
     return document.getElementById(`${location}BoomRelayEnabled`)?.checked || false;
+}
+
+/** Checkpoint hides WB/exit hardware. Keep those enables off so they cannot block save. */
+function applyCheckpointIoConstraints() {
+    if (!isCheckpointFamily()) return;
+    ['exitBoomEnabled', 'exitBoomRelayEnabled'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.checked = false;
+        el.disabled = true;
+    });
 }
 
 function boomBarrierTestsPassedForLocation(location, outputMode) {
@@ -462,9 +476,12 @@ function getIoSaveValidationFailures(outputMode) {
             failures.push('entry and exit traffic lights');
         }
     }
-    if (isBoomBarrierValidationRequired(outputMode) && !hasRequiredBoomBarrierTestsPassed(outputMode)) {
-        failures.push('enabled boom barrier');
-    }
+    ['entry', 'exit'].forEach((location) => {
+        if (!isBoomBarrierEnabled(location, outputMode)) return;
+        if (isBoomBarrierIoTestSatisfied(location, outputMode)) return;
+        const name = location === 'entry' ? 'Entry boom barrier' : 'Exit boom barrier';
+        failures.push(`${name} (open and close)`);
+    });
     return failures;
 }
 
@@ -619,9 +636,9 @@ function initRequiredFieldIndicators() {
     
     // Update debug mode indicator
     if (APP_CONFIG.debug) {
-        console.log('[E-Rawanna IoT] Running in DEBUG mode - Make/Model fields are optional');
+        console.log('[GMDC IoT] Running in DEBUG mode - Make/Model fields are optional');
     } else {
-        console.log('[E-Rawanna IoT] Running in PRODUCTION mode - Make/Model fields are required');
+        console.log('[GMDC IoT] Running in PRODUCTION mode - Make/Model fields are required');
     }
 }
 
@@ -1807,7 +1824,7 @@ const MODULE_HELP_CONTENT = {
     },
     camera: {
         title: 'Camera Configuration Help',
-        html: `<h4>RTSP setup</h4><ul><li>Use full RTSP URL with credentials (rtsp://user:pass@ip:554/...).</li><li>Click <b>Check &amp; Save</b> for every displayed camera; its live preview must appear.</li><li>If a stream fails, fix the URL and try again.</li></ul><h4>Required cameras</h4><ul><li><b>Mines Entry, Exit, Tracking 1 and Tracking 2:</b> Front Camera only. Automation does not capture it because ANPR supplies the front image.</li><li><b>Tare, Vadaghat and Gross weighbridges:</b> configure both Top and Front cameras. Automation captures only Top; ANPR supplies Front.</li></ul>`
+        html: `<h4>RTSP setup</h4><ul><li>Use a full RTSP URL with credentials (rtsp://user:pass@ip:554/...).</li><li>Click <b>Check &amp; Save</b>. The live preview must appear before the Camera step is complete.</li><li>If a stream fails, fix the URL and try again.</li></ul><h4>Required cameras</h4><ul><li><b>Checkpoint:</b> Front camera only.</li><li><b>Weigh Bridge:</b> Top camera and Front camera. Automation captures Top. ANPR supplies the front image.</li></ul>`
     },
     display: {
         title: 'Display Configuration Help',
@@ -1815,7 +1832,7 @@ const MODULE_HELP_CONTENT = {
     },
     'io-controller': {
         title: 'I/O Controller Configuration Help',
-        html: `<h4>Connection Basics</h4><ul><li>Select <b>TCP</b> or <b>Serial</b>, and set the correct slave ID.</li><li>Set input and output start addresses exactly as per the I/O card datasheet. This is mandatory for proper I/O controller configuration.</li></ul><h4>Output Mode</h4><ul><li><b>Direct:</b> Each traffic light and boom barrier action uses separate pins (for example: red_pin, green_pin, open_pin, close_pin) connected directly to the I/O controller.</li><li><b>Relay:</b> One pin per device controls a relay with NO/NC contacts.<br>Relay ON (coil=HIGH) => NO contact => GREEN<br>Relay OFF (coil=LOW) => NC contact => RED</li></ul><h4>Sensors (Cut/Uncut Logic)</h4><ul><li>Inputs are labelled <b>Entry sensor</b>, <b>WB Sensor</b>, and <b>Exit Sensor</b>.</li><li><b>Default signal</b> means sensor not-triggered (uncut) state.</li><li>During <b>Test Sensor</b>, the app first checks default state, then asks you to trigger the sensor (cut), and verifies the state change.</li><li>If the sensor is not triggered correctly, the app shows an error and configuration cannot be saved.</li><li>Enter the correct pin number and signal dropdown value based on sensor and I/O controller datasheets.</li></ul><h4>Output Testing</h4><ul><li>Test entry/exit traffic lights and boom barriers.</li><li>Confirm physical hardware state change when prompted.</li></ul><h4>Before Save</h4><ul><li>All I/O tests must pass before configuration can be saved.</li></ul>`
+        html: `<h4>Connection Basics</h4><ul><li>Select <b>TCP</b> or <b>Serial</b>, and set the correct slave ID.</li><li>Set input and output start addresses exactly as per the I/O card datasheet.</li></ul><h4>Output Mode</h4><ul><li><b>Direct:</b> each light and barrier action has its own pin (red, green, open, close).</li><li><b>Relay:</b> one pin per device drives a relay. Relay ON is the NO contact. Relay OFF is the NC contact.</li></ul><h4>What must pass before save</h4><ul><li><b>Checkpoint:</b> Entry sensor and Entry traffic light. Entry boom barrier only if you turn Enable on. Test both Open and Close when it is enabled.</li><li><b>Weigh Bridge:</b> Entry sensor, WB sensor, Exit sensor, and entry plus exit traffic lights. Boom barriers only for the sides you enable. Bi-directional sites test ENTRY A and ENTRY B.</li></ul>`
     },
     digitizer: {
         title: 'Digitizer Configuration Help',
@@ -2380,11 +2397,15 @@ async function saveRfidConfig(ip, port, mode, rfidMake, rfidModel, validated, ca
         if (String(mode || '').toUpperCase() === 'API' && apiPort) {
             payload.api_port = String(apiPort);
         }
-        await fetch('/api/config/rfid', {
+        const saveResp = await withSectionSaveGuard('rfid', () => fetch('/api/config/rfid', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
-        });
+        }));
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+            throw new Error(saveData.message || 'Could not save RFID');
+        }
         
         // Only mark as validated and navigate if validated is true
         // This prevents navigation when RFID test fails or is incomplete
@@ -2465,7 +2486,8 @@ async function checkCamera(cameraId) {
             feedImg.classList.add('active');
             placeholder.classList.add('hidden');
             
-            // Save configuration
+            // Save configuration. Parent validated is set only when every
+            // camera this site needs has passed.
             const payload = {
                 [cameraId]: {
                     rtsp_url: rtspUrl,
@@ -2474,17 +2496,23 @@ async function checkCamera(cameraId) {
                     validated: true
                 }
             };
-            
-            await fetch('/api/config/camera', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            // Keep local config in sync for completion checks
             if (!config.camera) config.camera = {};
             if (!config.camera[cameraId]) config.camera[cameraId] = {};
             Object.assign(config.camera[cameraId], payload[cameraId]);
+            if (isCameraSectionComplete()) {
+                payload.validated = true;
+                config.camera.validated = true;
+            }
+
+            const saveResp = await withSectionSaveGuard('camera', () => fetch('/api/config/camera', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }));
+            const saveData = await saveResp.json().catch(() => ({}));
+            if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+                throw new Error(saveData.message || 'Could not save Camera');
+            }
             
             showToast('success', 'Success', `${cameraId.charAt(0).toUpperCase() + cameraId.slice(1)} camera connected`);
             
@@ -2576,27 +2604,59 @@ function getDisplayPcbMode() {
     return isDisplayBidirectionalSite() ? 'b' : 'a';
 }
 
+function displayTopicIp(ip) {
+    const text = String(ip || '').trim();
+    return text || 'display IP';
+}
+
 function syncDisplayIpFieldsVisibility() {
     const bi = isDisplayBidirectionalSite();
     const ipBGroup = document.getElementById('displayIpBGroup');
     const ipLabel = document.getElementById('displayIpLabel');
     const ipHint = document.getElementById('displayIpHint');
     const modeHint = document.getElementById('displayModeHint');
+    const publishEl = document.getElementById('displayPublishTopic');
+    const replyEl = document.getElementById('displayReplyTopic');
+    const ip = (typeof readDisplayIpField === 'function') ? readDisplayIpField('displayIp') : '';
+    const ipB = (typeof readDisplayIpField === 'function') ? readDisplayIpField('displayIpB') : '';
     if (ipBGroup) {
         ipBGroup.style.display = bi ? 'block' : 'none';
     }
     if (ipLabel) {
         ipLabel.textContent = bi ? 'Display IP Address (Entry A)' : 'Display IP Address';
     }
+    const topicA = `display_info/${displayTopicIp(ip)}`;
+    const replyA = `pcb_id/${displayTopicIp(ip)}`;
     if (ipHint) {
         ipHint.textContent = bi
-            ? 'Bi-directional WB: Entry A display. Topics use display_info/{ip}.'
-            : 'Checkpoint / unidirectional: one display. Topics use display_info/{ip}.';
+            ? `Entry A publishes on ${topicA}.`
+            : `This display publishes on ${topicA}.`;
+    }
+    if (publishEl) {
+        if (bi && ipB) {
+            publishEl.textContent = `${topicA} and display_info/${displayTopicIp(ipB)}`;
+        } else {
+            publishEl.textContent = topicA;
+        }
+    }
+    if (replyEl) {
+        if (bi && ipB) {
+            replyEl.textContent = `${replyA} and pcb_id/${displayTopicIp(ipB)}`;
+        } else {
+            replyEl.textContent = replyA;
+        }
     }
     if (modeHint) {
         const mode = getDisplayPcbMode();
-        modeHint.innerHTML = `This site mode: <strong>${mode}</strong> → data_info/${mode}`;
+        modeHint.innerHTML = `This site answers with <strong>${mode}</strong> on data_info/${mode}`;
     }
+    ['displayIp', 'displayIpSelect', 'displayIpB', 'displayIpBSelect', 'displayIpManual', 'displayIpBManual'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.topicBound === '1') return;
+        el.dataset.topicBound = '1';
+        el.addEventListener('input', syncDisplayIpFieldsVisibility);
+        el.addEventListener('change', syncDisplayIpFieldsVisibility);
+    });
 }
 
 function toggleDisplayFields() {
@@ -2694,7 +2754,7 @@ async function checkAndSaveDisplay() {
         const result = await response.json();
         
         if (result.status === 200) {
-            await fetch('/api/config/display', {
+            const saveResp = await withSectionSaveGuard('display', () => fetch('/api/config/display', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
@@ -2710,7 +2770,11 @@ async function checkAndSaveDisplay() {
                     model: displayModel,
                     validated: true 
                 })
-            });
+            }));
+            const saveData = await saveResp.json().catch(() => ({}));
+            if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+                throw new Error(saveData.message || 'Could not save Display');
+            }
             
             showToast('success', 'Success', result.message);
             markSectionValidated('display');
@@ -2826,6 +2890,12 @@ function toggleRelayFields() {
         tlRelay.style.display = 'block';
         bbDirect.style.display = 'none';
         bbRelay.style.display = 'block';
+    }
+    applyCheckpointIoConstraints();
+    if (isCheckpointFamily()) {
+        document.querySelectorAll('#io-controller .profile-wb-only').forEach((el) => {
+            el.style.display = 'none';
+        });
     }
 }
 
@@ -3801,14 +3871,7 @@ async function testBoomBarrierRelay(location, action) {
 }
 
 function isBoomBarrierValidationRequired(outputMode) {
-    if (outputMode === 'direct') {
-        const entryEnabled = document.getElementById('entryBoomEnabled')?.checked || false;
-        const exitEnabled = document.getElementById('exitBoomEnabled')?.checked || false;
-        return entryEnabled || exitEnabled;
-    }
-    const entryEnabled = document.getElementById('entryBoomRelayEnabled')?.checked || false;
-    const exitEnabled = document.getElementById('exitBoomRelayEnabled')?.checked || false;
-    return entryEnabled || exitEnabled;
+    return isBoomBarrierEnabled('entry', outputMode) || isBoomBarrierEnabled('exit', outputMode);
 }
 
 function hasRequiredBoomBarrierTestsPassed(outputMode) {
@@ -3873,7 +3936,7 @@ function uniTrafficLightRelayPinForSave(location) {
 }
 
 function boomDirectConfigForSave(location) {
-    const enabled = document.getElementById(`${location}BoomEnabled`)?.checked || false;
+    const enabled = isBoomBarrierEnabled(location, 'direct');
     if (!enabled) {
         return { open_pin: '', close_pin: null, enabled: false };
     }
@@ -3885,7 +3948,7 @@ function boomDirectConfigForSave(location) {
 }
 
 function boomRelayConfigForSave(location) {
-    const enabled = document.getElementById(`${location}BoomRelayEnabled`)?.checked || false;
+    const enabled = isBoomBarrierEnabled(location, 'relay');
     const desc = location === 'entry'
         ? 'Relay 3: NO=Open, NC=Close'
         : 'Relay 4: NO=Open, NC=Close';
@@ -4217,14 +4280,14 @@ async function saveIOConfig() {
                 validated: getSensorValidatedForSave(1)
             },
             wb_sensor: {
-                pin: sensorPinForSave(2),
+                pin: isCheckpointFamily() ? '' : sensorPinForSave(2),
                 default_signal: document.getElementById('sensor2DefaultSignal')?.value || "low",
-                validated: getSensor2ValidatedForSave()
+                validated: isCheckpointFamily() ? null : getSensor2ValidatedForSave()
             },
             exit_sensor: {
-                pin: sensorPinForSave(3),
+                pin: isCheckpointFamily() ? '' : sensorPinForSave(3),
                 default_signal: document.getElementById('sensor3DefaultSignal')?.value || "low",
-                validated: getSensorValidatedForSave(3)
+                validated: isCheckpointFamily() ? null : getSensorValidatedForSave(3)
             }
         },
         traffic_lights: {
@@ -4323,7 +4386,7 @@ async function saveIOConfig() {
         configData.traffic_lights.exit = {
             make: document.getElementById('exitTLMake')?.value.trim() || '',
             model: document.getElementById('exitTLModel')?.value.trim() || '',
-            validated: getTrafficLightValidatedForSave('exit')
+            validated: isCheckpointFamily() ? null : getTrafficLightValidatedForSave('exit')
         };
     }
     configData.boom_barriers.entry = {
@@ -4345,11 +4408,18 @@ async function saveIOConfig() {
     }
     
     try {
-        await fetch('/api/config/io_controller', {
+        const saveResp = await withSectionSaveGuard('io-controller', () => fetch('/api/config/io_controller', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(configData)
-        });
+        }));
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || saveData.status !== 200) {
+            const errText = saveData.message || 'I/O Controller configuration could not be saved';
+            showToast('error', 'I/O Controller', errText);
+            markSectionNotValidated('io-controller');
+            return;
+        }
         
         // After a successful save, reset dirty flag and resnapshot config
         try {
@@ -4359,7 +4429,7 @@ async function saveIOConfig() {
             ioConfigDirty = false;
         }
 
-        showToast('success', 'Saved', 'I/O Controller configuration saved');
+        showToast('success', 'Saved', saveData.message || 'I/O Controller configuration saved');
         markSectionValidated('io_controller');
         
         // Update assigned device based on connection type
@@ -4517,11 +4587,11 @@ async function checkAndSaveDigitizer() {
             return;
         }
 
-        const saveResp = await fetch('/api/config/digitizer', {
+        const saveResp = await withSectionSaveGuard('digitizer', () => fetch('/api/config/digitizer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-        });
+        }));
         const saveData = await saveResp.json();
         if (!saveResp.ok || saveData.status !== 200) {
             throw new Error(saveData.message || 'Failed to save digitizer configuration');
@@ -4567,13 +4637,17 @@ async function checkAndSaveHandheldRfid() {
 
         // Disabled = skip without live tag
         if (result.skipped) {
-            await fetch('/api/config/handheld_rfid', {
+            const skipResp = await withSectionSaveGuard('handheld-rfid', () => fetch('/api/config/handheld_rfid', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     enabled: false, make, model, device_id: deviceId, ip, port, validated: null,
                 }),
-            });
+            }));
+            const skipData = await skipResp.json().catch(() => ({}));
+            if (!skipResp.ok || (skipData.status && skipData.status !== 200)) {
+                throw new Error(skipData.message || 'Could not save Handheld RFID');
+            }
             showToast('success', 'Handheld RFID', result.message);
             markSectionSkipped('handheld_rfid');
             navigateToNext('handheld-rfid');
@@ -4692,7 +4766,7 @@ async function saveHandheldRfidWait() {
         return;
     }
     try {
-        await fetch('/api/config/handheld_rfid', {
+        const saveResp = await withSectionSaveGuard('handheld-rfid', () => fetch('/api/config/handheld_rfid', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4705,7 +4779,11 @@ async function saveHandheldRfidWait() {
                 validated: true,
                 last_rfid_data: tag,
             }),
-        });
+        }));
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+            throw new Error(saveData.message || 'Could not save Handheld RFID');
+        }
         closeHandheldRfidWaitModal();
         showToast('success', 'Handheld RFID', 'RFID tag data received');
         markSectionValidated('handheld_rfid');
@@ -4816,6 +4894,7 @@ async function pollHandheldRfidWait(meta) {
         document.querySelectorAll('.profile-wb-only').forEach((el) => {
             el.style.display = 'none';
         });
+        if (typeof applyCheckpointIoConstraints === 'function') applyCheckpointIoConstraints();
     }
     if (typeof applyCameraUiForProfile === 'function') applyCameraUiForProfile();
     if (typeof onRfidModeChange === 'function') onRfidModeChange();
@@ -4968,7 +5047,7 @@ async function validateAudio() {
     
     try {
         // Backend uses 'voice' section name
-        await fetch('/api/config/voice', {
+        const saveResp = await withSectionSaveGuard('audio', () => fetch('/api/config/voice', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -4976,7 +5055,11 @@ async function validateAudio() {
                 model: audioModel,
                 validated: true 
             })
-        });
+        }));
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+            throw new Error(saveData.message || 'Could not save Audio');
+        }
         
         showToast('success', 'Success', 'Audio configuration validated');
         markSectionValidated('audio');
@@ -5044,10 +5127,57 @@ function markSectionNotValidated(section) {
     console.log(`[Reset] Section '${configSection}' marked as not validated`);
 }
 
+const _sectionInvalidateEpoch = {};
+const _sectionSaveLock = {};
+
+function sectionInvalidateApiKey(section) {
+    const sectionMap = {
+        'io-controller': 'io_controller',
+        'io_controller': 'io_controller',
+        'audio': 'voice',
+        'voice': 'voice',
+        'handheld-rfid': 'handheld_rfid',
+        'handheld_rfid': 'handheld_rfid',
+    };
+    return sectionMap[section] || section;
+}
+
+function cancelScheduledSectionInvalidation(section) {
+    const keys = [section, sectionInvalidateApiKey(section)];
+    keys.forEach((key) => {
+        if (_sectionInvalidateTimers[key]) {
+            clearTimeout(_sectionInvalidateTimers[key]);
+            delete _sectionInvalidateTimers[key];
+        }
+    });
+}
+
+/**
+ * Drop a pending "user edited this" invalidation, wait for one already in
+ * flight, then keep later invalidations from overwriting this save.
+ */
+async function withSectionSaveGuard(section, fn) {
+    const api = sectionInvalidateApiKey(section);
+    cancelScheduledSectionInvalidation(section);
+    const start = Date.now();
+    while (_sectionInvalidateInFlight[api] && Date.now() - start < 4000) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    _sectionSaveLock[api] = true;
+    _sectionInvalidateEpoch[api] = (_sectionInvalidateEpoch[api] || 0) + 1;
+    try {
+        return await fn();
+    } finally {
+        _sectionSaveLock[api] = false;
+    }
+}
+
 function schedulePersistSectionInvalidation(section) {
     if (_suppressSectionInvalidation) return;
     const key = section || '';
     if (!key) return;
+    const api = sectionInvalidateApiKey(key);
+    if (_sectionSaveLock[api]) return;
     if (_sectionInvalidateTimers[key]) {
         clearTimeout(_sectionInvalidateTimers[key]);
     }
@@ -5058,21 +5188,24 @@ function schedulePersistSectionInvalidation(section) {
 
 async function persistSectionInvalidation(section) {
     if (_suppressSectionInvalidation) return;
-    const sectionMap = {
-        'io-controller': 'io_controller',
-        'audio': 'voice',
-        'handheld-rfid': 'handheld_rfid',
-    };
-    const apiSection = sectionMap[section] || section;
+    const apiSection = sectionInvalidateApiKey(section);
+    if (_sectionSaveLock[apiSection]) return;
     if (_sectionInvalidateInFlight[apiSection]) return;
+    const epoch = _sectionInvalidateEpoch[apiSection] || 0;
     _sectionInvalidateInFlight[apiSection] = true;
     try {
+        if (_sectionSaveLock[apiSection] || (_sectionInvalidateEpoch[apiSection] || 0) !== epoch) {
+            return;
+        }
         const response = await fetch(`/api/config/${apiSection}/invalidate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: '{}',
         });
         const result = await response.json().catch(() => ({}));
+        if (_sectionSaveLock[apiSection] || (_sectionInvalidateEpoch[apiSection] || 0) !== epoch) {
+            return;
+        }
         if (!response.ok || result.status !== 200) {
             console.warn(
                 '[Invalidate] Failed for',

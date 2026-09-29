@@ -305,12 +305,12 @@ def _shutdown_event_name(instance_key: str) -> str:
     # Local\ namespace -> per-session; both instances are launched by the same
     # operator session, so no Global\ privilege is required.
     safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in instance_key)
-    return f"Local\\E_Rawanna_IoT_{safe}_Shutdown"
+    return f"Local\\GMDC_Checkpoint_Config_{safe}_Shutdown"
 
 
 def _mutex_name(instance_key: str) -> str:
     safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in instance_key)
-    return f"Local\\E_Rawanna_IoT_{safe}_Mutex"
+    return f"Local\\GMDC_Checkpoint_Config_{safe}_Mutex"
 
 
 def signal_graceful_shutdown(instance_key: str, logger: logging.Logger) -> bool:

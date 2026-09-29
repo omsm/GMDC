@@ -58,7 +58,7 @@ def show_fatal_message(title: str, message: str) -> None:
 
 def fatal_exit(
     message: str,
-    title: str = "E-Rawanna",
+    title: str = "GMDC Checkpoint Config",
     log_path: Optional[str] = None,
     exit_code: int = 1,
 ) -> None:

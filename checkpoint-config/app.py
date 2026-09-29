@@ -1,7 +1,9 @@
-#IoT - Weighbridge Configuration
-
+# GMDC Checkpoint Configuration
 import sys
 import os
+
+# False: open Safari or Chrome. True: native window at screen size, no right-click or copy/paste.
+SECURED_WEB_VIEW = False
 
 # PyInstaller EXE must re-enter this binary for the post-exit update worker (see services/updater_service.py).
 if __name__ == "__main__" and len(sys.argv) >= 3 and sys.argv[1] == "--iot-update-worker":
@@ -172,7 +174,7 @@ else:
         "conversion.py not found.\n\n"
         f"Place conversion.py next to the executable:\n{conversion_path}\n\n"
         "This file is required and is not bundled inside the EXE.",
-        title="E-Rawanna",
+        title=APP_NAME,
         log_path=log_file,
     )
 
@@ -208,7 +210,7 @@ except ImportError as e:
         f"Failed to load application modules:\n{e}\n\n"
         f"Working directory: {os.getcwd()}\n"
         f"Python path: {sys.path}",
-        title="E-Rawanna",
+        title=APP_NAME,
         log_path=log_file,
     )
 
@@ -361,17 +363,13 @@ def inject_wb_type():
         "valid_cards_start_index": get_valid_cards_start_index(),
         "valid_card_char_lengths": get_valid_card_char_lengths(),
         "config_port": PORT,
+        "secured_web_view": SECURED_WEB_VIEW,
     }
 pdf_generator = PDFReportGenerator(config_manager)
 
-# External old configuration auto-fetch path (site-provided legacy file)
-EXTERNAL_OLD_IOT_CONFIG_PATH = r"C:\Program Files\CSM Tech\eRawannaSetup\IotConfig\iot_configuration.json"
-
 def _external_old_config_available() -> bool:
-    try:
-        return os.path.exists(EXTERNAL_OLD_IOT_CONFIG_PATH)
-    except Exception:
-        return False
+    """Legacy Rajmines auto-import path is no longer used."""
+    return False
 server_service = ServerService()
 rfid_service = RFIDService()
 camera_service = CameraService()
@@ -932,8 +930,13 @@ def save_section_config(section):
         # so explicitly mark the section as validated after a successful save.
         if section == 'io_controller':
             config_manager.set_validated('io_controller', True)
-        return jsonify({"status": 200, "message": f"{section} configuration saved"})
-    return jsonify({"status": 500, "message": f"Failed to save {section} configuration"}), 500
+        from services.config_manager import section_label
+        return jsonify({"status": 200, "message": f"{section_label(section)} configuration saved"})
+    from services.config_manager import section_label
+    return jsonify({
+        "status": 500,
+        "message": f"Could not save {section_label(section)}",
+    }), 500
 
 @app.route('/api/config/<section>/reset', methods=['POST'])
 def reset_section_config(section):
@@ -993,35 +996,9 @@ def import_configuration():
 @app.route('/api/auto-import-config', methods=['POST'])
 def auto_import_configuration():
     """
-    Auto-import from the legacy config file path present on the installation PC.
-    Used when user answers "Yes" on the /devices auto-fetch prompt.
+    Legacy Rajmines auto-import is disabled.
     """
-    try:
-        if not os.path.exists(EXTERNAL_OLD_IOT_CONFIG_PATH):
-            return jsonify({"status": 404, "message": "External legacy config not found"}), 404
-
-        with open(EXTERNAL_OLD_IOT_CONFIG_PATH, "rb") as f:
-            raw = f.read()
-
-        text = raw.decode("utf-8-sig")
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            return jsonify({"status": 400, "message": "Legacy config JSON must be an object"}), 400
-
-        ok = config_manager.import_configuration_for_upgrade(data)
-        if not ok:
-            return jsonify({"status": 500, "message": "Failed to import legacy configuration"}), 500
-
-        return jsonify({
-            "status": 200,
-            "message": "Legacy configuration imported successfully",
-            "completion": config_manager.get_completion_status()
-        })
-    except json.JSONDecodeError:
-        return jsonify({"status": 400, "message": "Legacy config is not valid JSON"}), 400
-    except Exception as e:
-        logger.error(f"Auto import legacy config error: {e}", exc_info=True)
-        return jsonify({"status": 500, "message": f"Auto import failed: {str(e)}"}), 500
+    return jsonify({"status": 404, "message": "External legacy config not found"}), 404
 
 
 # ============== Audio Test Route ==============
@@ -2037,9 +2014,9 @@ if __name__ == '__main__':
         logger.info("Close the application window (or browser tab) to exit.")
 
         if getattr(sys, 'frozen', False):
-            icon_path = os.path.join(os.path.dirname(sys.executable), 'rajmines.ico')
+            icon_path = os.path.join(os.path.dirname(sys.executable), 'gmdc.ico')
         else:
-            icon_path = os.path.join(app_data_path, 'rajmines.ico')
+            icon_path = os.path.join(app_data_path, 'gmdc.ico')
 
         def setup_and_run_webview():
             import webview
@@ -2071,25 +2048,25 @@ if __name__ == '__main__':
                         logger.error(f"Error in save_file API: {e}", exc_info=True)
                         return {"success": False, "message": str(e)}
 
-            logger.info("Creating native application window (force fullscreen)")
+            from utils.browser_launcher import _get_primary_screen_size
+            screen_w, screen_h = _get_primary_screen_size()
+            logger.info(
+                "Creating native window at screen size %sx%s (secured=%s)",
+                screen_w, screen_h, SECURED_WEB_VIEW,
+            )
             webview.create_window(
                 title=APP_NAME,
                 url=url,
+                width=screen_w,
+                height=screen_h,
                 min_size=(1200, 700),
                 resizable=True,
-                fullscreen=True,
-                maximized=True,
+                fullscreen=False,
+                maximized=False,
                 on_top=False,
                 shadow=True,
                 js_api=WebViewAPI(),
             )
-
-            # Ensure borderless fullscreen even if the host (WebView2/Qt) ignores the flag
-            try:
-                from utils.browser_launcher import force_native_window_fullscreen
-                force_native_window_fullscreen(APP_NAME)
-            except Exception as e:
-                logger.warning("Could not schedule force fullscreen: %s", e)
 
             if os.path.exists(icon_path) and sys.platform == 'win32':
                 def set_window_icon():
@@ -2155,9 +2132,19 @@ if __name__ == '__main__':
                 threading.Thread(target=set_window_icon, daemon=True).start()
 
             gui = None
-            if sys.platform == 'win32':
+            if SECURED_WEB_VIEW:
+                try:
+                    import PyQt5  # noqa: F401
+                    gui = 'qt'
+                except Exception:
+                    try:
+                        import PyQt6  # noqa: F401
+                        gui = 'qt'
+                    except Exception:
+                        logger.info("PyQt is not installed; using the platform webview")
+            if gui is None and sys.platform == 'win32':
                 gui = 'edgechromium'
-            elif sys.platform == 'darwin':
+            elif gui is None and sys.platform == 'darwin':
                 gui = 'cocoa'
             return run_webview_start(
                 APP_NAME,
@@ -2166,16 +2153,25 @@ if __name__ == '__main__':
                 gui=gui,
             )
 
-        launch_mode = run_ui_with_auto_fallback(
-            url=url,
-            ui_mode=APPLICATION_UI_MODE,
-            webview_timeout_sec=WEBVIEW_WINDOW_READY_TIMEOUT,
-            chrome_executable_path=CHROME_EXECUTABLE_PATH,
-            app_name=APP_NAME,
-            flask_thread=flask_thread,
-            setup_and_run_webview=setup_and_run_webview,
-            cleanup_callback=cleanup_all_connections,
-        )
+        if SECURED_WEB_VIEW:
+            launch_mode = run_ui_with_auto_fallback(
+                url=url,
+                ui_mode="webview",
+                webview_timeout_sec=WEBVIEW_WINDOW_READY_TIMEOUT,
+                chrome_executable_path=CHROME_EXECUTABLE_PATH,
+                app_name=APP_NAME,
+                flask_thread=flask_thread,
+                setup_and_run_webview=setup_and_run_webview,
+                cleanup_callback=cleanup_all_connections,
+            )
+        else:
+            from utils.browser_launcher import run_system_browser_until_exit
+            launch_mode = run_system_browser_until_exit(
+                url,
+                flask_thread,
+                cleanup_all_connections,
+                chrome_executable_path=CHROME_EXECUTABLE_PATH,
+            )
         logger.info("Application UI launched using: %s", launch_mode)
 
     except Exception as e:

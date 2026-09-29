@@ -23,48 +23,41 @@
     <div class="checklist-header">
         <i class="bi bi-cpu brand-icon"></i>
         <h1>GMDC Device Configuration</h1>
-        <p class="subtitle">Weighbridge Configuration Portal</p>
+        <p class="subtitle">Checkpoint and Weigh Bridge setup</p>
     </div>
     
     <div class="checklist-card">
-        <h2><i class="bi bi-clipboard-check"></i> Pre-Configuration Checklist</h2>
-        <p class="checklist-intro">Please ensure the following items are ready before proceeding:</p>
-        
-        <div class="checklist-items">
-            <label class="checklist-item">
-                <input type="checkbox" id="check1">
-                <span class="checkmark"></span>
-                <span class="check-text">All network devices have been assigned static IP addresses</span>
+        <h2><i class="bi bi-signpost-split"></i> Site type</h2>
+        <p class="checklist-intro">Choose Checkpoint or Weigh Bridge, then the IP range to scan.</p>
+
+        <div class="ip-range-section" style="margin-top: 0;">
+            <label class="form-label" for="siteTypeSelect">Configuration type</label>
+            <select id="siteTypeSelect" class="form-select">
+                {% for c in checkpoint_type_choices %}
+                <option value="{{ c.id }}" data-family="{{ c.family }}"
+                    {% if c.id == checkpoint_type %}selected{% endif %}>
+                    {{ c.label }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="directionChoiceBlock" class="layout-choice-list" role="radiogroup" aria-label="Weighbridge direction"
+            {% if checkpoint_profile.family != 'weighbridge' %}style="display:none"{% endif %}>
+            <p class="checklist-intro" style="margin-top: 12px;">Weigh Bridge direction</p>
+            <label class="layout-choice-card">
+                <input type="radio" name="weighbridgeLayoutChoice" value="unidirectional" class="layout-choice-input"
+                    {% if wb_type != 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-content">
+                    <span class="layout-choice-title">Unidirectional</span>
+                </span>
             </label>
-            <label class="checklist-item">
-                <input type="checkbox" id="check2">
-                <span class="checkmark"></span>
-                <span class="check-text">RFID reader is powered on and connected to the network</span>
-            </label>
-            <label class="checklist-item">
-                <input type="checkbox" id="check3">
-                <span class="checkmark"></span>
-                <span class="check-text">IP Cameras are powered on and configured with RTSP URLs</span>
-            </label>
-            <label class="checklist-item">
-                <input type="checkbox" id="check4">
-                <span class="checkmark"></span>
-                <span class="check-text">Display unit is connected (API mode or MQTT)</span>
-            </label>
-            <label class="checklist-item">
-                <input type="checkbox" id="check5">
-                <span class="checkmark"></span>
-                <span class="check-text">I/O Controller (Modbus) is powered on and connected</span>
-            </label>
-            <label class="checklist-item">
-                <input type="checkbox" id="check6">
-                <span class="checkmark"></span>
-                <span class="check-text">Weighbridge digitizer is connected via serial port. Please collect digitizer configuration from WB Owner.</span>
-            </label>
-            <label class="checklist-item"> 
-                <input type="checkbox" id="check7">
-                <span class="checkmark"></span>
-                <span class="check-text">Backend server is running and accessible</span>
+            <label class="layout-choice-card">
+                <input type="radio" name="weighbridgeLayoutChoice" value="bidirectional" class="layout-choice-input"
+                    {% if wb_type == 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-content">
+                    <span class="layout-choice-title">Bidirectional</span>
+                </span>
             </label>
         </div>
         
@@ -88,9 +81,9 @@
         </div>
         
         <div class="checklist-footer">
-            <button class="btn btn-primary btn-lg" id="proceedBtn" onclick="proceedToScan()" disabled>
+            <button class="btn btn-primary btn-lg" id="proceedBtn" onclick="proceedToScan()">
                 <i class="bi bi-arrow-right-circle"></i>
-                Proceed to Device Discovery
+                Next
             </button>
             <button class="btn btn-outline" id="startFreshBtn" type="button" onclick="confirmStartFreshConfig()" title="Wipe saved configuration and start empty">
                 <i class="bi bi-arrow-counterclockwise"></i>
@@ -99,7 +92,6 @@
             <p class="checklist-note">
                 <i class="bi bi-info-circle"></i>
                 Existing configuration is kept on re-run. Use <b>Start fresh</b> only to wipe it.
-                Check all items above to enable the Proceed button.
             </p>
         </div>
     </div>

@@ -3,8 +3,8 @@
 GMDC Mines Automation launcher (macOS / Windows frozen binary).
 
 Reads iot_configuration.json next to this executable, then starts:
-  - mines-checkpoint   for checkpoint family (mines_entry, tracking_*, mines_exit)
-  - mines-weighbridge  for weighbridge family (tare_wb, vadaghat_wb, gross_wb)
+  - mines-checkpoint   when checkpoint_type is checkpoint
+  - mines-weighbridge  when checkpoint_type is weighbridge
 
 Usage (from Mines-Automation folder):
   ./automation
@@ -22,9 +22,22 @@ import time
 from pathlib import Path
 
 CHECKPOINT_TYPES = frozenset(
-    {"mines_entry", "tracking_1", "tracking_2", "mines_exit"}
+    {
+        "checkpoint",
+        "mines_entry",
+        "tracking_1",
+        "tracking_2",
+        "mines_exit",
+    }
 )
-WEIGHBRIDGE_TYPES = frozenset({"tare_wb", "vadaghat_wb", "gross_wb"})
+WEIGHBRIDGE_TYPES = frozenset(
+    {
+        "weighbridge",
+        "tare_wb",
+        "vadaghat_wb",
+        "gross_wb",
+    }
+)
 
 
 def install_root() -> Path:

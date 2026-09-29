@@ -100,63 +100,13 @@
         
         <div class="discovery-footer">
             <button class="btn btn-secondary" onclick="goBack()">
-                <i class="bi bi-arrow-left"></i> Back to Checklist
+                <i class="bi bi-arrow-left"></i> Back
             </button>
             <button class="btn btn-secondary" onclick="rescan()">
                 <i class="bi bi-arrow-clockwise"></i> Rescan
             </button>
             <button class="btn btn-primary btn-lg" onclick="proceedToConfig()">
                 <i class="bi bi-gear"></i> Continue to Configuration
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- Checkpoint type + direction selection -->
-<div class="modal-overlay" id="weighbridgeLayoutModal">
-    <div class="modal-container layout-modal">
-        <div class="modal-header">
-            <h2><i class="bi bi-signpost-split"></i> Checkpoint type</h2>
-            <p>Select which GMDC site this PC configures. Weighbridges also choose uni or bidirectional flow.</p>
-        </div>
-        <div class="modal-body layout-modal-body">
-            <label class="form-label" for="checkpointTypeSelect" style="color:#e2e8f0;margin-bottom:8px;display:block;">Site type</label>
-            <select id="checkpointTypeSelect" class="form-select" style="margin-bottom:16px;">
-                {% for c in checkpoint_type_choices %}
-                <option value="{{ c.id }}" data-family="{{ c.family }}"
-                    {% if c.id == checkpoint_type %}selected{% endif %}>
-                    {{ c.label }}
-                </option>
-                {% endfor %}
-            </select>
-            <div id="directionChoiceBlock" class="layout-choice-list" role="radiogroup" aria-label="Weighbridge direction">
-                <label class="layout-choice-card">
-                    <input type="radio" name="weighbridgeLayoutChoice" value="unidirectional" class="layout-choice-input" checked>
-                    <span class="layout-choice-icon layout-choice-icon--uni" aria-hidden="true"><i class="bi bi-arrow-right"></i></span>
-                    <span class="layout-choice-content">
-                        <span class="layout-choice-title-row">
-                            <span class="layout-choice-title">Unidirectional</span>
-                            <span class="layout-choice-badge">Default</span>
-                        </span>
-                    </span>
-                    <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
-                </label>
-                <label class="layout-choice-card">
-                    <input type="radio" name="weighbridgeLayoutChoice" value="bidirectional" class="layout-choice-input">
-                    <span class="layout-choice-icon layout-choice-icon--bi" aria-hidden="true"><i class="bi bi-arrow-left-right"></i></span>
-                    <span class="layout-choice-content">
-                        <span class="layout-choice-title-row">
-                            <span class="layout-choice-title">Bidirectional</span>
-                        </span>
-                    </span>
-                    <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
-                </label>
-            </div>
-        </div>
-        <div class="modal-footer layout-modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeWeighbridgeLayoutModal()">Cancel</button>
-            <button type="button" class="btn btn-primary" onclick="confirmWeighbridgeLayoutChoice()">
-                <i class="bi bi-check-lg"></i> Continue to configuration
             </button>
         </div>
     </div>

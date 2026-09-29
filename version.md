@@ -1,13 +1,34 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.13**
+**Current version: 1.14**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.13.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.14.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.13 — 2026-09-29 (latest)
+## 1.14 — 2026-09-30 (latest)
+
+checkpoint-config commissions a site as **Checkpoint** or **Weigh Bridge**. A saved front camera and a finished I/O test stay complete when you move between modules.
+
+### Site types
+- Page 1: Checkpoint or Weigh Bridge, plus the scan IP range. Weigh Bridge also asks unidirectional or bidirectional. Page 2 scans. Page 3 is device configuration.
+- **Checkpoint:** front camera only, one entry sensor, one entry traffic light, one entry boom, no digitizer
+- **Weigh Bridge:** top and front cameras, digitizer, entry and exit hardware. Bidirectional adds a second RFID reader and ENTRY A / ENTRY B traffic lights
+- Older ids (`mines_entry`, `tracking_1`, `tracking_2`, `mines_exit`, `tare_wb`, `vadaghat_wb`, `gross_wb`) load as Checkpoint or Weigh Bridge
+- RFID validation's first field still selects the trip: Checkpoint `T` / `CE` / `X`, Weigh Bridge `T` / `V` / `G`
+- API endpoint list is the same for both types
+- `SECURED_WEB_VIEW` at the top of `checkpoint-config/app.py`. `False` opens Safari or Chrome. `True` opens a native window at the screen size and blocks right-click and copy/paste
+- Update checks read releases from `omsm/GMDC-Compiled-Application`
+
+### Commissioning fixes
+- Checkpoint camera Check & Save keeps the green tick after you open another module. Completion follows the front camera
+- I/O Direct and Relay still open their own pin boxes. A checkpoint save needs the entry sensor and entry traffic light. The entry boom is required only when Enable is on (Open and Close). Hidden exit hardware is not required
+- Finish names the missing steps (Camera, I/O Controller). Display topics show the IP you entered (`display_info/192.168.1.70`)
+
+---
+
+## 1.13 — 2026-09-29
 
 Mines Exit waits for the exit document to download before boom close, and `reset_checkpoint` is off unless the site turns it on.
 
@@ -318,6 +339,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.14** | Config types are Checkpoint or Weigh Bridge; front-camera tick stays; checkpoint I/O ignores hidden exit hardware |
 | **1.13** | Mines Exit `X|` polls download/docs until documentDownloaded; `RESET_CHECKPOINT_FLAG` gates reset_checkpoint |
 | **1.12** | RFID_API_PORT Check & Save (120s, bi two ports); welcome.wav on WB start; low weight plays weight-error then IDLE |
 | **1.11** | macOS vendor Homebrew + Mosquitto bottles; local-first broker install in Mines-Automation bundle |

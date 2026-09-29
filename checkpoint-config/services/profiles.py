@@ -1,10 +1,11 @@
 """
-GMDC checkpoint profiles - single source of truth for which devices
-each site type needs.
+GMDC site profiles — two configuration types.
 
-Families:
-  checkpoint  - mines_entry, tracking_1, tracking_2, mines_exit
-  weighbridge - tare_wb, vadaghat_wb, gross_wb  (uni or bi direction)
+  checkpoint   — one entry sensor, one traffic light, one boom barrier
+  weighbridge  — uni or bi direction (digitizer, entry/exit lights and sensors)
+
+Trip behavior (entry / exit / tare / vadaghat / gross) is chosen later from
+the first field of the RFID validation response, not from separate site URLs.
 """
 
 from __future__ import annotations
@@ -108,13 +109,36 @@ def _weighbridge(profile_id: str, label: str) -> CheckpointProfile:
 
 
 CHECKPOINT_PROFILES: Dict[str, CheckpointProfile] = {
-    "mines_entry": _checkpoint("mines_entry", "Mines Entry"),
-    "tracking_1": _checkpoint("tracking_1", "Tracking Point-1"),
-    "tracking_2": _checkpoint("tracking_2", "Tracking Point-2"),
-    "mines_exit": _checkpoint("mines_exit", "Mines Exit"),
-    "tare_wb": _weighbridge("tare_wb", "Tare Weighbridge"),
-    "vadaghat_wb": _weighbridge("vadaghat_wb", "Vadaghat Point (Gross Check WB)"),
-    "gross_wb": _weighbridge("gross_wb", "Final Gross Weighbridge"),
+    "checkpoint": _checkpoint("checkpoint", "Checkpoint"),
+    "weighbridge": _weighbridge("weighbridge", "Weigh Bridge"),
+}
+
+# Older configs named a specific lane. They all use one of the two layouts above.
+_LEGACY_CHECKPOINT_TYPES = {
+    "mines_entry",
+    "tracking_1",
+    "tracking_2",
+    "mines_exit",
+    "mines-entry",
+    "mine_entry",
+    "mines-exit",
+    "mine_exit",
+    "tracking_point_1",
+    "tracking-point-1",
+    "tracking_point_2",
+    "tracking-point-2",
+}
+_LEGACY_WEIGHBRIDGE_TYPES = {
+    "tare_wb",
+    "vadaghat_wb",
+    "gross_wb",
+    "tare",
+    "tare-wb",
+    "gross",
+    "gross-wb",
+    "vadaghat",
+    "vadghat_wb",
+    "vadhghat_wb",
 }
 
 # Operator-facing list for the layout / type picker
@@ -123,15 +147,26 @@ CHECKPOINT_TYPE_CHOICES: List[Dict[str, str]] = [
     for p in CHECKPOINT_PROFILES.values()
 ]
 
-DEFAULT_CHECKPOINT_TYPE = "mines_entry"
+DEFAULT_CHECKPOINT_TYPE = "checkpoint"
 DEFAULT_DIRECTION = "unidirectional"  # only used when profile.directional
 
 
+def normalize_checkpoint_type(checkpoint_type: Optional[str]) -> str:
+    """Map a stored or legacy id to ``checkpoint`` or ``weighbridge``."""
+    key = (checkpoint_type or "").strip().lower().replace(" ", "_")
+    if not key:
+        return DEFAULT_CHECKPOINT_TYPE
+    if key in CHECKPOINT_PROFILES:
+        return key
+    if key in _LEGACY_WEIGHBRIDGE_TYPES:
+        return "weighbridge"
+    if key in _LEGACY_CHECKPOINT_TYPES:
+        return "checkpoint"
+    return DEFAULT_CHECKPOINT_TYPE
+
+
 def get_profile(checkpoint_type: Optional[str]) -> CheckpointProfile:
-    key = (checkpoint_type or DEFAULT_CHECKPOINT_TYPE).strip()
-    if key not in CHECKPOINT_PROFILES:
-        return CHECKPOINT_PROFILES[DEFAULT_CHECKPOINT_TYPE]
-    return CHECKPOINT_PROFILES[key]
+    return CHECKPOINT_PROFILES[normalize_checkpoint_type(checkpoint_type)]
 
 
 def resolve_direction(profile: CheckpointProfile, direction: Optional[str]) -> str:
@@ -277,29 +312,16 @@ _CHECKPOINT_API_FIELDS = (
     _API_BOOM,
     _API_RESET,
 )
-_WEIGHBRIDGE_API_FIELDS = (
-    _API_RFID,
-    _API_ANPR,
-    _API_INVALID,
-    _API_STATUS,
-    _API_WEIGHT,
-    _API_BOOM,
-    _API_RESET,
-)
+
+# One URL list for both site types. Lane-specific paths (tracking vs entry,
+# vadaghat-only) are not selected here; RFID validation's first field picks the flow.
+_COMMON_API_FIELDS = _CHECKPOINT_API_FIELDS + (_API_WEIGHT, _API_VADHGHAT_ADJUST)
 
 
 def api_endpoint_fields(checkpoint_type: Optional[str] = None) -> List[Dict[str, str]]:
-    """API URL rows to show in the finish-flow API endpoints editor."""
-    profile = get_profile(checkpoint_type)
-    fields = (
-        _WEIGHBRIDGE_API_FIELDS
-        if profile.family == "weighbridge"
-        else _CHECKPOINT_API_FIELDS
-    )
-    result = [dict(f) for f in fields]
-    if profile.id == "vadaghat_wb":
-        result.append(dict(_API_VADHGHAT_ADJUST))
-    return result
+    """API URL rows for the finish-flow editor. Same set for Checkpoint and Weigh Bridge."""
+    del checkpoint_type  # kept so existing callers can still pass a type
+    return [dict(f) for f in _COMMON_API_FIELDS]
 
 
 def profile_public_dict(checkpoint_type: Optional[str] = None) -> Dict[str, Any]:

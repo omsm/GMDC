@@ -596,7 +596,7 @@
                         </div>
                         <input type="text" class="form-control manual-input hidden" id="displayIp" placeholder="192.168.1.70">
                     </div>
-                    <small class="text-muted" id="displayIpHint">Checkpoint / unidirectional: one display. Used in topic display_info/{ip}.</small>
+                    <small class="text-muted" id="displayIpHint">This display publishes on display_info/display IP.</small>
                 </div>
                 <div class="form-group" id="displayIpBGroup" style="display: none;">
                     <label for="displayIpBSelect">Display IP Address (Entry B)</label>
@@ -625,8 +625,8 @@
                         <div>
                             <strong>MQTT Display Protocol</strong>
                             <p>Broker TCP: localhost:1883 (Mosquitto on this PC)</p>
-                            <p>Display publishes: <code>display_info/{DisplayIP}</code></p>
-                            <p>App answers: <code>pcb_id/{DisplayIP}</code> → <code>a</code> (checkpoint/uni) or <code>b</code> (bi-directional)</p>
+                            <p>Display publishes: <code id="displayPublishTopic">display_info/display IP</code></p>
+                            <p>App answers on: <code id="displayReplyTopic">pcb_id/display IP</code></p>
                             <p>Transactions: <code>data_info/a</code> or <code>data_info/b</code></p>
                             <p id="displayModeHint">This site mode: <strong>a</strong></p>
                         </div>
@@ -1220,7 +1220,7 @@
                                         <div class="form-group">
                                             <label>Enabled</label>
                                             <div class="toggle-switch">
-                                                <input type="checkbox" id="exitBoomEnabled" checked>
+                                                <input type="checkbox" id="exitBoomEnabled">
                                                 <label for="exitBoomEnabled">Enable Exit Barrier</label>
                                             </div>
                                         </div>
@@ -1304,7 +1304,7 @@
                                         <div class="form-group">
                                             <label>Enabled</label>
                                             <div class="toggle-switch">
-                                                <input type="checkbox" id="exitBoomRelayEnabled" checked>
+                                                <input type="checkbox" id="exitBoomRelayEnabled">
                                                 <label for="exitBoomRelayEnabled">Enable Exit Barrier</label>
                                             </div>
                                         </div>

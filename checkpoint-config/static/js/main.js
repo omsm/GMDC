@@ -1,4 +1,4 @@
-// E-Rawanna IoT - Configuration JavaScript
+// GMDC IoT - Configuration JavaScript
 // Main application logic
 
 /** Fixed server connection (read-only in UI). */
@@ -47,7 +47,7 @@ const APP_CONFIG = window.APP_CONFIG || {
     debug: true,
     requireDeviceInfo: false,
     enableCamera: true,
-    appName: 'E-Rawanna',
+    appName: 'GMDC',
     appVersion: '1.0.0',
     validCardsStartIndex: [],
     validCardCharLengths: [24, 32]
@@ -397,9 +397,9 @@ function initRequiredFieldIndicators() {
     
     // Update debug mode indicator
     if (APP_CONFIG.debug) {
-        console.log('[E-Rawanna IoT] Running in DEBUG mode - Make/Model fields are optional');
+        console.log('[GMDC IoT] Running in DEBUG mode - Make/Model fields are optional');
     } else {
-        console.log('[E-Rawanna IoT] Running in PRODUCTION mode - Make/Model fields are required');
+        console.log('[GMDC IoT] Running in PRODUCTION mode - Make/Model fields are required');
     }
 }
 

@@ -1,4 +1,4 @@
-// E-Rawanna IoT - Discovery Page JavaScript
+// GMDC Checkpoint Config — page 2 (network scan)
 
 let scanInterval = null;
 let discoveredDevices = {
@@ -277,10 +277,6 @@ function rescan() {
 
 function proceedToConfig() {
     sessionStorage.setItem('discoveredDevices', JSON.stringify(discoveredDevices));
-    if (typeof proceedToConfigWithLayoutChoice === 'function') {
-        proceedToConfigWithLayoutChoice();
-        return;
-    }
     window.location.href = '/devices';
 }
 

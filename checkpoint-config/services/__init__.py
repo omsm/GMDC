@@ -1,4 +1,4 @@
-# Services package for E-Rawanna IoT Configuration
+# Services package for GMDC Checkpoint Configuration
 
 # Explicitly import all service modules to ensure PyInstaller includes them
 from . import config_manager

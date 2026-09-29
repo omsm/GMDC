@@ -34,6 +34,26 @@ def bidirectional_entry_label(entry_key: str) -> str:
     return BIDIRECTIONAL_ENTRY_LABEL.get(entry_key, str(entry_key))
 
 
+_SECTION_LABELS = {
+    "rfid": "RFID",
+    "handheld_rfid": "Handheld RFID",
+    "camera": "Camera",
+    "display": "Display",
+    "io_controller": "I/O Controller",
+    "digitizer": "Digitizer",
+    "voice": "Audio",
+    "server": "Server",
+}
+
+
+def section_label(section: str) -> str:
+    """User-facing name for a wizard section key."""
+    key = str(section or "").strip()
+    if key in _SECTION_LABELS:
+        return _SECTION_LABELS[key]
+    return key.replace("_", " ").replace("-", " ").strip().title() or "section"
+
+
 def _rename_dict_key(parent: dict, old_key: str, new_key: str) -> None:
     if not isinstance(parent, dict) or old_key not in parent:
         return
@@ -226,8 +246,9 @@ def migrate_gmdc_api_defaults(config: dict) -> None:
         return
     if "schema_version" not in config:
         config["schema_version"] = 1
-    if not config.get("checkpoint_type"):
-        config["checkpoint_type"] = "mines_entry"
+    from services.profiles import normalize_checkpoint_type
+
+    config["checkpoint_type"] = normalize_checkpoint_type(config.get("checkpoint_type"))
 
     dig = config.get("digitizer")
     if isinstance(dig, dict):
@@ -895,7 +916,7 @@ def _invalidate_layout_dependent_sections(config: dict) -> None:
 DEFAULT_CONFIG = {
     "schema_version": 1,
     "device_ip": "",
-    "checkpoint_type": "mines_entry",
+    "checkpoint_type": "checkpoint",
     "wb_type": "unidirectional",
     "server": {
         "ip": "",
@@ -1641,6 +1662,77 @@ class ConfigManager:
         rfid = self.config.get("rfid") or {}
         return isinstance(rfid, dict) and rfid.get("validated") is True
 
+    def _camera_completion(self, profile):
+        """
+        Camera nav status.
+
+        Checkpoint requires Front only. Weigh Bridge requires Top and Front.
+        A stale parent ``validated: false`` must not hide a camera that already
+        passed Check & Save.
+        """
+        camera_config = self.config.get("camera") or {}
+        if not isinstance(camera_config, dict):
+            return False
+        top_block = camera_config.get("top") if isinstance(camera_config.get("top"), dict) else {}
+        front_block = camera_config.get("front") if isinstance(camera_config.get("front"), dict) else {}
+        top_valid = top_block.get("validated", False)
+        front_valid = front_block.get("validated", False)
+        parent = camera_config.get("validated", None)
+
+        if getattr(profile, "family", "") == "weighbridge":
+            if top_valid is True and front_valid is True:
+                return True
+            if parent is None and top_valid is None and front_valid is None:
+                return None
+            return False
+
+        if front_valid is True:
+            return True
+        if front_valid is None and parent is None:
+            return None
+        return False
+
+    def _checkpoint_io_devices_complete(self, io: dict) -> bool:
+        """Checkpoint I/O: entry sensor, entry traffic light, entry boom if enabled."""
+        sensors = io.get("sensors") if isinstance(io.get("sensors"), dict) else {}
+        entry_sensor = sensors.get("entry_sensor") if isinstance(sensors.get("entry_sensor"), dict) else {}
+        if entry_sensor.get("validated") is not True:
+            return False
+
+        lights = io.get("traffic_lights") if isinstance(io.get("traffic_lights"), dict) else {}
+        entry_light = lights.get("entry") if isinstance(lights.get("entry"), dict) else {}
+        light_validated = entry_light.get("validated", False)
+        if light_validated is not True and light_validated is not None:
+            return False
+
+        barriers = io.get("boom_barriers") if isinstance(io.get("boom_barriers"), dict) else {}
+        mode = str(io.get("output_mode") or barriers.get("mode") or "direct")
+        if mode not in ("direct", "relay"):
+            mode = "direct"
+        mode_block = barriers.get(mode) if isinstance(barriers.get(mode), dict) else {}
+        entry_cfg = mode_block.get("entry") if isinstance(mode_block.get("entry"), dict) else {}
+        if entry_cfg.get("enabled"):
+            entry_meta = barriers.get("entry") if isinstance(barriers.get("entry"), dict) else {}
+            if entry_meta.get("validated") is not True:
+                return False
+        return True
+
+    def _io_completion(self, profile):
+        """I/O nav status. Parent true/null wins; otherwise required devices for this site."""
+        io = self.config.get("io_controller") or {}
+        if not isinstance(io, dict):
+            return False
+        parent = io.get("validated", False)
+        if parent is None:
+            return None
+        if parent is True:
+            return True
+        if getattr(profile, "family", "") == "checkpoint":
+            return self._checkpoint_io_devices_complete(io)
+        if self._traffic_lights_complete():
+            return True
+        return False
+
     def _traffic_lights_complete(self) -> bool:
         """Traffic lights validated under io_controller for current layout."""
         io_config = self.config.get("io_controller") or {}
@@ -1665,12 +1757,9 @@ class ConfigManager:
         return (entry_v is True or entry_v is None) and (exit_v is True or exit_v is None)
 
     def get_checkpoint_type(self) -> str:
-        """Active checkpoint profile id (mines_entry, tare_wb, ...)."""
-        from services.profiles import DEFAULT_CHECKPOINT_TYPE, CHECKPOINT_PROFILES
-        ct = (self.config.get("checkpoint_type") or DEFAULT_CHECKPOINT_TYPE).strip()
-        if ct not in CHECKPOINT_PROFILES:
-            return DEFAULT_CHECKPOINT_TYPE
-        return ct
+        """Active site type: checkpoint or weighbridge."""
+        from services.profiles import normalize_checkpoint_type
+        return normalize_checkpoint_type(self.config.get("checkpoint_type"))
 
     def set_checkpoint_type(self, checkpoint_type: str, direction: Optional[str] = None):
         """
@@ -1745,35 +1834,13 @@ class ConfigManager:
                 status[section] = (self.config.get("digitizer") or {}).get("validated", False)
                 continue
             if section == 'io_controller':
-                io_v = self.config.get("io_controller", {}).get("validated", False)
-                if io_v is True or io_v is None:
-                    status[section] = io_v
-                elif self._traffic_lights_complete() and io_v is not False:
-                    status[section] = True
-                else:
-                    status[section] = io_v if io_v is not None else False
+                status[section] = self._io_completion(profile)
                 continue
             if section == 'camera':
                 if not ENABLE_CAMERA_CONFIGURATION:
                     status[section] = True
                     continue
-                camera_config = self.config.get('camera', {})
-                validated_value = camera_config.get('validated')
-                if validated_value is not None:
-                    status[section] = validated_value
-                    continue
-                top_valid = camera_config.get('top', {}).get('validated', False)
-                front_valid = camera_config.get('front', {}).get('validated', False)
-                # Tare/Vadaghat/Gross configure both RTSP cameras. Runtime
-                # captures only Top; ANPR supplies the Front image.
-                if profile.family == "weighbridge":
-                    if top_valid is None and front_valid is None:
-                        status[section] = None
-                    else:
-                        status[section] = bool(top_valid and front_valid)
-                    continue
-                # Mines Entry/Exit and Tracking points configure Front only.
-                status[section] = front_valid
+                status[section] = self._camera_completion(profile)
                 continue
             if section == 'voice':
                 voice_config = self.config.get('voice', {})
@@ -1799,9 +1866,10 @@ class ConfigManager:
         if not status['all_complete']:
             # Find incomplete sections (not validated and not skipped)
             incomplete = [k for k, v in status.items() if k != 'all_complete' and v is not True and v is not None]
+            needed = ", ".join(section_label(name) for name in incomplete)
             return {
                 "status": 400,
-                "message": f"Configuration incomplete. Missing: {', '.join(incomplete)}"
+                "message": f"Configuration incomplete. Still needed: {needed}"
             }
         
         try:

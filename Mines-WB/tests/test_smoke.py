@@ -34,7 +34,7 @@ class TestSettings(unittest.TestCase):
 
         s = load_settings()
         self.assertTrue(s.config_path)
-        self.assertIn("tare", s.checkpoint_type.lower() or "tare_wb")
+        self.assertEqual(s.checkpoint_type, "weighbridge")
         self.assertTrue(s.digitizer_url.startswith("http"))
         self.assertIn("reset_checkpoint", s.reset_checkpoint_url)
         self.assertIn("vadhghat_weight_adjustment", s.vadhghat_weight_adjustment_url)

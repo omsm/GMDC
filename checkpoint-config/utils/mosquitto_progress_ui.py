@@ -55,10 +55,10 @@ class MosquittoProgressWindow:
         try:
             if getattr(sys, 'frozen', False):
                 # Running as executable
-                icon_path = os.path.join(os.path.dirname(sys.executable), 'rajmines.ico')
+                icon_path = os.path.join(os.path.dirname(sys.executable), 'gmdc.ico')
             else:
                 # Running as script
-                icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rajmines.ico')
+                icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'gmdc.ico')
             
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)

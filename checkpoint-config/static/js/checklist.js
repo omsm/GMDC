@@ -1,4 +1,4 @@
-// E-Rawanna IoT - Checklist Page JavaScript
+// GMDC Checkpoint Config — page 1 (site type and IP range)
 
 // ============== Theme Management ==============
 function getSystemTheme() {
@@ -94,23 +94,34 @@ function showLoading(show) {
     }
 }
 
-// ============== Checklist Logic ==============
-function initChecklist() {
-    const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
-    const proceedBtn = document.getElementById('proceedBtn');
+// ============== Page 1: type + IP range ==============
+function selectedSiteFamily() {
+    const sel = document.getElementById('siteTypeSelect');
+    if (!sel) return 'checkpoint';
+    const opt = sel.options[sel.selectedIndex];
+    return opt?.dataset?.family || sel.value || 'checkpoint';
+}
 
-    // Pre-Configuration: always start with all checklist items unchecked
-    localStorage.removeItem('checklistState');
-    checkboxes.forEach(cb => {
-        cb.checked = false;
-        cb.addEventListener('change', () => {
+function syncDirectionVisibility() {
+    const block = document.getElementById('directionChoiceBlock');
+    if (!block) return;
+    block.style.display = selectedSiteFamily() === 'weighbridge' ? '' : 'none';
+}
+
+function initChecklist() {
+    const sel = document.getElementById('siteTypeSelect');
+    if (sel) {
+        sel.addEventListener('change', () => {
+            syncDirectionVisibility();
             updateProceedButton();
         });
-    });
-
-    if (proceedBtn) {
-        proceedBtn.disabled = true;
     }
+    ['startIp', 'endIp'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', updateProceedButton);
+    });
+    syncDirectionVisibility();
+    updateProceedButton();
 }
 
 /**
@@ -171,18 +182,12 @@ async function showExistingConfigHint() {
 }
 
 function updateProceedButton() {
-    const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
     const proceedBtn = document.getElementById('proceedBtn');
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    
-    proceedBtn.disabled = !allChecked;
-    
-    // Save state
-    const state = {};
-    checkboxes.forEach(cb => {
-        state[cb.id] = cb.checked;
-    });
-    localStorage.setItem('checklistState', JSON.stringify(state));
+    if (!proceedBtn) return;
+    const startIp = (document.getElementById('startIp')?.value || '').trim();
+    const endIp = (document.getElementById('endIp')?.value || '').trim();
+    const siteType = document.getElementById('siteTypeSelect')?.value || '';
+    proceedBtn.disabled = !(startIp && endIp && siteType);
 }
 
 // ============== IP Range ==============
@@ -194,28 +199,55 @@ async function loadSuggestedIpRange() {
         // Populate IP range fields
         document.getElementById('startIp').value = data.start_ip;
         document.getElementById('endIp').value = data.end_ip;
+        updateProceedButton();
     } catch (error) {
         console.error('[IP Range] Error:', error);
         // Default values
         document.getElementById('startIp').value = '192.168.1.1';
         document.getElementById('endIp').value = '192.168.1.254';
+        updateProceedButton();
     }
 }
 
 // ============== Proceed to Scan ==============
-function proceedToScan() {
+async function proceedToScan() {
     const startIp = document.getElementById('startIp').value.trim();
     const endIp = document.getElementById('endIp').value.trim();
-    
+    const siteType = document.getElementById('siteTypeSelect')?.value || 'checkpoint';
+    const family = selectedSiteFamily();
+    const direction = family === 'weighbridge'
+        ? (document.querySelector('input[name="weighbridgeLayoutChoice"]:checked')?.value || 'unidirectional')
+        : 'unidirectional';
+
     if (!startIp || !endIp) {
         showToast('error', 'Validation Error', 'Please enter IP range');
         return;
     }
-    
-    // Store IP range in sessionStorage for the discovery page
+
+    try {
+        const response = await fetch('/api/config/checkpoint-type', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                checkpoint_type: siteType,
+                direction: direction,
+                wb_type: direction,
+            }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || (result.status && result.status !== 200)) {
+            showToast('error', 'Site type', result.message || 'Could not save the site type');
+            return;
+        }
+    } catch (error) {
+        console.error('[Site type] Error:', error);
+        showToast('error', 'Site type', 'Could not save the site type');
+        return;
+    }
+
+    sessionStorage.setItem('checkpointType', siteType);
+    sessionStorage.setItem('wbType', direction);
     sessionStorage.setItem('scanIpRange', JSON.stringify({ startIp, endIp }));
-    
-    // Navigate to discovery page
     window.location.href = '/discover';
 }
 

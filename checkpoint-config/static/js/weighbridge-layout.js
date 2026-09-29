@@ -20,7 +20,7 @@ function getCheckpointType() {
     }
     return window.APP_CONFIG?.checkpointType
         || sessionStorage.getItem('checkpointType')
-        || 'mines_entry';
+        || 'checkpoint';
 }
 
 function isBidirectionalLayout() {

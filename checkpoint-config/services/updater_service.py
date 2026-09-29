@@ -50,8 +50,6 @@ def _iot_find_best_source_root(extract_dir: str, target_exe: str) -> str:
             score += 60
         if "weighbridge-app.exe" in files_l:
             score += 30
-        if "erawanna-demo.exe" in files_l:
-            score += 20
         if "iot_configuration.json" in files_l:
             score += 10
         if score > best_score:
@@ -257,14 +255,19 @@ class UpdaterService:
         self,
         current_version: str,
         target_exe_name: str,
-        repo: str = "omsm/RajMines-Application",
-        install_dir: str = r"C:\RajeRawanna\IotConfig",
+        repo: str = "omsm/GMDC-Compiled-Application",
+        install_dir: str = "",
         check_interval_seconds: int = 120,
     ) -> None:
         self.current_version = str(current_version or "unknown")
         self.target_exe_name = target_exe_name
         self.repo = repo
-        self.install_dir = install_dir
+        if install_dir:
+            self.install_dir = install_dir
+        elif getattr(sys, "frozen", False):
+            self.install_dir = os.path.dirname(sys.executable)
+        else:
+            self.install_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.backup_dir = os.path.join(self.install_dir, "iot-update-backup")
         self.check_interval_seconds = check_interval_seconds
         self._thread: Optional[threading.Thread] = None

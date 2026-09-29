@@ -11,15 +11,17 @@ Common commissioning tool for all GMDC site types (copied from `wb-old/IoT-Confi
 | Stack | Flask + WebView2/Chrome + vanilla JS |
 | RFID | Zebra **mode=API** - app is HTTP server (`/rfid_data`); Mine-entry pattern |
 
-## Checkpoint profiles
+## Site types
 
-| Type | Family | Digitizer | TL / BB / Sensors |
-|------|--------|-----------|-------------------|
-| mines_entry, tracking_1, tracking_2, mines_exit | checkpoint | no | 1 / 1 / 1 |
-| tare_wb, vadaghat_wb, gross_wb (uni) | weighbridge | yes | 2 / 2 / 3 |
-| tare_wb, vadaghat_wb, gross_wb (bi) | weighbridge | yes | 4 / 2 / 3 |
+| Type | Direction | Digitizer | TL / BB / Sensors |
+|------|-----------|-----------|-------------------|
+| Checkpoint | — | no | 1 / 1 / 1 |
+| Weigh Bridge | unidirectional | yes | 2 / 2 / 3 |
+| Weigh Bridge | bidirectional | yes | 4 / 2 / 3 |
 
-Profiles live in `services/profiles.py`.
+Profiles live in `services/profiles.py`. Older ids (`mines_entry`, `tracking_1`, `tare_wb`, …) load as Checkpoint or Weigh Bridge. RFID validation's first field selects the trip flow. API URLs are the same for both types.
+
+`SECURED_WEB_VIEW` at the top of `app.py`: `False` opens Safari or Chrome; `True` opens a native window at the screen size and blocks right-click and copy/paste.
 
 ## Run
 
@@ -33,5 +35,6 @@ Opens on http://127.0.0.1:8080 (same host/port the Zebra reader POSTs tags to: `
 
 ## Still TODO
 
+- After the packaging script builds the executables, upload that build to GitHub releases on https://github.com/omsm/GMDC-Compiled-Application using the version number. Update checks already read `omsm/GMDC-Compiled-Application` releases.
 - PDF report: checkpoint_type wording
 - Digitizer-app must implement `POST /read_stable_weight` before live WB weight tests work

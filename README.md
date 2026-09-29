@@ -4,7 +4,7 @@ Python runtimes for Gujarat Mineral Development Corporation (GMDC) mine-yard che
 
 This workspace is one site install. Shared packages (`gmdc_common`, `checkpoint-config`, `digitizer-app`) live next to two family runtimes so every PC can commission hardware, share drivers, and run the matching site flow via `checkpoint_type`.
 
-**Current product version:** see [`version.md`](version.md) (**1.13**).
+**Current product version:** see [`version.md`](version.md) (**1.14**).
 
 ## Site flow
 
@@ -13,15 +13,10 @@ Mines entry → Tare WB → Tracking point-1 → Vadaghat (gross check WB)
            → Tracking point-2 → Final gross WB → Mines exit
 ```
 
-| Stage | Runtime folder | `checkpoint_type` |
-|-------|----------------|-------------------|
-| Mines Entry | `Mines-Checkpoint/` | `mines_entry` |
-| Tracking Point-1 | `Mines-Checkpoint/` | `tracking_1` |
-| Tracking Point-2 | `Mines-Checkpoint/` | `tracking_2` |
-| Mines Exit | `Mines-Checkpoint/` | `mines_exit` |
-| Tare weighbridge | `Mines-WB/` | `tare_wb` |
-| Vadaghat (gross check) | `Mines-WB/` | `vadaghat_wb` |
-| Final gross WB | `Mines-WB/` | `gross_wb` |
+| Stage | Runtime folder | Config type | Trip prefix |
+|-------|----------------|-------------|-------------|
+| Mines Entry, Tracking, Mines Exit | `Mines-Checkpoint/` | `checkpoint` | `T` / `CE` / `X` |
+| Tare, Vadaghat, Final gross | `Mines-WB/` | `weighbridge` | `T` / `V` / `G` |
 
 Legacy folders `Mine-entry/`, `Tracking-point-1/`, and `TareWb-App/` remain as reference copies; **new work should use `Mines-Checkpoint` and `Mines-WB`**.
 
@@ -68,8 +63,10 @@ Commissioning tool for all site types. Flask UI on **http://127.0.0.1:8080**. Wr
 
 | Type | Family | Digitizer | Typical I/O |
 |------|--------|-----------|-------------|
-| `mines_entry`, `tracking_1`, `tracking_2`, `mines_exit` | checkpoint → **Mines-Checkpoint** | no | 1 TL, 1 boom, 1 sensor |
-| `tare_wb`, `vadaghat_wb`, `gross_wb` | weighbridge → **Mines-WB** | yes | 2–4 TL / 2 boom / 3 sensors |
+| `checkpoint` | **Mines-Checkpoint** | no | Front camera, 1 sensor, 1 TL, 1 boom |
+| `weighbridge` (uni or bi) | **Mines-WB** | yes | Top + front cameras; entry/exit hardware; dual RFID when bi |
+
+Older ids (`mines_entry`, `tracking_*`, `mines_exit`, `tare_wb`, `vadaghat_wb`, `gross_wb`) load as `checkpoint` or `weighbridge`. The RFID validation prefix still selects the trip.
 
 ### `digitizer-app`
 

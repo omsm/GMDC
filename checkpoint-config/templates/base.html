@@ -49,16 +49,6 @@
                 fetch('/api/ui/minimize', { method: 'POST' }).catch(function () {});
             }
 
-            // Auto-enter once after load (do not re-enter on every key)
-            [300, 800, 1500].forEach(function (ms) {
-                setTimeout(function () {
-                    if (lockedFullscreen) enterBrowserFullscreen();
-                }, ms);
-            });
-            window.addEventListener('load', function () {
-                if (lockedFullscreen) enterBrowserFullscreen();
-            }, { once: true });
-
             document.addEventListener('keydown', function (e) {
                 var key = e.key || e.code;
                 if (key === 'Escape' || key === 'Esc') {
@@ -85,6 +75,24 @@
             window.gmdcEnterFullscreen = enterAppFullscreen;
             window.gmdcMinimizeWindow = minimizeApp;
         })();
+        {% if secured_web_view %}
+        (function blockCopyAndContextMenu() {
+            document.addEventListener('contextmenu', function (e) {
+                e.preventDefault();
+            }, true);
+            ['copy', 'cut', 'paste'].forEach(function (name) {
+                document.addEventListener(name, function (e) {
+                    e.preventDefault();
+                }, true);
+            });
+            document.addEventListener('keydown', function (e) {
+                var key = (e.key || '').toLowerCase();
+                if ((e.ctrlKey || e.metaKey) && (key === 'c' || key === 'v' || key === 'x')) {
+                    e.preventDefault();
+                }
+            }, true);
+        })();
+        {% endif %}
     </script>
     <!-- Polyfills for older browsers -->
     <script>
@@ -372,7 +380,8 @@
             enableCamera: {{ enable_camera_configuration | default(true) | tojson }},
             allowSkipWbSensorTest: {{ enable_wb_sensor_test_skip | default(false) | tojson }},
             wbType: {{ wb_type | default('unidirectional') | tojson }},
-            checkpointType: {{ checkpoint_type | default('mines_entry') | tojson }},
+            checkpointType: {{ checkpoint_type | default('checkpoint') | tojson }},
+            securedWebView: {{ secured_web_view | default(false) | tojson }},
             profile: {{ checkpoint_profile | default({}) | tojson }},
             validCardsStartIndex: {{ valid_cards_start_index | default([]) | tojson }},
             validCardCharLengths: {{ valid_card_char_lengths | default([24, 32]) | tojson }},

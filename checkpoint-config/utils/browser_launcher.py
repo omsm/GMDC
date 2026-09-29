@@ -137,6 +137,24 @@ def wait_for_webview_window(title, timeout_sec):
 
 def _get_primary_screen_size():
     """Return (width, height) of the primary display, or (1920, 1080) fallback."""
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.check_output(
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "Finder" to get bounds of window of desktop',
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+            parts = [int(float(p.strip())) for p in out.split(",") if p.strip()]
+            if len(parts) >= 4 and parts[2] > 0 and parts[3] > 0:
+                return parts[2] - parts[0], parts[3] - parts[1]
+        except Exception:
+            pass
+        return 1920, 1080
     if sys.platform != "win32":
         return 1920, 1080
     try:
@@ -727,6 +745,64 @@ def launch_chromium_app_mode(url, chrome_path):
         logger.error("Failed to launch Chrome app mode: %s", exc)
         _chrome_process = None
         return None
+
+
+def launch_safari_or_chrome(url, chrome_executable_path=""):
+    """
+    Open the URL in Google Chrome when it is installed, otherwise Safari on macOS,
+    otherwise the system default browser. Does not force fullscreen.
+    Returns a short mode name: chrome, safari, or browser.
+    """
+    chrome = find_chrome_executable(chrome_executable_path or "")
+    if chrome and os.path.isfile(chrome):
+        try:
+            subprocess.Popen(
+                [chrome, url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Opened Chrome: %s", url)
+            return "chrome"
+        except Exception as exc:
+            logger.warning("Chrome launch failed: %s", exc)
+
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(
+                ["open", "-a", "Safari", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Opened Safari: %s", url)
+            return "safari"
+        except Exception as exc:
+            logger.warning("Safari launch failed: %s", exc)
+
+    launch_default_browser(url)
+    return "browser"
+
+
+def run_system_browser_until_exit(url, flask_thread, cleanup_callback, chrome_executable_path=""):
+    """Open Safari or Chrome and keep the process alive until the terminal is interrupted."""
+    mode = launch_safari_or_chrome(url, chrome_executable_path)
+    logger.info(
+        "UI is in the browser (%s). Closing the tab does not stop the app; "
+        "press Ctrl+C in this terminal to exit.",
+        mode,
+    )
+    try:
+        while flask_thread and flask_thread.is_alive():
+            flask_thread.join(timeout=1.0)
+    except KeyboardInterrupt:
+        logger.info("Interrupted - shutting down")
+    finally:
+        if cleanup_callback:
+            try:
+                cleanup_callback()
+            except Exception as exc:
+                logger.warning("Cleanup callback error: %s", exc)
+        os._exit(0)
+    return mode
 
 
 def launch_default_browser(url):

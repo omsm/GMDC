@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for E-Rawanna IoT Configuration Application
+PyInstaller spec file for GMDC Checkpoint Configuration
 This spec file configures PyInstaller to build a standalone executable (ONEFILE mode)
 Creates a single .exe file with all dependencies bundled
 
@@ -33,8 +33,7 @@ datas = [
     ('templates', 'templates'),
     # Static files (CSS, JS, audio)
     ('static', 'static'),
-    # Application icon (copy to exe directory)
-    ('rajmines.ico', '.'),
+    # Optional window icon beside this spec: gmdc.ico (not bundled if absent)
     # Editable files loaded at runtime from beside configuration.exe (not bundled):
     # - conversion.py
     # - logging_config.py
@@ -299,5 +298,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(spec_root, 'rajmines.ico'),  # Application icon - embeds icon in .exe file
+    icon=(os.path.join(spec_root, 'gmdc.ico') if os.path.isfile(os.path.join(spec_root, 'gmdc.ico')) else None),
 )
