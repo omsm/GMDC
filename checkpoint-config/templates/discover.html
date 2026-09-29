@@ -10,11 +10,13 @@
         <span>{{ app_name }}</span>
     </div>
     <div class="header-actions">
-        <button class="btn btn-link" onclick="goBack()" title="Back to Checklist">
-            <i class="bi bi-arrow-left"></i> Back
+        <button type="button" class="header-back-btn" onclick="goBack()" title="Back to Checklist">
+            <i class="bi bi-chevron-left"></i>
+            <span>Back</span>
         </button>
-        <button class="theme-toggle" id="versionInfoBtn" title="Application Version: {{ app_version }}" onclick="showAppVersionInfo()">
+        <button type="button" class="header-version-btn" id="versionInfoBtn" title="Application version" onclick="showAppVersionInfo()">
             <i class="bi bi-info-circle"></i>
+            <span>Version</span>
         </button>
         <button class="theme-toggle" id="themeToggle" title="Toggle theme">
             <i class="bi bi-sun-fill" id="themeIcon"></i>

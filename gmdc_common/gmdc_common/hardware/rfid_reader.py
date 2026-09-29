@@ -98,6 +98,7 @@ class TCPRFIDReader(RFIDReader):
         self.reconnect_sec = reconnect_sec
         self._thread: Optional[threading.Thread] = None
         self._sock: Optional[socket.socket] = None
+        self._link_up = False
         self._stop = threading.Event()
 
     def start(self) -> bool:
@@ -187,18 +188,22 @@ class TCPRFIDReader(RFIDReader):
     def _read_loop(self, sock: socket.socket) -> None:
         buffer = ""
         sock.settimeout(1.0)
-        while not self._stop.is_set():
-            try:
-                data = sock.recv(4096)
-                if not data:
+        self._link_up = True
+        try:
+            while not self._stop.is_set():
+                try:
+                    data = sock.recv(4096)
+                    if not data:
+                        break
+                    buffer += data.decode("utf-8", errors="ignore")
+                    buffer = self._try_parse_buffer(buffer)
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    logger.debug("RFID read loop end: %s", e)
                     break
-                buffer += data.decode("utf-8", errors="ignore")
-                buffer = self._try_parse_buffer(buffer)
-            except socket.timeout:
-                continue
-            except Exception as e:
-                logger.debug("RFID read loop end: %s", e)
-                break
+        finally:
+            self._link_up = False
 
     def _try_parse_buffer(self, buffer: str) -> str:
         buffer = buffer.strip()
@@ -234,6 +239,7 @@ class TCPRFIDReader(RFIDReader):
             "host": self.host,
             "port": self.port,
             "running": self._running,
+            "connected": bool(self._link_up),
         }
 
 
@@ -241,7 +247,11 @@ class DemoRFIDReader(RFIDReader):
     """No TCP - tags arrive only via inject_payload (/rfid_data)."""
 
     def get_status(self) -> dict:
-        return {"type": "demo", "running": self._running}
+        return {
+            "type": "demo",
+            "running": self._running,
+            "connected": bool(self._running),
+        }
 
 
 class ApiRFIDReader(RFIDReader):
@@ -256,6 +266,7 @@ class ApiRFIDReader(RFIDReader):
         return {
             "type": "api",
             "running": self._running,
+            "connected": False,
             "intake": "POST /rfid_data or POST /rfid_data_from_mobile_app",
         }
 

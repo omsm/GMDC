@@ -216,6 +216,9 @@
     <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/bootstrap-icons.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    {% if liquid_glass %}
+    <link href="{{ url_for('static', filename='css/liquid-glass.css') }}" rel="stylesheet">
+    {% endif %}
     <!-- Browser compatibility check -->
     <script>
         (function() {
@@ -305,6 +308,14 @@
     </script>
 </head>
 <body>
+    {% if liquid_glass %}
+    <div class="liquid-scene" aria-hidden="true">
+        <div class="liquid-orb liquid-orb-a"></div>
+        <div class="liquid-orb liquid-orb-b"></div>
+        <div class="liquid-orb liquid-orb-c"></div>
+        <div class="liquid-orb liquid-orb-d"></div>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
 
     <!-- Notification Ribbon -->
@@ -320,6 +331,24 @@
     <div class="loading-overlay" id="loadingOverlay">
         <div class="spinner"></div>
         <span id="loadingMessage">Processing...</span>
+    </div>
+
+    <div class="custom-modal-overlay" id="appVersionOverlay" onclick="if (event.target === this) closeAppVersionInfo()">
+        <div class="custom-modal" role="dialog" aria-labelledby="appVersionTitle" aria-modal="true">
+            <div class="custom-modal-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0" id="appVersionTitle">Application version</h5>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeAppVersionInfo()" aria-label="Close">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="custom-modal-body">
+                <p class="mb-2" id="appVersionName">Application</p>
+                <p class="mb-0">Version <strong id="appVersionValue">—</strong></p>
+            </div>
+            <div class="custom-modal-footer">
+                <button class="btn btn-primary" type="button" onclick="closeAppVersionInfo()">OK</button>
+            </div>
+        </div>
     </div>
 
     <!-- Admin / Debug Password Modal -->
@@ -482,24 +511,27 @@
                 }
             }
 
-            // Global version info helper
             window.showAppVersionInfo = function() {
                 try {
                     var cfg = window.APP_CONFIG || {};
-                    var name = cfg.appName || 'Application';
-                    var version = cfg.appVersion || 'unknown';
-                    if (typeof showToast === 'function') {
-                        showToast('info', name + ' Version', 'Version ' + version);
-                    } else {
-                        alert(name + ' Version: ' + version);
+                    var nameEl = document.getElementById('appVersionName');
+                    var versionEl = document.getElementById('appVersionValue');
+                    var overlay = document.getElementById('appVersionOverlay');
+                    if (nameEl) nameEl.textContent = cfg.appName || 'Application';
+                    if (versionEl) versionEl.textContent = cfg.appVersion || 'unknown';
+                    if (overlay) {
+                        overlay.style.display = 'flex';
+                        return;
                     }
+                    alert((cfg.appName || 'Application') + '\nVersion ' + (cfg.appVersion || 'unknown'));
                 } catch (e) {
-                    try {
-                        alert('Application Version: unknown');
-                    } catch (e2) {
-                        console.error('Failed to show app version info', e, e2);
-                    }
+                    console.error('Failed to show app version info', e);
                 }
+            };
+
+            window.closeAppVersionInfo = function() {
+                var overlay = document.getElementById('appVersionOverlay');
+                if (overlay) overlay.style.display = 'none';
             };
 
             function ensureUpdateButton() {

@@ -12,6 +12,9 @@ Hardware / display / RFID cloud: gmdc_common.
 
 from __future__ import annotations
 
+# "auto" follows the OS. "macos" forces liquid glass. "windows" forces the earlier UI.
+OS_TYPE = "auto"
+
 import logging
 import signal
 import sys
@@ -422,7 +425,7 @@ def main() -> int:
     settings = ctx.settings
     assert settings
 
-    start_api_server(host=settings.api_host, port=settings.api_port)
+    start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
 
     banner = (
         "\n"

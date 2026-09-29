@@ -81,33 +81,33 @@
                 <div class="device-item">
                     <div class="device-header">
                         <div class="device-name">RFID Reader</div>
-                        <div class="device-status status-connected">
+                        <div class="device-status status-disconnected">
                             <span class="status-indicator"></span>
-                            Connected
+                            Disconnected
                         </div>
                     </div>
-                    <div class="device-details">Port: COM3</div>
+                    <div class="device-details">Port: N/A</div>
                 </div>
 
                 <!-- Digitizer -->
                 <div class="device-item">
                     <div class="device-header">
                         <div class="device-name">Digitizer</div>
-                        <div class="device-status status-connected">
+                        <div class="device-status status-disconnected">
                             <span class="status-indicator"></span>
-                            Connected
+                            Disconnected
                         </div>
                     </div>
-                    <div class="device-details">Port: COM4</div>
+                    <div class="device-details">Port: N/A</div>
                 </div>
 
                 <!-- I/O Controller -->
                 <div class="device-item">
                     <div class="device-header">
                         <div class="device-name">I/O Controller</div>
-                        <div class="device-status status-connected">
+                        <div class="device-status status-disconnected">
                             <span class="status-indicator"></span>
-                            Connected
+                            Disconnected
                         </div>
                     </div>
                     <div class="device-details">Modbus RTU</div>
@@ -188,6 +188,7 @@
                 <div class="flow-side-controls" id="flow-side-controls" hidden>
                     <button id="anpr-toggle-button" class="anpr-toggle-button is-on" type="button" onclick="handleAnprToggle()">ANPR: ON</button>
                     <button id="free-pass-button" class="free-pass-button" type="button" onclick="handleFreePass()">Free Pass</button>
+                    <button id="reset-button" class="reset-button" type="button" onclick="handleResetApplication()">Reset</button>
                 </div>
             </div>
 
@@ -416,10 +417,6 @@
             <p id="api-alert-detail">A required service is not reachable.</p>
             <button type="button" id="api-alert-dismiss" class="api-alert-dismiss">Dismiss</button>
         </div>
-    </div>
-
-    <div class="demo-controls" id="operator-controls" hidden>
-        <button id="reset-button" class="reset-button" type="button" onclick="handleResetApplication()">Reset</button>
     </div>
 
     <div id="login-modal" class="modal">

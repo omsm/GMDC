@@ -90,7 +90,7 @@ body {
     background: var(--bg-primary, #f8fafc);
     color: var(--text-primary, #0f172a);
     min-height: 100vh;
-    min-width: 900px; /* Support smaller desktops */
+    min-width: 0;
     transition: background-color 0.2s ease, color 0.2s ease;
     font-size: 14px;
     line-height: 1.5;
@@ -2001,7 +2001,7 @@ a:focus:not(:focus-visible) {
 /* Compact Desktop (900px - 1023px) - Sidebar collapses */
 @media (min-width: 900px) and (max-width: 1023px) {
     body {
-        min-width: 900px;
+        min-width: 0;
         font-size: 13px;
     }
     
@@ -2668,4 +2668,156 @@ select.form-control {
     color: var(--text-secondary);
     font-weight: 500;
     width: 45%;
+}
+
+/* Phone and small tablet: sidebar becomes a bar, content uses the full width */
+@media (max-width: 899px) {
+    body {
+        min-width: 0;
+        font-size: 14px;
+    }
+
+    .header {
+        height: auto;
+        min-height: 56px;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+    }
+
+    .header-brand {
+        font-size: 1rem;
+        min-width: 0;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .main-container {
+        flex-direction: column;
+        padding-top: 72px;
+    }
+
+    .sidebar {
+        position: sticky;
+        top: 72px;
+        left: auto;
+        right: auto;
+        bottom: auto;
+        width: 100%;
+        height: auto;
+        flex-direction: row;
+        align-items: stretch;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        z-index: 90;
+    }
+
+    .nav-items {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 4px;
+        overflow-x: auto;
+        padding: 8px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-item {
+        flex: 0 0 auto;
+        margin-bottom: 0;
+        white-space: nowrap;
+    }
+
+    .sidebar-footer {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        border-top: none;
+        border-left: 1px solid var(--border-color);
+        padding: 8px;
+    }
+
+    .btn-finish {
+        width: auto;
+        white-space: nowrap;
+        padding: 10px 14px;
+    }
+
+    .content {
+        margin-left: 0;
+        max-width: none;
+        width: 100%;
+        padding: 16px 12px 32px;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .camera-grid,
+    .sensor-config-grid,
+    .tl-config-grid,
+    .results-tables {
+        grid-template-columns: 1fr;
+    }
+
+    .sensor-config-grid,
+    .tl-config-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .btn-group-actions,
+    .ip-range-inputs,
+    .layout-modal-footer,
+    .row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .btn-group-actions .btn,
+    .skip-btn {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .col-md-6,
+    .col-md-4,
+    .col-md-3,
+    .col-md-8 {
+        width: 100%;
+    }
+
+    .checklist-page,
+    .discovery-page {
+        padding: 80px 12px 24px;
+    }
+
+    .checklist-card,
+    .discovery-progress-card {
+        padding: 16px;
+    }
+
+    .layout-choice-card {
+        grid-template-columns: auto 1fr;
+        grid-template-areas:
+            "icon content"
+            "icon check";
+    }
+
+    .modal-content,
+    .layout-modal {
+        width: calc(100vw - 24px);
+        max-width: none;
+        margin: 12px auto;
+    }
+
+    .digitizer-saved-table,
+    .results-table-container {
+        display: block;
+        overflow-x: auto;
+    }
 }

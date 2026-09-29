@@ -69,6 +69,20 @@
     gap: var(--spacing-md);
 }
 
+@media (max-width: 720px) {
+    .dig-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dig-weight-value {
+        font-size: clamp(40px, 16vw, 72px);
+    }
+
+    .dig-port-row {
+        flex-wrap: wrap;
+    }
+}
+
 .dig-field {
     display: flex;
     flex-direction: column;
@@ -204,10 +218,12 @@
     background: transparent;
     border: none;
     color: var(--neutral-700);
-    font-size: 28px;
-    line-height: 1;
+    font-size: 0;
+    line-height: 0;
     cursor: pointer;
-    padding: 0 4px;
+    padding: 0;
+    width: 32px;
+    height: 32px;
 }
 
 .dig-mode-toggle {

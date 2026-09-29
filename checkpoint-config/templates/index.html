@@ -7,8 +7,19 @@
     <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/bootstrap-icons.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    {% if liquid_glass %}
+    <link href="{{ url_for('static', filename='css/liquid-glass.css') }}" rel="stylesheet">
+    {% endif %}
 </head>
 <body>
+    {% if liquid_glass %}
+    <div class="liquid-scene" aria-hidden="true">
+        <div class="liquid-orb liquid-orb-a"></div>
+        <div class="liquid-orb liquid-orb-b"></div>
+        <div class="liquid-orb liquid-orb-c"></div>
+        <div class="liquid-orb liquid-orb-d"></div>
+    </div>
+    {% endif %}
     <!-- ========== STAGE 0: CHECKLIST ========== -->
     <div class="stage-container" id="checklistStage">
         <div class="checklist-page">

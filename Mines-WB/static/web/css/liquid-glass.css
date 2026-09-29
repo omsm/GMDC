@@ -1,0 +1,759 @@
+/* Operator dashboard liquid glass. Loaded only when the UI mode is macOS.
+   Warm stone field and frosted panels, matching checkpoint-config. */
+
+html,
+body {
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+    letter-spacing: -0.011em;
+}
+
+.liquid-scene {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    background:
+        radial-gradient(1200px 700px at 50% -10%, rgba(255, 255, 255, 0.95), transparent 60%),
+        linear-gradient(180deg, #f4efe8 0%, #e6dfd4 48%, #ddd4c8 100%);
+}
+
+html[data-theme="dark"] .liquid-scene {
+    background:
+        radial-gradient(900px 520px at 15% 0%, rgba(255, 176, 120, 0.45), transparent 55%),
+        radial-gradient(800px 600px at 90% 20%, rgba(120, 160, 130, 0.28), transparent 60%),
+        radial-gradient(700px 500px at 50% 100%, rgba(180, 100, 80, 0.22), transparent 55%),
+        linear-gradient(180deg, #3a342e 0%, #1c1c1e 55%, #121214 100%);
+}
+
+.liquid-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(40px);
+    opacity: 0.9;
+    animation: liquidDrift 28s ease-in-out infinite;
+}
+
+.liquid-orb-a {
+    width: 52vw;
+    height: 52vw;
+    left: -12vw;
+    top: -8vw;
+    background: radial-gradient(circle, rgba(255, 196, 160, 0.85), rgba(255, 196, 160, 0) 68%);
+}
+
+.liquid-orb-b {
+    width: 46vw;
+    height: 46vw;
+    right: -10vw;
+    top: 8vh;
+    background: radial-gradient(circle, rgba(196, 214, 190, 0.8), rgba(196, 214, 190, 0) 70%);
+    animation-delay: -8s;
+}
+
+.liquid-orb-c {
+    width: 40vw;
+    height: 40vw;
+    left: 28vw;
+    bottom: -14vw;
+    background: radial-gradient(circle, rgba(255, 228, 186, 0.75), rgba(255, 228, 186, 0) 68%);
+    animation-delay: -16s;
+}
+
+.liquid-orb-d {
+    width: 28vw;
+    height: 28vw;
+    right: 18vw;
+    bottom: 6vh;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 70%);
+    animation-delay: -4s;
+}
+
+html[data-theme="dark"] .liquid-orb-a {
+    background: radial-gradient(circle, rgba(255, 170, 110, 0.55), transparent 68%);
+}
+
+html[data-theme="dark"] .liquid-orb-b {
+    background: radial-gradient(circle, rgba(90, 110, 80, 0.28), transparent 70%);
+}
+
+html[data-theme="dark"] .liquid-orb-c {
+    background: radial-gradient(circle, rgba(160, 90, 70, 0.22), transparent 68%);
+}
+
+html[data-theme="dark"] .liquid-orb-d {
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 70%);
+}
+
+@keyframes liquidDrift {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(2vw, -1.5vh, 0) scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .liquid-orb { animation: none; }
+}
+
+.header,
+.container {
+    position: relative;
+    z-index: 1;
+}
+
+.header {
+    z-index: 100;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(28px) saturate(1.8);
+    -webkit-backdrop-filter: blur(28px) saturate(1.8);
+}
+
+html[data-theme="dark"] .header {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(28, 28, 30, 0.28));
+    border-bottom-color: rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.container {
+    background: transparent;
+}
+
+.left-panel,
+.right-panel,
+.device-item,
+.sensor-item,
+.live-weight-panel,
+.system-status,
+.timestamp,
+.modal-content,
+.flow-details-modal-content,
+.theme-toggle-btn,
+.camera-icon-btn {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.22) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        0 12px 28px rgba(70, 50, 30, 0.08);
+    backdrop-filter: blur(22px) saturate(1.6);
+    -webkit-backdrop-filter: blur(22px) saturate(1.6);
+}
+
+html[data-theme="dark"] .left-panel,
+html[data-theme="dark"] .right-panel,
+html[data-theme="dark"] .device-item,
+html[data-theme="dark"] .sensor-item,
+html[data-theme="dark"] .live-weight-panel,
+html[data-theme="dark"] .system-status,
+html[data-theme="dark"] .timestamp,
+html[data-theme="dark"] .modal-content,
+html[data-theme="dark"] .flow-details-modal-content,
+html[data-theme="dark"] .theme-toggle-btn,
+html[data-theme="dark"] .camera-icon-btn {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(28, 28, 30, 0.28));
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        0 12px 28px rgba(0, 0, 0, 0.28);
+    color: #f5f5f7;
+}
+
+.left-panel,
+.right-panel,
+.modal-content {
+    border-radius: 22px;
+}
+
+.device-item,
+.sensor-item,
+.live-weight-panel {
+    border-radius: 16px;
+}
+
+.panel-header,
+.panel-body,
+.flow-container {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.rfid-display-container,
+.rfid-display-header,
+.rfid-display-body {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.22) 100%);
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+.rfid-display-container {
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        0 12px 28px rgba(70, 50, 30, 0.08);
+}
+
+.rfid-display-header {
+    border-bottom-color: rgba(255, 255, 255, 0.45);
+    border-radius: 16px 16px 0 0;
+}
+
+html[data-theme="dark"] .rfid-display-container,
+html[data-theme="dark"] .rfid-display-header,
+html[data-theme="dark"] .rfid-display-body,
+html[data-theme="dark"] .live-weight-panel {
+    background: linear-gradient(180deg, rgba(255, 214, 176, 0.16), rgba(44, 36, 30, 0.55));
+    border-color: rgba(255, 214, 176, 0.22);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        0 12px 28px rgba(0, 0, 0, 0.28);
+    color: #f5f5f7;
+}
+
+html[data-theme="dark"] .rfid-display-header {
+    border-bottom-color: rgba(255, 214, 176, 0.16);
+}
+
+html[data-theme="dark"] .rfid-label,
+html[data-theme="dark"] .rfid-data-label,
+html[data-theme="dark"] .rfid-icon,
+html[data-theme="dark"] .sensor-name,
+html[data-theme="dark"] .live-weight-label {
+    color: rgba(245, 236, 226, 0.78);
+}
+
+html[data-theme="dark"] .rfid-data-value,
+html[data-theme="dark"] .live-weight-value {
+    color: #f6efe6;
+}
+
+html[data-theme="dark"] .state-inactive {
+    background: rgba(255, 214, 176, 0.12);
+    color: rgba(245, 236, 226, 0.82);
+    border-color: rgba(255, 214, 176, 0.28);
+}
+
+.device-status,
+.sensor-state {
+    border-radius: 980px;
+    padding: 3px 10px;
+}
+
+html[data-theme="dark"] .status-connected,
+html[data-theme="dark"] .status-active,
+html[data-theme="dark"] .state-active:not(.state-danger) {
+    background: rgba(126, 196, 150, 0.22);
+    color: #e7fff0;
+    border-color: rgba(176, 230, 194, 0.62);
+}
+
+html[data-theme="dark"] .status-connected .status-indicator,
+html[data-theme="dark"] .status-active .status-indicator {
+    background-color: #9be7bf !important;
+}
+
+html[data-theme="dark"] .status-disconnected,
+html[data-theme="dark"] .status-inactive,
+html[data-theme="dark"] .state-disconnected {
+    background: rgba(255, 132, 112, 0.2);
+    color: #ffe4de;
+    border-color: rgba(255, 176, 164, 0.58);
+}
+
+html[data-theme="dark"] .status-disconnected .status-indicator,
+html[data-theme="dark"] .status-inactive .status-indicator {
+    background-color: #ffb1a4 !important;
+}
+
+html[data-theme="dark"] .sensor-item,
+html[data-theme="dark"] .sensor-item:hover {
+    background: linear-gradient(180deg, rgba(255, 214, 176, 0.14), rgba(44, 36, 30, 0.5));
+    border-color: rgba(255, 214, 176, 0.22);
+}
+
+.logo-icon {
+    border-radius: 10px;
+    background: linear-gradient(180deg, #8d6b52 0%, #6b4e38 55%, #543c2a 100%);
+    color: #fffaf6;
+}
+
+.theme-toggle-btn,
+.camera-icon-btn,
+.system-status,
+.timestamp {
+    border-radius: 980px;
+}
+
+.header-login-btn,
+.demo-controls button,
+.flow-details-btn {
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    border-radius: 980px;
+    color: #fffaf6;
+    background: linear-gradient(180deg, #8d6b52 0%, #6b4e38 52%, #543c2a 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 8px 18px rgba(84, 60, 42, 0.22);
+}
+
+.header-login-btn:hover,
+.demo-controls button:hover,
+.flow-details-btn:hover {
+    color: #fffaf6;
+    background: linear-gradient(180deg, #a07b60 0%, #7a5a42 52%, #6b4e38 100%);
+}
+
+html[data-theme="dark"] .header-login-btn,
+html[data-theme="dark"] .demo-controls button,
+html[data-theme="dark"] .flow-details-btn,
+html[data-theme="dark"] .logo-icon {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+html[data-theme="dark"] .header-login-btn:hover,
+html[data-theme="dark"] .demo-controls button:hover,
+html[data-theme="dark"] .flow-details-btn:hover {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f8e0c8 0%, #e8c09a 52%, #d4a278 100%);
+}
+
+.header-login-btn.is-logout,
+.header-login-btn.is-logout:hover {
+    color: #fff;
+    background: linear-gradient(180deg, #ff6b63 0%, #ff3b30 55%, #d70015 100%);
+}
+
+.flow-step {
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.38);
+    border-color: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+}
+
+html[data-theme="dark"] .flow-step {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.live-weight-panel.has-weight .live-weight-value {
+    color: #6b4e38;
+}
+
+html[data-theme="dark"] .live-weight-panel.has-weight .live-weight-value {
+    color: #e4b48a;
+}
+
+.modal {
+    background: rgba(40, 32, 24, 0.28);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+}
+
+html[data-theme="dark"] .modal {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+select,
+textarea {
+    box-sizing: border-box;
+    border-radius: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: rgba(255, 255, 255, 0.46);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    color: inherit;
+}
+
+html[data-theme="dark"] input[type="text"],
+html[data-theme="dark"] input[type="password"],
+html[data-theme="dark"] input[type="number"],
+html[data-theme="dark"] input[type="search"],
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #f6efe6;
+}
+
+.panel-title,
+.header-title h1,
+.device-name,
+.rfid-icon {
+    color: #2a2118;
+}
+
+.header-title .subtitle,
+.device-details {
+    color: #6b5344;
+}
+
+html[data-theme="dark"] .panel-title,
+html[data-theme="dark"] .header-title h1,
+html[data-theme="dark"] .device-name,
+html[data-theme="dark"] .system-status,
+html[data-theme="dark"] .timestamp,
+html[data-theme="dark"] .camera-icon-btn,
+html[data-theme="dark"] .theme-toggle-btn {
+    color: #f6efe6;
+}
+
+html[data-theme="dark"] .header-title .subtitle,
+html[data-theme="dark"] .device-details {
+    color: rgba(246, 239, 230, 0.74);
+}
+
+.right-panel > .live-weight-panel,
+.right-panel > .rfid-display-container {
+    margin: 16px;
+}
+
+.flow-icon-item[data-state="idle"] .flow-icon-circle {
+    background: rgba(255, 255, 255, 0.62);
+    border-color: rgba(109, 78, 56, 0.28);
+    color: #6b4e38;
+}
+
+.flow-icon-label {
+    color: #5c4636;
+}
+
+.flow-icon-connector {
+    background: rgba(109, 78, 56, 0.28);
+}
+
+html[data-theme="dark"] .flow-icon-item[data-state="idle"] .flow-icon-circle {
+    background: rgba(255, 214, 176, 0.12);
+    border-color: rgba(255, 214, 176, 0.38);
+    color: #f6efe6;
+}
+
+html[data-theme="dark"] .flow-icon-label,
+html[data-theme="dark"] .flow-icon-meta {
+    color: rgba(246, 239, 230, 0.88);
+}
+
+html[data-theme="dark"] .flow-icon-connector {
+    background: rgba(255, 214, 176, 0.35);
+}
+
+.flow-step .step-title {
+    color: #6b4e38;
+}
+
+.flow-step .step-content {
+    color: #2a2118;
+}
+
+.flow-step.state-error .step-content {
+    color: #9f3a24;
+}
+
+html[data-theme="dark"] .flow-step .step-title,
+html[data-theme="dark"] .flow-step .step-content {
+    color: #f6efe6;
+}
+
+html[data-theme="dark"] .flow-step.state-error .step-title,
+html[data-theme="dark"] .flow-step.state-error .step-content {
+    color: #ffb4a2;
+}
+
+.camera-modal {
+    background: rgba(42, 33, 24, 0.46);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+}
+
+.camera-modal-content {
+    background: linear-gradient(180deg, rgba(255, 250, 246, 0.94), rgba(244, 236, 226, 0.9));
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    border-radius: 22px;
+    color: #2a2118;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        0 24px 60px rgba(42, 33, 24, 0.28);
+    backdrop-filter: blur(28px) saturate(1.6);
+    -webkit-backdrop-filter: blur(28px) saturate(1.6);
+}
+
+html[data-theme="dark"] .camera-modal {
+    background: rgba(0, 0, 0, 0.55);
+}
+
+html[data-theme="dark"] .camera-modal-content {
+    background: linear-gradient(180deg, rgba(62, 50, 40, 0.96), rgba(24, 20, 18, 0.96));
+    border-color: rgba(255, 214, 176, 0.24);
+    color: #f6efe6;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.camera-modal-header {
+    background: transparent;
+    border-bottom-color: rgba(109, 78, 56, 0.16);
+}
+
+.camera-modal-header h2,
+.camera-modal-close {
+    color: #2a2118;
+}
+
+html[data-theme="dark"] .camera-modal-header {
+    border-bottom-color: rgba(255, 214, 176, 0.16);
+}
+
+html[data-theme="dark"] .camera-modal-header h2,
+html[data-theme="dark"] .camera-modal-close {
+    color: #f6efe6;
+}
+
+.camera-modal-close {
+    border-radius: 980px;
+}
+
+.camera-modal-close:hover {
+    background: rgba(109, 78, 56, 0.12);
+    color: #2a2118;
+}
+
+html[data-theme="dark"] .camera-modal-close:hover {
+    background: rgba(255, 214, 176, 0.14);
+    color: #f6efe6;
+}
+
+#camera-modal .camera-modal-body {
+    background: #1c1612;
+    color: #fffaf6;
+}
+
+#camera-modal .camera-loading,
+#camera-modal .camera-loading p {
+    color: #fffaf6;
+}
+
+#camera-modal .camera-error,
+#camera-modal .camera-error p {
+    color: #ffb4a2;
+}
+
+.flow-details-modal-content .camera-modal-body,
+#update-modal .camera-modal-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 12px;
+    background: transparent;
+    color: #2a2118;
+    text-align: left;
+}
+
+html[data-theme="dark"] .flow-details-modal-content .camera-modal-body,
+html[data-theme="dark"] #update-modal .camera-modal-body,
+html[data-theme="dark"] #update-modal .camera-modal-body p,
+html[data-theme="dark"] #update-modal .camera-modal-body strong {
+    background: transparent;
+    color: #f6efe6;
+}
+
+#upd-progress-wrap div[style*="height:10px"] {
+    background: rgba(84, 60, 42, 0.16) !important;
+}
+
+html[data-theme="dark"] #upd-progress-wrap div[style*="height:10px"] {
+    background: rgba(255, 214, 176, 0.16) !important;
+}
+
+#upd-progress-bar {
+    background: linear-gradient(90deg, #c99268, #8d6b52) !important;
+}
+
+#upd-release-notes {
+    border: 1px solid rgba(84, 60, 42, 0.2) !important;
+    border-radius: 12px !important;
+    background: rgba(255, 255, 255, 0.38);
+    color: #2a2118;
+}
+
+html[data-theme="dark"] #upd-release-notes {
+    background: rgba(255, 214, 176, 0.08);
+    border-color: rgba(255, 214, 176, 0.22) !important;
+    color: #f6efe6;
+}
+
+#update-modal .nav-button {
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    border-radius: 980px;
+    padding: 10px 18px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #2a2118;
+    background: rgba(255, 255, 255, 0.5);
+}
+
+#camera-modal .camera-loading-spinner {
+    border-color: rgba(255, 250, 246, 0.28);
+    border-top-color: #e0b48a;
+}
+
+#update-modal #apply-update-btn,
+html[data-theme="dark"] #update-modal #apply-update-btn {
+    border-color: transparent;
+}
+
+#update-modal #apply-update-btn {
+    color: #fffaf6;
+    background: linear-gradient(180deg, #8d6b52 0%, #6b4e38 52%, #543c2a 100%);
+}
+
+html[data-theme="dark"] #update-modal .nav-button {
+    color: #f6efe6;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 214, 176, 0.28);
+}
+
+html[data-theme="dark"] #update-modal #apply-update-btn {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+}
+
+.login-card-header {
+    background: linear-gradient(180deg, #8d6b52 0%, #6b4e38 52%, #543c2a 100%);
+    color: #fffaf6;
+}
+
+html[data-theme="dark"] .login-card-header {
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+    color: #2a2118;
+}
+
+.modal-header-warning,
+.modal-header-warning h2,
+.modal-btn-warning,
+.modal-btn-warning:hover {
+    color: #2a2118;
+}
+
+.flow-side-controls .anpr-toggle-button,
+.flow-side-controls .free-pass-button,
+.flow-side-controls .reset-button {
+    border-radius: 980px;
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    padding: 8px 14px;
+    font-weight: 600;
+}
+
+.flow-side-controls .anpr-toggle-button {
+    color: #fffaf6;
+    background: linear-gradient(180deg, #3e9a6e 0%, #217a52 100%);
+}
+
+.flow-side-controls .anpr-toggle-button.is-off {
+    color: #5c4636;
+    background: rgba(255, 255, 255, 0.62);
+    border-color: rgba(109, 78, 56, 0.22);
+}
+
+html[data-theme="dark"] .flow-side-controls .anpr-toggle-button.is-off {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+    border-color: rgba(255, 255, 255, 0.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 8px 18px rgba(84, 60, 42, 0.22);
+}
+
+.flow-side-controls .free-pass-button {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+}
+
+.flow-side-controls .reset-button {
+    color: #fff;
+    background: linear-gradient(180deg, #ff6b63 0%, #ff3b30 55%, #d70015 100%);
+}
+
+.modal-body,
+.modal-body p,
+.login-label {
+    color: #2a2118;
+}
+
+html[data-theme="dark"] .modal-body,
+html[data-theme="dark"] .modal-body p,
+html[data-theme="dark"] .login-label {
+    color: #f6efe6;
+}
+
+.modal-body p.modal-warning {
+    color: #9f3a24;
+}
+
+html[data-theme="dark"] .modal-body p.modal-warning {
+    color: #ffb4a2;
+}
+
+.modal-footer {
+    background: transparent;
+    border-top-color: rgba(109, 78, 56, 0.14);
+}
+
+html[data-theme="dark"] .modal-footer {
+    border-top-color: rgba(255, 214, 176, 0.16);
+}
+
+.modal-btn {
+    border-radius: 980px;
+}
+
+.modal-btn-cancel {
+    background: rgba(255, 255, 255, 0.55);
+    color: #3a2a20;
+    border: 1px solid rgba(84, 60, 42, 0.16);
+}
+
+html[data-theme="dark"] .modal-btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f6efe6;
+    border-color: rgba(255, 214, 176, 0.28);
+}
+
+#login-submit-btn,
+#login-submit-btn:hover {
+    color: #fffaf6;
+    background: linear-gradient(180deg, #8d6b52 0%, #6b4e38 52%, #543c2a 100%);
+}
+
+html[data-theme="dark"] #login-submit-btn,
+html[data-theme="dark"] #login-submit-btn:hover {
+    color: #2a2118;
+    background: linear-gradient(180deg, #f3d2b0 0%, #e0b48a 52%, #c99268 100%);
+}
+
+.login-spinner {
+    background: rgba(255, 250, 246, 0.84);
+}
+
+.login-spinner p {
+    color: #2a2118;
+}
+
+html[data-theme="dark"] .login-spinner {
+    background: rgba(24, 20, 18, 0.84);
+}
+
+html[data-theme="dark"] .login-spinner p {
+    color: #f6efe6;
+}
+
+.login-input {
+    color: #2a2118;
+}
+
+html[data-theme="dark"] .login-input {
+    color: #f6efe6;
+}

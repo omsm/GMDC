@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
@@ -572,6 +574,62 @@ def build_frontend_snapshot(
     return payload
 
 
+def _usable(*values: Any) -> bool:
+    unset = {"", "N/A", "NA", "NONE", "NULL", "-", "--"}
+    for value in values:
+        text = str(value or "").strip()
+        if text.upper() not in unset:
+            return True
+    return False
+
+
+_PING_CACHE: Dict[str, tuple] = {}
+
+
+def _host_pings(ip: Any, timeout_sec: float = 1.0) -> bool:
+    """True only when this host answers ICMP. A missing address does not ping."""
+    host = str(ip or "").strip()
+    if not _usable(host) or host in {"0.0.0.0", "127.0.0.1", "localhost"}:
+        return False
+    now = time.monotonic()
+    cached = _PING_CACHE.get(host)
+    if cached and now - float(cached[0]) < 5.0:
+        return bool(cached[1])
+    if sys.platform == "win32":
+        cmd = ["ping", "-n", "1", "-w", "1000", host]
+    elif sys.platform == "darwin":
+        cmd = ["ping", "-c", "1", "-W", "1000", host]
+    else:
+        cmd = ["ping", "-c", "1", "-W", "1", host]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_sec + 0.5,
+            check=False,
+        )
+        ok = proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    _PING_CACHE[host] = (now, ok)
+    return ok
+
+
+def _rfid_online(ip: Any) -> bool:
+    """RFID is online only when its own IP answers a ping."""
+    return _host_pings(ip)
+
+
+def _io_online(status: Dict[str, Any]) -> bool:
+    kind = str((status or {}).get("type") or "").lower()
+    if kind == "demo":
+        return bool(status.get("connected"))
+    return bool(status.get("connected")) and _usable(
+        status.get("host"), status.get("port")
+    )
+
+
 def collect_device_status(ctx: Any) -> Dict[str, Any]:
     """Shape expected by static/web/js/app.js device badges."""
     settings = getattr(ctx, "settings", None) if ctx else None
@@ -598,12 +656,10 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
     rfid_port_info = (
         f"{rfid_ip}:{rfid_port}" if rfid_ip else str(rfid_port or "N/A")
     )
-    rfid_connected = bool(
-        rfid_st.get("running") or rfid_st.get("connected") or rfid_st.get("type")
-    )
+    rfid_connected = _rfid_online(rfid_ip)
 
     io_st = io.get_status() if io else {}
-    io_connected = bool(io_st.get("connected"))
+    io_connected = _io_online(io_st)
     io_port = io_st.get("host")
     if io_port and io_st.get("port"):
         io_port = f"{io_port}:{io_st.get('port')}"

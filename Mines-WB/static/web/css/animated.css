@@ -1322,9 +1322,10 @@ body {
 }
 
 .camera-modal-close {
+    position: relative;
     background: none;
     border: none;
-    font-size: 28px;
+    font-size: 0;
     color: var(--neutral-600);
     cursor: pointer;
     padding: 0;
@@ -1333,9 +1334,30 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     border-radius: 4px;
-    transition: all 0.15s ease;
-    line-height: 1;
+    transition: background 0.15s ease, color 0.15s ease;
+    line-height: 0;
+}
+
+.camera-modal-close::before,
+.camera-modal-close::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 14px;
+    height: 1.5px;
+    background: currentColor;
+    border-radius: 1px;
+}
+
+.camera-modal-close::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.camera-modal-close::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
 }
 
 .camera-modal-close:hover {
@@ -1415,4 +1437,57 @@ body {
 .camera-error p {
     font-size: 14px;
     margin: 0;
+}
+
+@media (max-width: 1480px) {
+    body {
+        height: auto;
+        min-height: 100vh;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    .header {
+        height: auto;
+        min-height: 56px;
+    }
+
+    .header-content {
+        height: auto;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+    }
+
+    .header-right {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .animation-container {
+        container-type: inline-size;
+        height: auto;
+        min-height: 0;
+        align-items: flex-start;
+        justify-content: flex-start;
+        overflow: hidden;
+        padding: 12px;
+    }
+
+    .animation-area {
+        flex: none;
+        transform-origin: top left;
+        transform: scale(min(1, calc(100cqi / 1400px)));
+        margin-bottom: calc(600px * min(1, 100cqi / 1400px) - 600px);
+    }
+}
+
+@media (max-width: 720px) {
+    .header-title .subtitle {
+        font-size: 12px;
+    }
+
+    .animation-container {
+        padding: 8px;
+    }
 }

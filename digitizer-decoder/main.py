@@ -15,6 +15,9 @@ Usage:
 
 from __future__ import annotations
 
+# "auto" follows the OS. "macos" forces liquid glass. "windows" forces the earlier UI.
+OS_TYPE = "auto"
+
 import logging
 import os
 import sys
@@ -97,7 +100,7 @@ def main() -> None:
         f"  Serial     : {settings.raw.get('port')} "
         f"(calibrated={settings.raw.get('status')})\n"
     )
-    start_api_server(bind_host, bind_port)
+    start_api_server(bind_host, bind_port, os_type=OS_TYPE)
 
 
 if __name__ == "__main__":

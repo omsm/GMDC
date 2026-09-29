@@ -14,7 +14,7 @@ from config.settings import app_dir
 logger = logging.getLogger("digitizer_decoder.server")
 
 
-def create_app() -> Flask:
+def create_app(os_type: str = "auto") -> Flask:
     web_root = os.path.join(app_dir(), "static", "web")
     app = Flask(
         "digitizer_decoder",
@@ -27,12 +27,12 @@ def create_app() -> Flask:
         "DIGITIZER_SECRET_KEY",
         "gmdc-digitizer-decoder-local-" + secrets.token_hex(8),
     )
-    register_routes(app)
+    register_routes(app, os_type=os_type)
     return app
 
 
-def start_api_server(host: str, port: int) -> Flask:
-    app = create_app()
+def start_api_server(host: str, port: int, os_type: str = "auto") -> Flask:
+    app = create_app(os_type=os_type)
     logger.info("Digitizer Decoder UI+API on http://%s:%s", host, port)
     app.run(host=host, port=port, threaded=True, use_reloader=False)
     return app

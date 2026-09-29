@@ -906,11 +906,9 @@ async function handleAnprToggle() {
 
 function setOperatorUnlocked(unlocked) {
     operatorLoggedIn = !!unlocked;
-    const controls = document.getElementById('operator-controls');
-    const flowControls = document.getElementById('flow-side-controls');
+    const controls = document.getElementById('flow-side-controls');
     const loginBtn = document.getElementById('login-button');
     if (controls) controls.hidden = !operatorLoggedIn;
-    if (flowControls) flowControls.hidden = !operatorLoggedIn;
     if (loginBtn) {
         loginBtn.textContent = operatorLoggedIn ? 'Logout' : 'Login';
         loginBtn.classList.toggle('is-logout', operatorLoggedIn);

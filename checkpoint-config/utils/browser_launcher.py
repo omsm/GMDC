@@ -10,6 +10,25 @@ import webbrowser
 
 logger = logging.getLogger(__name__)
 
+
+def _release_multiprocessing_semaphores():
+    """Unregister POSIX semaphores before os._exit.
+
+    os._exit skips the finalizers that would unlink them, so Python 3.12
+    prints "leaked semaphore" from the resource tracker child.
+    """
+    try:
+        from multiprocessing.resource_tracker import _resource_tracker
+
+        if getattr(_resource_tracker, "_fd", None) is None:
+            return
+        from multiprocessing.util import _run_finalizers
+
+        _run_finalizers(0)
+        _resource_tracker._stop()
+    except Exception:
+        pass
+
 _chrome_process = None
 _ui_hwnd = None
 _DEFAULT_UI_TITLE_HINTS = (
@@ -801,6 +820,7 @@ def run_system_browser_until_exit(url, flask_thread, cleanup_callback, chrome_ex
                 cleanup_callback()
             except Exception as exc:
                 logger.warning("Cleanup callback error: %s", exc)
+        _release_multiprocessing_semaphores()
         os._exit(0)
     return mode
 
@@ -1000,6 +1020,7 @@ def run_ui_with_auto_fallback(
             terminate_chrome_process()
         except Exception:
             pass
+        _release_multiprocessing_semaphores()
         os._exit(0)
 
     def _try_chrome():

@@ -5,6 +5,15 @@ import os
 # False: open Safari or Chrome. True: native window at screen size, no right-click or copy/paste.
 SECURED_WEB_VIEW = False
 
+# "auto" follows the OS. "macos" forces liquid glass. "windows" forces the earlier UI.
+OS_TYPE = "auto"
+
+
+def _liquid_glass_enabled() -> bool:
+    from utils.ui_os import liquid_glass_enabled
+
+    return liquid_glass_enabled(OS_TYPE)
+
 # PyInstaller EXE must re-enter this binary for the post-exit update worker (see services/updater_service.py).
 if __name__ == "__main__" and len(sys.argv) >= 3 and sys.argv[1] == "--iot-update-worker":
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -364,6 +373,7 @@ def inject_wb_type():
         "valid_card_char_lengths": get_valid_card_char_lengths(),
         "config_port": PORT,
         "secured_web_view": SECURED_WEB_VIEW,
+        "liquid_glass": _liquid_glass_enabled(),
     }
 pdf_generator = PDFReportGenerator(config_manager)
 
@@ -447,7 +457,18 @@ def _handle_iot_instance_replacement_shutdown() -> None:
             window.destroy()
     except Exception:
         pass
-    os._exit(0)
+    _hard_exit(0)
+
+
+def _hard_exit(code: int = 0) -> None:
+    """Exit without the Python 3.12 leaked-semaphore warning."""
+    try:
+        from utils.browser_launcher import _release_multiprocessing_semaphores
+
+        _release_multiprocessing_semaphores()
+    except Exception:
+        pass
+    os._exit(code)
 
 
 def _bootstrap_iot_instance_guard() -> None:
@@ -512,7 +533,7 @@ def _acquire_posix_single_instance_lock() -> None:
             )
         except Exception:
             pass
-        os._exit(1)
+        _hard_exit(1)
 
 # ============== Main Routes ==============
 
@@ -609,7 +630,7 @@ def update_apply():
             except Exception:
                 pass
         finally:
-            os._exit(0)
+            _hard_exit(0)
 
     threading.Thread(target=close_after_update_start, daemon=False).start()
     return jsonify({"status": 200, "message": "Update started. Application will close now."})
@@ -1954,7 +1975,7 @@ def close_application():
             pass
 
         # Always exit process (Chrome app mode has no webview to close)
-        os._exit(0)
+        _hard_exit(0)
     
     # Close in a separate thread to not block the response
     threading.Thread(target=close_app, daemon=False).start()
@@ -1988,11 +2009,12 @@ if __name__ == '__main__':
         install_webview_stderr_filter()
 
         def start_flask():
-            # Never enable Werkzeug debugger in a frozen binary: on macOS it
-            # pulls multiprocessing/mmap and can collide with pywebview.
-            flask_debug = bool(RUNTIME_DEBUG) and not getattr(sys, "frozen", False)
+            # Keep the Werkzeug debugger off. It creates a multiprocessing
+            # semaphore for the PIN, and Ctrl+C exits with os._exit, so Python
+            # 3.12 then warns about a leaked semaphore. RUNTIME_DEBUG still
+            # controls the app's own debug tools.
             app.run(
-                debug=flask_debug,
+                debug=False,
                 host=HOST,
                 port=PORT,
                 use_reloader=False,

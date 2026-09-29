@@ -10,6 +10,10 @@
         <span>{{ app_name }}</span>
     </div>
     <div class="header-actions">
+        <button type="button" class="header-version-btn" onclick="showAppVersionInfo()" title="Application version">
+            <i class="bi bi-info-circle"></i>
+            <span>Version</span>
+        </button>
         <button class="theme-toggle" id="themeToggle" title="Toggle theme">
             <i class="bi bi-sun-fill" id="themeIcon"></i>
         </button>
@@ -44,20 +48,24 @@
 
         <div id="directionChoiceBlock" class="layout-choice-list" role="radiogroup" aria-label="Weighbridge direction"
             {% if checkpoint_profile.family != 'weighbridge' %}style="display:none"{% endif %}>
-            <p class="checklist-intro" style="margin-top: 12px;">Weigh Bridge direction</p>
+            <p class="checklist-intro direction-choice-label">Weigh Bridge direction</p>
             <label class="layout-choice-card">
                 <input type="radio" name="weighbridgeLayoutChoice" value="unidirectional" class="layout-choice-input"
                     {% if wb_type != 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-icon layout-choice-icon--uni" aria-hidden="true"><i class="bi bi-arrow-right"></i></span>
                 <span class="layout-choice-content">
                     <span class="layout-choice-title">Unidirectional</span>
                 </span>
+                <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
             </label>
             <label class="layout-choice-card">
                 <input type="radio" name="weighbridgeLayoutChoice" value="bidirectional" class="layout-choice-input"
                     {% if wb_type == 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-icon layout-choice-icon--bi" aria-hidden="true"><i class="bi bi-arrow-left-right"></i></span>
                 <span class="layout-choice-content">
                     <span class="layout-choice-title">Bidirectional</span>
                 </span>
+                <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
             </label>
         </div>
         

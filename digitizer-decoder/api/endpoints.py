@@ -110,12 +110,22 @@ def _calibration_extract(
     return extract_weight_from_indexing(sample, indexing)
 
 
-def register_routes(app: Flask) -> None:
+def register_routes(app: Flask, os_type: str = "auto") -> None:
+    from flask import Response
+
+    from ui_os import inject_liquid_glass, liquid_glass_enabled
+
     static_root = os.path.join(app_dir(), "static", "web")
+    liquid_glass = liquid_glass_enabled(os_type)
 
     @app.get("/")
     def index():
-        return send_from_directory(static_root, "index.html")
+        path = os.path.join(static_root, "index.html")
+        with open(path, encoding="utf-8") as handle:
+            html = handle.read()
+        if liquid_glass:
+            html = inject_liquid_glass(html)
+        return Response(html, mimetype="text/html")
 
     @app.get("/api/status")
     def api_status():

@@ -8,9 +8,10 @@ import sys
 import threading
 from typing import Optional
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, send_from_directory
 
 from api.endpoints import register_routes
+from utils.ui_os import inject_liquid_glass, liquid_glass_enabled
 
 logger = logging.getLogger("mines_checkpoint.api.server")
 
@@ -56,17 +57,28 @@ def _add_cors(app: Flask) -> None:
         return response
 
 
-def create_app() -> Flask:
+def _dashboard_html(filename: str, *, liquid_glass: bool) -> Response:
+    path = os.path.join(STATIC_WEB_DIR, filename)
+    with open(path, encoding="utf-8") as handle:
+        html = handle.read()
+    if liquid_glass:
+        html = inject_liquid_glass(html)
+    return Response(html, mimetype="text/html")
+
+
+def create_app(os_type: str = "auto") -> Flask:
     global _app
     app = Flask("mines_checkpoint", static_folder=None, template_folder=None)
     _add_cors(app)
+    liquid_glass = liquid_glass_enabled(os_type)
+    logger.info("Dashboard UI: %s (OS_TYPE=%s)", "liquid-glass" if liquid_glass else "classic", os_type)
 
     if os.path.isdir(STATIC_WEB_DIR):
         logger.info("Serving operator web UI from %s", STATIC_WEB_DIR)
 
         @app.get("/")
         def index():
-            return send_from_directory(STATIC_WEB_DIR, "index.html")
+            return _dashboard_html("index.html", liquid_glass=liquid_glass)
 
         @app.get("/static/<path:filename>")
         def serve_static(filename: str):
@@ -89,9 +101,9 @@ def create_app() -> Flask:
     return app
 
 
-def start_api_server(host: str = "0.0.0.0", port: int = 8080) -> Flask:
+def start_api_server(host: str = "0.0.0.0", port: int = 8080, os_type: str = "auto") -> Flask:
     global _thread
-    app = create_app()
+    app = create_app(os_type=os_type)
 
     def _run():
         logger.info("Starting Flask API + web UI on %s:%s", host, port)

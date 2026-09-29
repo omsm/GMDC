@@ -6,7 +6,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -154,7 +154,11 @@ class TestDeviceStatusShape(unittest.TestCase):
             "port": "5084",
         }
         ctx.settings.digitizer_url = "http://127.0.0.1:8100/read_stable_weight"
-        ctx.rfid_reader.get_status.return_value = {"type": "api", "running": True}
+        ctx.rfid_reader.get_status.return_value = {
+            "type": "tcp",
+            "running": True,
+            "connected": True,
+        }
         ctx.digitizer.demo_mode = True
         ctx.io.get_status.return_value = {
             "type": "demo",
@@ -171,7 +175,8 @@ class TestDeviceStatusShape(unittest.TestCase):
         ctx.entry_boom.get_status.return_value = {"state": "open"}
         ctx.exit_boom.get_status.return_value = {"state": "closed"}
 
-        devices = collect_device_status(ctx)
+        with patch("services.frontend_mqtt._host_pings", return_value=False):
+            devices = collect_device_status(ctx)
         self.assertTrue(devices["sensors"]["s1"])
         self.assertFalse(devices["sensors"]["s2"])
         self.assertTrue(devices["sensors"]["connected"])
@@ -206,7 +211,8 @@ class TestDeviceStatusShape(unittest.TestCase):
         ctx.entry_boom.get_status.return_value = {"state": "open"}
         ctx.exit_boom.get_status.return_value = {"state": "closed"}
 
-        devices = collect_device_status(ctx)
+        with patch("services.frontend_mqtt._host_pings", return_value=False):
+            devices = collect_device_status(ctx)
         self.assertFalse(devices["io_controller"]["connected"])
         self.assertFalse(devices["sensors"]["connected"])
         self.assertFalse(devices["sensors"]["s1"])
@@ -218,8 +224,16 @@ class TestDeviceStatusShape(unittest.TestCase):
         self.assertFalse(devices["boom_barrier_exit"]["connected"])
         self.assertEqual(devices["traffic_light_entry"]["color"], "")
         self.assertEqual(devices["boom_barrier_entry"]["position"], "")
-        self.assertTrue(devices["rfid_reader"]["connected"])
-        self.assertTrue(devices["digitizer"]["connected"])
+        ctx.rfid_reader.get_status.return_value = {"type": "api", "running": True}
+        ctx.settings.rfid_config.return_value = {}
+        ctx.settings.digitizer_url = ""
+        ctx.digitizer.demo_mode = False
+        ctx.digitizer.supports_live_weight.return_value = False
+        offline = collect_device_status(ctx)
+        self.assertFalse(offline["rfid_reader"]["connected"])
+        self.assertEqual(offline["rfid_reader"]["port"], "N/A")
+        self.assertFalse(offline["digitizer"]["connected"])
+        self.assertEqual(offline["digitizer"]["port"], "N/A")
 
 
 class TestFrontendPublishOnWorkflow(unittest.TestCase):

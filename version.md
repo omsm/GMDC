@@ -1,13 +1,32 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.14**
+**Current version: 1.15**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.14.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.15.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.14 — 2026-09-30 (latest)
+## 1.15 — 2026-09-30 (latest)
+
+Operator dashboards use the liquid-glass UI on macOS, and the Transaction Flow panel stays usable on phones and tablets.
+
+### Operator UI
+- `OS_TYPE` at the top of each app entry point: `auto` (macOS gets liquid glass, Windows keeps the earlier UI), `macos`, or `windows`
+- checkpoint-config, Mines-Checkpoint, Mines-WB, and digitizer-decoder share that switch
+- Warm glass surfaces in light and dark, including status pills, device cards, and the camera dialog
+- ANPR, Free Pass, and Reset sit to the right of **Transaction Flow** after operator login
+- ANPR off uses the same warm glass button as the rest of the dark theme
+- Weight and RFID boxes inside the flow panel use a 16px margin
+- At tablet and phone widths the page stacks: **Transaction Flow** on top, **Device Status** underneath. The header, flow icons, and dialogs wrap instead of overflowing
+- Camera close control is centered in Checkpoint, Weigh Bridge, and Digitizer Decoder
+
+### Device status
+- RFID shows Connected only when the configured RFID IP answers a ping. Empty, N/A, localhost, and `127.0.0.1` stay Disconnected
+
+---
+
+## 1.14 — 2026-09-30
 
 checkpoint-config commissions a site as **Checkpoint** or **Weigh Bridge**. A saved front camera and a finished I/O test stay complete when you move between modules.
 
@@ -339,6 +358,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.15** | Liquid glass on macOS (`OS_TYPE`); RFID online is an IP ping; Transaction Flow stays on top when the dashboard stacks |
 | **1.14** | Config types are Checkpoint or Weigh Bridge; front-camera tick stays; checkpoint I/O ignores hidden exit hardware |
 | **1.13** | Mines Exit `X|` polls download/docs until documentDownloaded; `RESET_CHECKPOINT_FLAG` gates reset_checkpoint |
 | **1.12** | RFID_API_PORT Check & Save (120s, bi two ports); welcome.wav on WB start; low weight plays weight-error then IDLE |

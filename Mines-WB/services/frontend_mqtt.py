@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import subprocess
+import sys
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 
 from services.mqtt_ws_broker import get_mqtt_ws_broker
 
@@ -629,6 +633,99 @@ def build_frontend_snapshot(
     return payload
 
 
+def _usable(*values: Any) -> bool:
+    unset = {"", "N/A", "NA", "NONE", "NULL", "-", "--"}
+    for value in values:
+        text = str(value or "").strip()
+        if text.upper() not in unset:
+            return True
+    return False
+
+
+_PING_CACHE: Dict[str, tuple] = {}
+
+
+def _host_pings(ip: Any, timeout_sec: float = 1.0) -> bool:
+    """True only when this host answers ICMP. A missing address does not ping."""
+    host = str(ip or "").strip()
+    if not _usable(host) or host in {"0.0.0.0", "127.0.0.1", "localhost"}:
+        return False
+    now = time.monotonic()
+    cached = _PING_CACHE.get(host)
+    if cached and now - float(cached[0]) < 5.0:
+        return bool(cached[1])
+    if sys.platform == "win32":
+        cmd = ["ping", "-n", "1", "-w", "1000", host]
+    elif sys.platform == "darwin":
+        cmd = ["ping", "-c", "1", "-W", "1000", host]
+    else:
+        cmd = ["ping", "-c", "1", "-W", "1", host]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_sec + 0.5,
+            check=False,
+        )
+        ok = proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    _PING_CACHE[host] = (now, ok)
+    return ok
+
+
+def _rfid_online(ip: Any) -> bool:
+    """RFID is online only when its own IP answers a ping."""
+    return _host_pings(ip)
+
+
+def _io_online(status: Dict[str, Any]) -> bool:
+    kind = str((status or {}).get("type") or "").lower()
+    if kind == "demo":
+        return bool(status.get("connected"))
+    return bool(status.get("connected")) and _usable(
+        status.get("host"), status.get("port")
+    )
+
+
+_REACH_CACHE: Dict[str, tuple] = {}
+
+
+def _tcp_open(host: str, port: int, timeout: float = 0.4) -> bool:
+    key = f"{host}:{int(port)}"
+    now = time.monotonic()
+    cached = _REACH_CACHE.get(key)
+    if cached and now - float(cached[0]) < 5.0:
+        return bool(cached[1])
+    ok = False
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            ok = True
+    except OSError:
+        ok = False
+    _REACH_CACHE[key] = (now, ok)
+    return ok
+
+
+def _digitizer_online(digitizer: Any, url: str) -> bool:
+    if digitizer is None:
+        return False
+    if getattr(digitizer, "demo_mode", False) is True:
+        return True
+    supports = getattr(digitizer, "supports_live_weight", None)
+    if callable(supports) and supports() is True:
+        return bool(digitizer.is_alive())
+    if not _usable(url):
+        return False
+    parsed = urlparse(str(url))
+    host = parsed.hostname
+    if not host:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return _tcp_open(host, port)
+
+
 def collect_device_status(ctx: Any) -> Dict[str, Any]:
     """Shape expected by static/web/js/app.js device badges."""
     settings = getattr(ctx, "settings", None) if ctx else None
@@ -653,19 +750,17 @@ def collect_device_status(ctx: Any) -> Dict[str, Any]:
     rfid_port_info = (
         f"{rfid_ip}:{rfid_port}" if rfid_ip else str(rfid_port or "N/A")
     )
-    rfid_connected = bool(
-        rfid_st.get("running") or rfid_st.get("connected") or rfid_st.get("type")
-    )
+    rfid_connected = _rfid_online(rfid_ip)
 
     dig_url = getattr(settings, "digitizer_url", "") if settings else ""
-    dig_ok = bool(digitizer)
+    dig_ok = _digitizer_online(digitizer, str(dig_url or ""))
     if digitizer and getattr(digitizer, "demo_mode", False):
         dig_details = "Demo digitizer"
     else:
         dig_details = "HTTP /read_stable_weight" if dig_ok else "Not initialized"
 
     io_st = io.get_status() if io else {}
-    io_connected = bool(io_st.get("connected"))
+    io_connected = _io_online(io_st)
     io_port = io_st.get("host")
     if io_port and io_st.get("port"):
         io_port = f"{io_port}:{io_st.get('port')}"
