@@ -5,7 +5,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="gmdc-common",
-    version="0.2.8",
+    version="1.0.0",
     description="Shared hardware, services and FSM for GMDC checkpoint apps",
     packages=find_packages(),
     python_requires=">=3.9",

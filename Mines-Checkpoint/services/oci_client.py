@@ -96,6 +96,74 @@ def is_ce_truck_details(truck_details: str) -> bool:
     return truck_details_prefix(truck_details) == "CE"
 
 
+def is_x_truck_details(truck_details: str) -> bool:
+    """X|… is the Mines Exit trip: wait for exit-document download before boom-close."""
+    return truck_details_prefix(truck_details) == "X"
+
+
+def _first_text(raw: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = raw.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _looks_like_ip(value: str) -> bool:
+    text = (value or "").strip()
+    parts = text.split(".")
+    if len(parts) != 4:
+        return False
+    return all(part.isdigit() and 0 <= int(part) <= 255 for part in parts)
+
+
+def exit_document_ids(
+    truck_details: str, raw: Optional[Dict[str, Any]] = None
+) -> tuple[str, str]:
+    """
+    loading_slip_no and loading_slip_id for an X| mines-exit trip.
+
+    RFID JSON keys win. Otherwise:
+      long:  X|rfid|vehicle|…|slip_no|slip_id|device_ip  (slip at index 6 and 7)
+      short: X|rfid|vehicle|slip_no|slip_id|…|device_ip
+    """
+    body = raw if isinstance(raw, dict) else {}
+    slip_no = _first_text(body, "loading_slip_no", "loadingSlipNo")
+    slip_id = _first_text(body, "loading_slip_id", "loadingSlipId")
+    if truck_details_prefix(truck_details) != "X":
+        return slip_no, slip_id
+
+    parts = [p.strip() for p in (truck_details or "").split("|")]
+    if len(parts) >= 8:
+        slip_no = slip_no or parts[6]
+        if not slip_id and parts[7] and not _looks_like_ip(parts[7]):
+            slip_id = parts[7]
+    elif len(parts) >= 5:
+        slip_no = slip_no or parts[3]
+        if not slip_id and parts[4] and not _looks_like_ip(parts[4]):
+            slip_id = parts[4]
+    return slip_no, slip_id
+
+
+def document_downloaded(resp: OCIResponse) -> bool:
+    """True when download/docs says the exit document is on the GMDC app."""
+    raw = getattr(resp, "raw", None) or {}
+    flag = raw.get("documentDownloaded")
+    if isinstance(flag, bool):
+        return flag
+    if isinstance(flag, str) and flag.strip().lower() in ("true", "1", "yes"):
+        return True
+    try:
+        if int(raw.get("docDownload")) == 1:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 def status_code_from_response(resp: OCIResponse) -> Optional[int]:
     """Read numeric statusCode from check-status / OCI JSON body."""
     raw = getattr(resp, "raw", None) or {}
@@ -332,6 +400,7 @@ class OCIClient:
         update_truck_url: str,
         boom_close_url: str = "",
         reset_checkpoint_url: str = "",
+        download_docs_url: str = "",
         boom_close_style: str = "entry",
         anpr_username: Optional[str] = None,
         anpr_password: Optional[str] = None,
@@ -356,6 +425,9 @@ class OCIClient:
         )
         self.reset_checkpoint_url = reset_checkpoint_url or (
             self.base_url + "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
+        )
+        self.download_docs_url = download_docs_url or (
+            self.base_url + "/ords/gmdc_dicsm/dlms_checkpoint/download/docs"
         )
         self.timeout = timeout
         self.debug_wait_sec = max(0.0, float(debug_wait_sec or 0.0))
@@ -505,6 +577,28 @@ class OCIClient:
         return self._post(
             self.invalid_truck_url, payload, "invalid-truck",
             auth=self._auth_for("invalid_truck"),
+        )
+
+    def download_docs(
+        self,
+        loading_slip_no: str,
+        loading_slip_id: str,
+        device_ip: str,
+    ) -> OCIResponse:
+        """
+        POST download/docs. documentDownloaded false means keep polling;
+        true means the exit document is ready for boom-close.
+        """
+        payload = {
+            "loading_slip_no": str(loading_slip_no or ""),
+            "loading_slip_id": str(loading_slip_id or ""),
+            "device_ip": str(device_ip or ""),
+        }
+        return self._post(
+            self.download_docs_url,
+            payload,
+            "download-docs",
+            auth=self._auth_for("download_docs"),
         )
 
     def boom_close(

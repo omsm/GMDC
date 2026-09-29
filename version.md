@@ -1,13 +1,30 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.12**
+**Current version: 1.13**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.12.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.13.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.12 — 2026-09-29 (latest)
+## 1.13 — 2026-09-29 (latest)
+
+Mines Exit waits for the exit document to download before boom close, and `reset_checkpoint` is off unless the site turns it on.
+
+### Mines-Checkpoint — Mines Exit (`X|` truck details)
+- RFID validation string starting with **`X|`** keeps the existing ANPR / status-check flow
+- Before boom close, poll `POST /ords/gmdc_dicsm/dlms_checkpoint/download/docs` with `loading_slip_no`, `loading_slip_id`, and `device_ip`
+- Slip ids come from the RFID JSON keys when present, otherwise from `X|rfid|vehicle|loading_slip_no|loading_slip_id|…|device_ip`
+- Keep polling while `documentDownloaded` is false; when it is true, continue to boom close and the normal exit
+
+### reset_checkpoint (`Mines-Checkpoint` and `Mines-WB`)
+- `.env` **`RESET_CHECKPOINT_FLAG`** (default **false**)
+- `false`: do not call `reset_checkpoint` on any reset path, including the operator Reset button
+- `true`: post `reset_checkpoint` as before
+
+---
+
+## 1.12 — 2026-09-29
 
 checkpoint-config RFID API commissioning (including two ports on a bidirectional weighbridge), and Mines-WB voice on startup and low weight.
 
@@ -301,6 +318,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.13** | Mines Exit `X|` polls download/docs until documentDownloaded; `RESET_CHECKPOINT_FLAG` gates reset_checkpoint |
 | **1.12** | RFID_API_PORT Check & Save (120s, bi two ports); welcome.wav on WB start; low weight plays weight-error then IDLE |
 | **1.11** | macOS vendor Homebrew + Mosquitto bottles; local-first broker install in Mines-Automation bundle |
 | **1.10** | MQTT display protocol (Display IP / pcb_id / data_info); bi TX a+b; Welcome on connect; `@` message strings |

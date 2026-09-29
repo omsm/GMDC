@@ -187,6 +187,7 @@ def bootstrap() -> AppContext:
         update_truck_url=settings.update_truck_url,
         boom_close_url=settings.boom_close_url,
         reset_checkpoint_url=settings.reset_checkpoint_url,
+        download_docs_url=settings.download_docs_url,
         boom_close_style=settings.boom_close_style,
         anpr_username=settings.anpr_username,
         anpr_password=settings.anpr_password,

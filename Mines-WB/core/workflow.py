@@ -109,8 +109,15 @@ class MinesWbWorkflow:
             details = str(getattr(txn, "truck_details", "") or "")
         return device_ip, rfid, details
 
+    def _reset_checkpoint_enabled(self) -> bool:
+        settings = self.ctx.settings
+        return bool(getattr(settings, "reset_checkpoint_flag", False))
+
     def _notify_gmdc_reset(self, *, manual: bool = False) -> None:
-        """POST reset_checkpoint only for the operator Reset button."""
+        """POST reset_checkpoint when RESET_CHECKPOINT_FLAG is true."""
+        if not self._reset_checkpoint_enabled():
+            logger.info("reset_checkpoint skipped - RESET_CHECKPOINT_FLAG is false")
+            return
         oci = self.ctx.oci
         if oci is None or not hasattr(oci, "reset_checkpoint"):
             return

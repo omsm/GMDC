@@ -23,6 +23,7 @@ _SERVICES = {
     "update-truck": "Status-check service",
     "check-status": "Status-check service",
     "boom-close": "Boom-close service",
+    "download-docs": "Document download service",
     "weight-details": "Weight-details service",
     "weight-confirm": "Weight-confirm service",
     "gross-tolerance-confirm": "Gross-tolerance service",

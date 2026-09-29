@@ -154,6 +154,9 @@ class Settings:
     digitizer_topic_request: str = "gmdc/digitizer/request"
     min_weight_kg: float = 5000.0
 
+    # POST reset_checkpoint only when RESET_CHECKPOINT_FLAG=true
+    reset_checkpoint_flag: bool = False
+
     # Top Camera RTSP from checkpoint-config camera.top
     top_camera_rtsp_url: str = ""
 
@@ -480,6 +483,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "reset_checkpoint_url",
             "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint",
         ),
+        reset_checkpoint_flag=_env_bool("RESET_CHECKPOINT_FLAG", False),
         weight_details_path=api_eps.get(
             "weight_details_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-details",

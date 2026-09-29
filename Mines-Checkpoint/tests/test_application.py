@@ -37,7 +37,10 @@ from services.oci_client import (
     build_boom_close_payload,
     build_invalid_truck_payload,
     build_status_check_payload,
+    document_downloaded,
+    exit_document_ids,
     is_ce_truck_details,
+    is_x_truck_details,
     parse_truck_details,
 )
 
@@ -132,6 +135,43 @@ class TestTruckDetailsParsing(unittest.TestCase):
         self.assertEqual(p["token_no"], "9580709262")
         self.assertEqual(p["device_ip"], "IP244245525163")
         self.assertTrue(is_ce_truck_details(CE_TRUCK_DETAILS))
+
+    def test_x_exit_slip_ids_from_short_string(self):
+        details = (
+            "X|e200001d7507013115006bb9|OD14P7339|9582209263|885|10.80.118.142"
+        )
+        self.assertTrue(is_x_truck_details(details))
+        slip_no, slip_id = exit_document_ids(details)
+        self.assertEqual(slip_no, "9582209263")
+        self.assertEqual(slip_id, "885")
+
+    def test_x_exit_slip_ids_prefer_json_keys(self):
+        details = "X|rfid|VEH|1|2|10.0.0.1"
+        slip_no, slip_id = exit_document_ids(
+            details,
+            {"loading_slip_no": "9582209263", "loadingSlipId": "885"},
+        )
+        self.assertEqual(slip_no, "9582209263")
+        self.assertEqual(slip_id, "885")
+
+    def test_document_downloaded_flag(self):
+        waiting = OCIResponse(
+            ok=True,
+            status=200,
+            raw={"status": 200, "documentDownloaded": False, "docDownload": 0},
+        )
+        ready = OCIResponse(
+            ok=False,
+            status=0,
+            raw={
+                "status": "SUCCESS",
+                "statusCode": 200,
+                "documentDownloaded": True,
+                "docDownload": 1,
+            },
+        )
+        self.assertFalse(document_downloaded(waiting))
+        self.assertTrue(document_downloaded(ready))
 
     def test_empty(self):
         p = parse_truck_details("")
@@ -736,6 +776,62 @@ class TestWorkflow(unittest.TestCase):
         self.boom.open.assert_called()
         self.tl.set_green.assert_called()
         self.display.send.assert_any_call("Granted OD14P7339@Thank You")
+        self.oci.download_docs.assert_not_called()
+
+    def test_x_trip_waits_for_document_download_before_boom_close(self):
+        details = (
+            "X|e200001d7507013115006bb9|OD14P7339|9582209263|885|10.80.118.142"
+        )
+        self._rfid_ok(details)
+        self.oci.anpr_detect.return_value = OCIResponse(
+            ok=True,
+            status=1,
+            raw={**ANPR_RAW, "anpr_status": 1, "matching_score": 100},
+        )
+        self.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        self.oci.download_docs.side_effect = [
+            OCIResponse(
+                ok=True,
+                status=200,
+                http_status=200,
+                message="Exit documents have not been downloaded.",
+                raw={
+                    "status": 200,
+                    "documentDownloaded": False,
+                    "docDownload": 0,
+                    "message": "Exit documents have not been downloaded.",
+                },
+            ),
+            OCIResponse(
+                ok=True,
+                status=200,
+                http_status=200,
+                message="Exit documents have been downloaded.",
+                raw={
+                    "statusCode": 200,
+                    "status": "SUCCESS",
+                    "documentDownloaded": True,
+                    "docDownload": 1,
+                    "message": "Exit documents have been downloaded.",
+                },
+            ),
+        ]
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+
+        self.assertEqual(self.oci.download_docs.call_count, 2)
+        docs_kwargs = self.oci.download_docs.call_args.kwargs
+        self.assertEqual(docs_kwargs["loading_slip_no"], "9582209263")
+        self.assertEqual(docs_kwargs["loading_slip_id"], "885")
+        self.assertEqual(docs_kwargs["device_ip"], "10.80.118.142")
+        self.oci.boom_close.assert_called_once()
+        names = [call[0] for call in self.oci.mock_calls]
+        self.assertLess(names.index("download_docs"), names.index("boom_close"))
+        self.boom.open.assert_called()
 
     def test_anpr_disabled_calls_invalid_truck_then_status_check(self):
         """ANPR off still posts invalid-truck(anpr_status=2) then polls status_check."""

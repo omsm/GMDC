@@ -33,8 +33,11 @@ from services.frontend_mqtt import (
 )
 from services.oci_client import (
     OCIResponse,
+    document_downloaded,
+    exit_document_ids,
     is_ce_truck_details,
     is_manual_anpr_update_response,
+    is_x_truck_details,
     parse_truck_details,
     status_code_from_response,
 )
@@ -94,8 +97,15 @@ class CheckpointWorkflow:
             device_ip = str(getattr(txn, "device_ip", "") or device_ip)
         return device_ip, rfid, details
 
+    def _reset_checkpoint_enabled(self) -> bool:
+        settings = self.ctx.settings
+        return bool(getattr(settings, "reset_checkpoint_flag", False))
+
     def _notify_gmdc_reset(self, *, manual: bool = False) -> None:
-        """Tell GMDC this lane is idle. Manual UI reset always posts."""
+        """Tell GMDC this lane is idle when RESET_CHECKPOINT_FLAG is true."""
+        if not self._reset_checkpoint_enabled():
+            logger.info("reset_checkpoint skipped - RESET_CHECKPOINT_FLAG is false")
+            return
         oci = self.ctx.oci
         if oci is None or not hasattr(oci, "reset_checkpoint"):
             return
@@ -615,6 +625,9 @@ class CheckpointWorkflow:
         txn.truck_no = txn.vehicle_no
         txn.token_no = parsed.get("token_no", "")
         txn.truck_details = resp.truck_details
+        slip_no, slip_id = exit_document_ids(resp.truck_details, resp.raw)
+        txn.loading_slip_no = slip_no
+        txn.loading_slip_id = slip_id
         if parsed.get("device_ip"):
             txn.device_ip = parsed["device_ip"]
         logger.info(
@@ -1049,9 +1062,77 @@ class CheckpointWorkflow:
 
         logger.info("Manual update loop stopped")
 
+    def _wait_for_exit_document_download(self, txn, oci, device_ip: str) -> bool:
+        """
+        X| mines-exit trips: poll download/docs until documentDownloaded is true.
+        Returns False when the wait is cancelled before the document is ready.
+        """
+        retry_sec = self._status_check_retry_sec()
+        slip_no = str(getattr(txn, "loading_slip_no", "") or "")
+        slip_id = str(getattr(txn, "loading_slip_id", "") or "")
+        ip = str(getattr(txn, "device_ip", "") or device_ip or "")
+        logger.info(
+            "Mines exit X trip - polling download/docs until documentDownloaded "
+            "(slip_no=%s slip_id=%s every %ss)",
+            slip_no,
+            slip_id,
+            retry_sec,
+        )
+        self._ui_status(
+            STEP_ENTRY_GRANTED,
+            "info",
+            "Waiting for exit document download.",
+        )
+        alerted = False
+        while not self._manual_stop.is_set():
+            resp = oci.download_docs(
+                loading_slip_no=slip_no,
+                loading_slip_id=slip_id,
+                device_ip=ip,
+            )
+            ready = document_downloaded(resp)
+            logger.info(
+                "download/docs documentDownloaded=%s http=%s message=%s",
+                ready,
+                getattr(resp, "http_status", None),
+                getattr(resp, "message", "") or (getattr(resp, "raw", {}) or {}).get("message"),
+            )
+            if ready:
+                return True
+            if is_api_failure(resp) and is_service_alert(resp):
+                if not alerted:
+                    alerted = True
+                    self._ui_api_failure(
+                        STEP_ENTRY_GRANTED,
+                        resp,
+                        fallback="Document download service not reachable",
+                    )
+            else:
+                message = str(
+                    (getattr(resp, "raw", {}) or {}).get("message")
+                    or getattr(resp, "message", "")
+                    or "Exit documents have not been downloaded."
+                )
+                self._ui_status(STEP_ENTRY_GRANTED, "info", message)
+            time.sleep(retry_sec)
+        logger.info("Exit document download wait stopped")
+        return False
+
     def _do_grant_entry(self, truck_no: str) -> None:
         sm = self.ctx.state_machine
         txn = self.ctx.transactions.current if self.ctx.transactions else None
+        oci = self.ctx.oci
+        settings = self.ctx.settings
+        if (
+            txn
+            and oci
+            and is_x_truck_details(txn.truck_details or "")
+        ):
+            device_ip = txn.device_ip or (
+                settings.device_ip if settings else ""
+            )
+            if not self._wait_for_exit_document_download(txn, oci, device_ip):
+                return
         if txn:
             txn.granted = True
             txn.truck_no = truck_no or txn.truck_no

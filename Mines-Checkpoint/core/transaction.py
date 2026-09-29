@@ -18,6 +18,8 @@ class Transaction:
     token_no: str = ""
     device_ip: str = ""
     truck_details: str = ""
+    loading_slip_no: str = ""
+    loading_slip_id: str = ""
     anpr_status: Optional[int] = None
     anpr_raw: Dict[str, Any] = field(default_factory=dict)
     started_at: Optional[str] = None
@@ -38,6 +40,8 @@ class Transaction:
         self.token_no = ""
         self.device_ip = ""
         self.truck_details = ""
+        self.loading_slip_no = ""
+        self.loading_slip_id = ""
         self.anpr_status = None
         self.anpr_raw = {}
         self.started_at = None

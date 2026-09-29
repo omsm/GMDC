@@ -118,6 +118,7 @@ class Settings:
     update_truck_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/status_check"
     boom_close_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/boom-close"
     reset_checkpoint_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
+    download_docs_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/download/docs"
 
     # ANPR is a separate service (different host from OCI)
     anpr_base_url: str = "http://192.168.25.79:5001"
@@ -137,6 +138,9 @@ class Settings:
 
     # When False, skip /api/detect; invalid-truck uses anpr_status=0
     anpr_enabled: bool = True
+
+    # POST reset_checkpoint only when RESET_CHECKPOINT_FLAG=true
+    reset_checkpoint_flag: bool = False
 
     # Pause after each GMDC OCI response when API_DEBUG=true (not ANPR)
     api_debug: bool = False
@@ -178,6 +182,10 @@ class Settings:
     @property
     def reset_checkpoint_url(self) -> str:
         return _join_url(self.oci_base_url, self.reset_checkpoint_path)
+
+    @property
+    def download_docs_url(self) -> str:
+        return _join_url(self.oci_base_url, self.download_docs_path)
 
     def io_config(self) -> Dict[str, Any]:
         return self.raw_config.get("io_controller", {})
@@ -292,6 +300,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             api_eps, "reset_checkpoint_username", "reset_checkpoint_password",
             oci_user, oci_pass,
         ),
+        "download_docs": _endpoint_cred(
+            api_eps, "download_docs_username", "download_docs_password",
+            oci_user, oci_pass,
+        ),
     }
 
     anpr_path = api_eps.get("anpr_detect_url") or "/api/detect"
@@ -347,11 +359,16 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "reset_checkpoint_url",
             "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint",
         ),
+        download_docs_path=api_eps.get(
+            "download_docs_url",
+            "/ords/gmdc_dicsm/dlms_checkpoint/download/docs",
+        ),
         anpr_base_url=anpr_base.rstrip("/"),
         anpr_detect_path=anpr_path,
         anpr_username=anpr_user,
         anpr_password=anpr_pass,
         endpoint_auth=endpoint_auth,
+        reset_checkpoint_flag=_env_bool("RESET_CHECKPOINT_FLAG", False),
         truck_anpr_retry_timer=float(
             os.getenv("TRUCK_ANPR_RETRY_TIMER")
             or raw.get("truck_anpr_retry_timer")
