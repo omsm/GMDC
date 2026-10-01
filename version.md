@@ -1,13 +1,23 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.16**
+**Current version: 1.17**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.16.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.17.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.16 — 2026-10-01 (latest)
+## 1.17 — 2026-10-02 (latest)
+
+Weighing starts when the truck is only on the weighbridge sensor.
+
+### Mines-WB positioning
+- Sensor 2 cut and sensor 1 clear starts weight capture. Move Forward stops at that point
+- The sensor clear event releases the occupied flag before the lane checks position, so a truck sitting only on the weighbridge sensor is not held until the positioning timer resets the lane
+
+---
+
+## 1.16 — 2026-10-01
 
 Bidirectional weighbridge commissioning, live digitizer weight owned by Mines-WB, and the Vadhghat load/unload path.
 
@@ -393,6 +403,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.17** | Weighing starts when only the weighbridge sensor is cut; the clear event no longer leaves the truck on Move Forward |
 | **1.16** | Bi-directional commissioning; Mines-WB stable weight; Vadhghat in-band details/boom-close and out-of-band adjustment with Overweight/Underweight |
 | **1.15** | Liquid glass on macOS (`OS_TYPE`); RFID online is an IP ping; Transaction Flow stays on top when the dashboard stacks |
 | **1.14** | Config types are Checkpoint or Weigh Bridge; front-camera tick stays; checkpoint I/O ignores hidden exit hardware |

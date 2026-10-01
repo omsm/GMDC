@@ -324,6 +324,8 @@ def bootstrap() -> AppContext:
         weight_confirm_url=settings.weight_confirm_url,
         gross_tolerance_confirm_url=settings.gross_tolerance_confirm_url,
         vadhghat_weight_adjustment_url=settings.vadhghat_weight_adjustment_url,
+        vadhghat_weight_details_url=settings.vadhghat_weight_details_url,
+        vadhghat_boom_close_url=settings.vadhghat_boom_close_url,
         anpr_username=settings.anpr_username,
         anpr_password=settings.anpr_password,
         endpoint_auth=settings.endpoint_auth,

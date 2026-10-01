@@ -700,15 +700,38 @@ class MinesWbWorkflow:
         self._stop_idle_s2_s3_announcement()
         return False
 
+    def _beam_cut(self, which: str) -> bool:
+        """Live sensor level. The occupied latch is ignored when the level is present.
+
+        The clear callback runs while the latch can still read occupied, so a
+        latch-or-level check keeps the truck in positioning after sensor 1 clears.
+        """
+        poller = getattr(self.ctx, "sensor_poller", None)
+        if not poller or not hasattr(poller, "get_status"):
+            return False
+        st = poller.get_status() or {}
+        active_key = {
+            "entry": "entry_active",
+            "exit": "exit_active",
+            "wb": "wb_active",
+        }.get(which)
+        latch_key = {
+            "entry": "entry_occupied_latch",
+            "exit": "exit_occupied_latch",
+            "wb": "wb_occupied_latch",
+        }.get(which)
+        if not active_key:
+            return False
+        if active_key in st:
+            return bool(st.get(active_key))
+        return bool(st.get(latch_key))
+
     def _platform_clear_except_wb(self) -> bool:
         """True when entry and exit sensors are clear (WB may still be cut)."""
         poller = getattr(self.ctx, "sensor_poller", None)
         if not poller or not hasattr(poller, "get_status"):
             return True
-        st = poller.get_status() or {}
-        entry = bool(st.get("entry_active") or st.get("entry_occupied_latch"))
-        exit_ = bool(st.get("exit_active") or st.get("exit_occupied_latch"))
-        return not entry and not exit_
+        return not self._beam_cut("entry") and not self._beam_cut("exit")
 
     def _maybe_exit_on_positioning_zero(self) -> None:
         """Weight rose, then returned to 0, before the truck is only on the WB sensor."""
@@ -830,15 +853,7 @@ class MinesWbWorkflow:
         )
 
     def _sensor_cut(self, which: str) -> bool:
-        poller = getattr(self.ctx, "sensor_poller", None)
-        if not poller or not hasattr(poller, "get_status"):
-            return False
-        st = poller.get_status() or {}
-        if which == "wb":
-            return bool(st.get("wb_active") or st.get("wb_occupied_latch"))
-        if which == "exit":
-            return bool(st.get("exit_active") or st.get("exit_occupied_latch"))
-        return False
+        return self._beam_cut(which)
 
     def _start_backward_announcement(self) -> None:
         """Play backward.wav while positioning with exit (s3) cut."""

@@ -329,6 +329,7 @@ class TestBidirectionalFlow(unittest.TestCase):
         }
         ctx.digitizer = MagicMock()
         ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 0.0
         workflow.on_entry_occupied()
         self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
 
@@ -349,6 +350,33 @@ class TestBidirectionalFlow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
         ctx.voice.check_weighbridge_weight.assert_called()
         ctx.exit_boom.open.assert_called()
+        workflow.force_reset()
+
+    def test_entry_clear_while_wb_cut_starts_weight(self):
+        """Sensor 1 clear while sensor 2 is cut starts weighing, even if the latch is stale."""
+        import time
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": False,
+            "entry_occupied_latch": True,
+            "wb_active": True,
+            "exit_active": False,
+            "exit_occupied_latch": False,
+        }
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = False
+        ctx.digitizer.read_stable_weight.return_value = {"ok": False, "weight": None}
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+        workflow.on_entry_cleared()
+        for _ in range(50):
+            if ctx.digitizer.read_stable_weight.called:
+                break
+            time.sleep(0.02)
+        ctx.digitizer.read_stable_weight.assert_called()
         workflow.force_reset()
 
 
@@ -434,6 +462,29 @@ class TestSensorAlreadyActive(unittest.TestCase):
         )
         self.assertTrue(new_occupied)
         self.assertEqual(occupied, ["active"])
+
+    def test_clear_callback_sees_released_latch(self):
+        from gmdc_common.hardware.io_controller import DemoIOController
+        from gmdc_common.hardware.sensor import SensorPoller
+
+        poller = SensorPoller(DemoIOController(), entry_pin=0)
+        seen = {}
+
+        def on_clear():
+            seen["latch"] = poller.get_status()["entry_occupied_latch"]
+
+        poller._last_entry = False
+        poller._entry_occupied = True
+        poller._handle_channel(
+            name="Entry",
+            pin=0,
+            current=False,
+            prev=True,
+            occupied=True,
+            callback=on_clear,
+            store=lambda value: setattr(poller, "_entry_occupied", value),
+        )
+        self.assertFalse(seen["latch"])
 
     def test_reset_edge_state_clears_previous_sample(self):
         from gmdc_common.hardware.io_controller import DemoIOController

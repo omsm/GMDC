@@ -192,15 +192,31 @@ def replace_truck_details_tolerance(
 
 def under_or_over_type(current_kg: float, truck_details: str) -> str:
     """Return 'u' if under the RTO band low, else 'o'."""
+    kind, _diff = vadhghat_weight_delta(current_kg, truck_details)
+    return kind
+
+
+def vadhghat_weight_delta(current_kg: float, truck_details: str) -> tuple:
+    """
+    Vadhghat difference from the minus-only band (gross − tolerance) … gross.
+
+    Over (current > gross): (current − gross).
+    Under (current < gross − tolerance): ((gross − tolerance) − current).
+    Returns ('o'|'u', difference_kg). In-band difference is 0.
+    """
     band = rto_weight_band(truck_details)
-    if band is None:
-        return "o"
-    lo, _hi, _trip = band
     try:
         weight = float(current_kg)
     except (TypeError, ValueError):
-        return "o"
-    return "u" if weight < lo else "o"
+        return "o", 0
+    if band is None:
+        return "o", 0
+    lo, hi, _trip = band
+    if weight > hi:
+        return "o", int(round(weight - hi))
+    if weight < lo:
+        return "u", int(round(lo - weight))
+    return "o", 0
 
 
 def weight_within_rto_tolerance(
@@ -419,6 +435,8 @@ class OCIClient:
         weight_confirm_url: str = "",
         gross_tolerance_confirm_url: str = "",
         vadhghat_weight_adjustment_url: str = "",
+        vadhghat_weight_details_url: str = "",
+        vadhghat_boom_close_url: str = "",
         anpr_username: Optional[str] = None,
         anpr_password: Optional[str] = None,
         endpoint_auth: Optional[Dict[str, Tuple[str, str]]] = None,
@@ -454,6 +472,14 @@ class OCIClient:
         self.vadhghat_weight_adjustment_url = vadhghat_weight_adjustment_url or (
             self.base_url
             + "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment"
+        )
+        self.vadhghat_weight_details_url = vadhghat_weight_details_url or (
+            self.base_url
+            + "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details"
+        )
+        self.vadhghat_boom_close_url = vadhghat_boom_close_url or (
+            self.base_url
+            + "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close"
         )
         self.timeout = timeout
         self.debug_wait_sec = max(0.0, float(debug_wait_sec or 0.0))
@@ -765,6 +791,53 @@ class OCIClient:
             payload,
             "vadhghat-weight-adjustment",
             auth=self._auth_for("vadhghat_weight_adjustment"),
+        )
+        status_raw = resp.raw.get("status", resp.status)
+        try:
+            resp.status = int(status_raw)
+        except (TypeError, ValueError):
+            resp.status = 0
+        resp.ok = resp.status == 200 or resp.http_status == 200
+        return resp
+
+    def vadhghat_weight_details(
+        self,
+        current_weight: str,
+        truck_details: str = "",
+        front_image_name: str = "",
+        top_image_name: str = "",
+        anpr_image_name: str = "",
+    ) -> OCIResponse:
+        """POST vadhghat_weight_details when the captured weight is inside the band."""
+        payload = build_weight_details_payload(
+            current_weight=current_weight,
+            truck_details=truck_details,
+            front_image_name=front_image_name,
+            top_image_name=top_image_name,
+            anpr_image_name=anpr_image_name,
+        )
+        resp = self._post(
+            self.vadhghat_weight_details_url,
+            payload,
+            "vadhghat-weight-details",
+            auth=self._auth_for("vadhghat_weight_details"),
+        )
+        status_raw = resp.raw.get("status", resp.status)
+        try:
+            resp.status = int(status_raw)
+        except (TypeError, ValueError):
+            resp.status = 0
+        resp.ok = resp.status == 200 or resp.http_status == 200
+        return resp
+
+    def vadhghat_boom_close(self, truck_details: str = "") -> OCIResponse:
+        """POST vadhghat_boom_close after in-band weight details. Body is truck_details only."""
+        payload = build_boom_close_payload(truck_details=truck_details)
+        resp = self._post(
+            self.vadhghat_boom_close_url,
+            payload,
+            "vadhghat-boom-close",
+            auth=self._auth_for("vadhghat_boom_close"),
         )
         status_raw = resp.raw.get("status", resp.status)
         try:

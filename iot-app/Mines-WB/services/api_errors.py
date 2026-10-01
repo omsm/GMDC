@@ -27,6 +27,8 @@ _SERVICES = {
     "weight-confirm": "Weight-confirm service",
     "gross-tolerance-confirm": "Gross-tolerance service",
     "vadhghat-weight-adjustment": "Vadhghat weight-adjustment service",
+    "vadhghat-weight-details": "Vadhghat weight-details service",
+    "vadhghat-boom-close": "Vadhghat boom-close service",
     "digitizer": "Digitizer",
     "reset-checkpoint": "Reset service",
 }

@@ -485,6 +485,54 @@ class VoiceService:
             "Voice: Weight out of tolerance type=%s clip=%s", trip, clip
         )
 
+    def vadhghat_difference(
+        self, kind: str, diff_kg, *, intro: bool = False
+    ) -> None:
+        """
+        Vadhghat load/unload difference.
+
+        intro True: error_start + g100 (over) or g101 (under) + difference kg.
+        intro False: difference kg only, repeated until the truck has exited.
+        """
+        over = str(kind or "o").lower().startswith("o")
+        guide = "g100.wav" if over else "g101.wav"
+        try:
+            tons, kg_part = self.weight_clip_parts(diff_kg)
+        except (ValueError, TypeError) as exc:
+            logger.error("Invalid Vadhghat difference: %s (%s)", diff_kg, exc)
+            return
+
+        def _play():
+            my_id = self._start_multi_play()
+            try:
+                if intro:
+                    if not self._is_play_valid(my_id):
+                        return
+                    self._play_safe(self._err("error_start.wav"), interrupt=False)
+                    if not self._is_play_valid(my_id):
+                        return
+                    self._play_safe(self._err(guide), interrupt=False)
+                if tons > 0 and self._is_play_valid(my_id):
+                    self._play_safe(
+                        os.path.join(self.voice_dir, "weight_ton", f"{tons}.wav"),
+                        interrupt=False,
+                    )
+                if kg_part > 0 and self._is_play_valid(my_id):
+                    self._play_safe(
+                        os.path.join(self.voice_dir, "weight_kg", f"{kg_part}.wav"),
+                        interrupt=False,
+                    )
+            finally:
+                self._end_multi_play()
+
+        Thread(target=_play, daemon=True).start()
+        logger.info(
+            "Voice: Vadhghat difference kind=%s kg=%s intro=%s",
+            "o" if over else "u",
+            diff_kg,
+            intro,
+        )
+
     def weight_submit_error_by_status(self, status_code: Union[int, str]) -> None:
         try:
             code_str = str(int(str(status_code).strip()))

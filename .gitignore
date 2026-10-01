@@ -87,6 +87,9 @@ packaging/macos/*.zip
 dist.zip
 *.zip
 GMDC-APP/
+iot-app/
 # Keep vendor tooling tracked
 !packaging/macos/vendor/README.md
 !packaging/macos/vendor/download_vendor.sh
+wb-update-1/
+wb-update-1.zip

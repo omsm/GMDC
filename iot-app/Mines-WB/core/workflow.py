@@ -39,6 +39,7 @@ from services.oci_client import (
     replace_truck_details_tolerance,
     rto_weight_band,
     under_or_over_type,
+    vadhghat_weight_delta,
     weight_type_error_display,
     weight_within_rto_tolerance,
 )
@@ -89,6 +90,10 @@ class MinesWbWorkflow:
         self._digitizer_hang_announced = False
         self._awaiting_rfid = False
         self._forward_loop_active = False
+        self._vadhghat_diff_active = False
+        self._vadhghat_diff_kind = "o"
+        self._vadhghat_diff_kg = 0
+        self._vadhghat_diff_timer: Optional[threading.Timer] = None
         self._idle_s2_s3_loop_active = False
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
@@ -467,6 +472,66 @@ class MinesWbWorkflow:
         with self._timer_lock:
             self._forward_timer = timer
         timer.start()
+
+    def _start_vadhghat_difference_announcement(
+        self, kind: str, diff_kg: int
+    ) -> None:
+        """
+        First play error_start + g100/g101 + difference kg.
+        Then repeat only the difference kg until the truck has exited.
+        Move-forward is not used on this path.
+        """
+        self._stop_move_forward_announcement(stop_audio=False)
+        self._vadhghat_diff_active = True
+        self._vadhghat_diff_kind = kind
+        self._vadhghat_diff_kg = int(diff_kg or 0)
+        voice = self._voice()
+        if voice and hasattr(voice, "vadhghat_difference"):
+            voice.vadhghat_difference(kind, self._vadhghat_diff_kg, intro=True)
+        self._schedule_vadhghat_diff_loop()
+
+    def _schedule_vadhghat_diff_loop(self) -> None:
+        if not self._vadhghat_diff_active:
+            return
+
+        def _tick():
+            if not self._vadhghat_diff_active:
+                return
+            sm = self.ctx.state_machine
+            if not sm or sm.current_state not in (
+                State.EXIT_GRANTED,
+                State.WAIT_EXIT,
+            ):
+                self._vadhghat_diff_active = False
+                return
+            voice = self._voice()
+            busy = False
+            if voice:
+                check = getattr(voice, "is_multi_play_active", None)
+                if callable(check) and check() is True:
+                    busy = True
+            if voice and not busy and hasattr(voice, "vadhghat_difference"):
+                voice.vadhghat_difference(
+                    self._vadhghat_diff_kind,
+                    self._vadhghat_diff_kg,
+                    intro=False,
+                )
+            self._schedule_vadhghat_diff_loop()
+
+        self._cancel_timer("_vadhghat_diff_timer")
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._vadhghat_diff_timer = timer
+        timer.start()
+
+    def _stop_vadhghat_difference_announcement(self, stop_audio: bool = True) -> None:
+        self._vadhghat_diff_active = False
+        self._cancel_timer("_vadhghat_diff_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
 
     def _stop_move_forward_announcement(self, stop_audio: bool = True) -> None:
         self._forward_loop_active = False
@@ -936,6 +1001,7 @@ class MinesWbWorkflow:
 
     def _cancel_all_timers(self) -> None:
         self._forward_loop_active = False
+        self._vadhghat_diff_active = False
         self._idle_s2_s3_loop_active = False
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
@@ -948,6 +1014,7 @@ class MinesWbWorkflow:
             "_exit_timer",
             "_rfid_err_timer",
             "_forward_timer",
+            "_vadhghat_diff_timer",
             "_boom_close_timer",
             "_idle_s2_s3_timer",
             "_idle_weight_timer",
@@ -2060,23 +2127,21 @@ class MinesWbWorkflow:
                     self._enter_exit_granted(reason="weight_confirm_rejected")
                     return
 
-        # Vadhghat (V): out of RTO band → weight-adjustment, then exit (no boom-close).
+        # Vadhghat (V): own APIs. In band → weight details then boom close.
+        # Out of band → weight adjustment, difference voice, boom open, no move-forward.
         if trip == "V":
             in_band, band_msg = weight_within_rto_tolerance(
                 txn.weight_kg, txn.truck_details or ""
             )
             if not in_band:
-                err_msg = weight_type_error_display(trip)
                 logger.warning(
                     "Vadhghat weight out of tolerance: %s", band_msg
                 )
-                self._announce(err_msg)
                 self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
-                voice = self._voice()
-                if voice:
-                    voice.weight_out_of_tolerance(trip)
                 self._vadhghat_weight_adjustment_and_exit()
                 return
+            self._vadhghat_in_band_and_exit()
+            return
 
         sm.trigger(Event.WEIGHT_OK)
 
@@ -2193,28 +2258,105 @@ class MinesWbWorkflow:
             )
         )
 
+    def _vadhghat_in_band_and_exit(self) -> None:
+        """
+        Weight inside (gross − tolerance) … gross.
+        POST vadhghat_weight_details, then vadhghat_boom_close, then exit.
+        """
+        sm = self.ctx.state_machine
+        oci = self.ctx.oci
+        txn = self.ctx.transactions
+        assert sm and oci and txn
+        sm.trigger(Event.WEIGHT_OK)
+        if not (txn.top_image or "").strip():
+            self._capture_top_photo()
+        top_photo_name = (txn.top_image or "").strip() or "error.jpg"
+        txn.top_image = top_photo_name
+        if sm.current_state != State.IMAGE_CAPTURE:
+            sm.force_state(State.IMAGE_CAPTURE)
+        sm.trigger(Event.DETAILS_OK)
+        self._ui_status(
+            STEP_VALIDATING_WEIGHT, "info", "Submitting Vadhghat weight details."
+        )
+        truck_disp = txn.vehicle_no or "TRUCK"
+        try:
+            weight_disp = int(txn.weight_kg or 0)
+        except (TypeError, ValueError):
+            weight_disp = txn.weight_kg
+        self._announce(
+            MSG_WEIGHT_DETAILS_FMT.format(truck=truck_disp, weight=weight_disp)
+        )
+        details = oci.vadhghat_weight_details(
+            current_weight=str(int(txn.weight_kg or 0)),
+            truck_details=txn.truck_details or "",
+            front_image_name=txn.front_image,
+            top_image_name=top_photo_name,
+            anpr_image_name=txn.anpr_image,
+        )
+        details_ok = bool(details.ok or details.status == 200)
+        if details_ok:
+            self._ui_status(
+                STEP_VALIDATING_WEIGHT,
+                "success",
+                "Vadhghat weight details submitted.",
+            )
+            self._speak_final_weight()
+        elif is_api_failure(details):
+            self._ui_api_failure(
+                STEP_VALIDATING_WEIGHT,
+                details,
+                fallback="Vadhghat weight-details service not reachable",
+            )
+        else:
+            self._ui_status(
+                STEP_VALIDATING_WEIGHT,
+                "error",
+                "Vadhghat weight details failed.",
+            )
+        close = oci.vadhghat_boom_close(truck_details=txn.truck_details or "")
+        logger.info(
+            "vadhghat boom-close truck_details=%r ok=%s status=%s",
+            txn.truck_details,
+            close.ok,
+            close.status,
+        )
+        if close.status != 200:
+            self._ui_api_failure(
+                STEP_EXIT_START,
+                close,
+                fallback="Vadhghat boom-close rejected.",
+            )
+        self._enter_exit_granted(
+            reason="vadhghat_details_ok" if details_ok else "vadhghat_details_fail"
+        )
+
     def _vadhghat_weight_adjustment_and_exit(self) -> None:
         """
-        Vadhghat out-of-tolerance: POST captured weight + o/u, then exit.
-        Does not call weight-details or boom-close.
+        Vadhghat out of the minus-only band.
+
+        POST weight adjustment, announce the kg to load or unload, open the
+        boom, and keep announcing only that difference until the truck exits.
+        Does not call weight-details, boom-close, or move-forward.
         """
         oci = self.ctx.oci
         settings = self.ctx.settings
         txn = self.ctx.transactions
         assert oci and settings and txn
         details = txn.truck_details or ""
-        weight_type = under_or_over_type(txn.weight_kg or 0, details)
+        weight_type, diff_kg = vadhghat_weight_delta(txn.weight_kg or 0, details)
         device_ip = str(getattr(settings, "device_ip", "") or "")
         logger.info(
-            "Vadhghat weight-adjustment weight=%s type=%s device_ip=%s",
+            "Vadhghat weight-adjustment weight=%s type=%s diff=%s device_ip=%s",
             txn.weight_kg,
             weight_type,
+            diff_kg,
             device_ip,
         )
+        action = "unload" if weight_type == "o" else "load"
         self._ui_status(
             STEP_VALIDATING_WEIGHT,
-            "info",
-            f"Submitting Vadhghat weight adjustment ({weight_type}).",
+            "warning",
+            f"Vadhghat {action} {diff_kg} kg.",
         )
         resp = oci.vadhghat_weight_adjustment(
             device_ip=device_ip,
@@ -2232,9 +2374,14 @@ class MinesWbWorkflow:
             self._ui_status(
                 STEP_VALIDATING_WEIGHT,
                 "success",
-                str(resp.message or "Vadhghat weight adjustment processed."),
+                str(resp.message or f"Vadhghat {action} {diff_kg} kg."),
             )
-        self._enter_exit_granted(reason="vadhghat_weight_adjustment")
+        self._enter_exit_granted(
+            reason="vadhghat_difference", speak_forward=False
+        )
+        label = "Overweight" if weight_type == "o" else "Underweight"
+        self._announce(f"{label} by:@{diff_kg}Kg")
+        self._start_vadhghat_difference_announcement(weight_type, diff_kg)
 
     def _gross_tolerance_confirm_until_ok(self) -> str:
         """
@@ -2449,7 +2596,9 @@ class MinesWbWorkflow:
 
         return False
 
-    def _enter_exit_granted(self, reason: str = "") -> None:
+    def _enter_exit_granted(
+        self, reason: str = "", *, speak_forward: bool = True
+    ) -> None:
         sm = self.ctx.state_machine
         if sm and sm.current_state != State.EXIT_GRANTED:
             sm.force_state(State.EXIT_GRANTED)
@@ -2476,10 +2625,10 @@ class MinesWbWorkflow:
             )
         else:
             self._ui_status(STEP_EXIT_START, "success", "Exit granted - proceed.")
-        self._announce(MSG_MOVE_FORWARD)
         self._grant_exit_hardware()
-        # Continuous move-forward while waiting for exit sensor (legacy)
-        self._start_move_forward_announcement()
+        if speak_forward:
+            self._announce(MSG_MOVE_FORWARD)
+            self._start_move_forward_announcement()
         self._arm_timer(
             "_exit_timer",
             TIMEOUTS.EXIT_WAIT_SEC,

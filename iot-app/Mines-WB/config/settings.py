@@ -149,6 +149,12 @@ class Settings:
     vadhghat_weight_adjustment_path: str = (
         "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment"
     )
+    vadhghat_weight_details_path: str = (
+        "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details"
+    )
+    vadhghat_boom_close_path: str = (
+        "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close"
+    )
 
     anpr_base_url: str = "http://192.168.25.79:5001"
     anpr_detect_path: str = "/api/detect"
@@ -249,6 +255,14 @@ class Settings:
     @property
     def vadhghat_weight_adjustment_url(self) -> str:
         return _join_url(self.oci_base_url, self.vadhghat_weight_adjustment_path)
+
+    @property
+    def vadhghat_weight_details_url(self) -> str:
+        return _join_url(self.oci_base_url, self.vadhghat_weight_details_path)
+
+    @property
+    def vadhghat_boom_close_url(self) -> str:
+        return _join_url(self.oci_base_url, self.vadhghat_boom_close_path)
 
     @property
     def digitizer_url(self) -> str:
@@ -452,6 +466,20 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             api_eps.get("weight_details_username") or oci_user,
             api_eps.get("weight_details_password") or oci_pass,
         ),
+        "vadhghat_weight_details": _endpoint_cred(
+            api_eps,
+            "vadhghat_weight_details_username",
+            "vadhghat_weight_details_password",
+            api_eps.get("weight_details_username") or oci_user,
+            api_eps.get("weight_details_password") or oci_pass,
+        ),
+        "vadhghat_boom_close": _endpoint_cred(
+            api_eps,
+            "vadhghat_boom_close_username",
+            "vadhghat_boom_close_password",
+            api_eps.get("weight_details_username") or oci_user,
+            api_eps.get("weight_details_password") or oci_pass,
+        ),
     }
 
     dig_port = dig.get("port") or "8100"
@@ -534,6 +562,14 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         vadhghat_weight_adjustment_path=api_eps.get(
             "vadhghat_weight_adjustment_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment",
+        ),
+        vadhghat_weight_details_path=api_eps.get(
+            "vadhghat_weight_details_url",
+            "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details",
+        ),
+        vadhghat_boom_close_path=api_eps.get(
+            "vadhghat_boom_close_url",
+            "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close",
         ),
         anpr_base_url=anpr_base.rstrip("/"),
         anpr_detect_path=api_eps.get("anpr_detect_url") or "/api/detect",

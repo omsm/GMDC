@@ -125,18 +125,25 @@ class SensorPoller:
         occupied: bool,
         callback: Optional[Callable[[], None]],
         occupied_callback: Optional[Callable[[], None]] = None,
+        store: Optional[Callable[[bool], None]] = None,
     ) -> bool:
         """
         Update occupied latch.
         - Rising edge (FALSE→TRUE): optional occupied_callback
         - Falling edge after occupied (TRUE→FALSE): optional clear callback
+        The latch is stored before either callback so readers see the new level.
         Returns new occupied flag.
         """
         if pin is None:
             return False
 
+        def publish(value: bool) -> bool:
+            if store:
+                store(value)
+            return value
+
         if current and not prev:
-            occupied = True
+            occupied = publish(True)
             logger.info(
                 "%s sensor TRUE (occupied) addr=%s",
                 name,
@@ -150,7 +157,7 @@ class SensorPoller:
                         "%s sensor occupied callback error: %s", name, e
                     )
         elif not current and prev and occupied:
-            occupied = False
+            occupied = publish(False)
             logger.info(
                 "%s sensor FALSE (cleared) addr=%s - falling edge",
                 name,
@@ -181,6 +188,7 @@ class SensorPoller:
                     occupied=self._entry_occupied,
                     callback=self.on_entry,
                     occupied_callback=self.on_entry_occupied,
+                    store=lambda value: setattr(self, "_entry_occupied", value),
                 )
                 self._exit_occupied = self._handle_channel(
                     name="Exit",
@@ -190,6 +198,7 @@ class SensorPoller:
                     occupied=self._exit_occupied,
                     callback=self.on_exit,
                     occupied_callback=self.on_exit_occupied,
+                    store=lambda value: setattr(self, "_exit_occupied", value),
                 )
                 self._wb_occupied = self._handle_channel(
                     name="WB",
@@ -199,6 +208,7 @@ class SensorPoller:
                     occupied=self._wb_occupied,
                     callback=self.on_wb,
                     occupied_callback=self.on_wb_occupied,
+                    store=lambda value: setattr(self, "_wb_occupied", value),
                 )
 
                 self._prev_entry = entry
