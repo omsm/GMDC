@@ -39,6 +39,7 @@ from services.oci_client import (
     replace_truck_details_tolerance,
     rto_weight_band,
     under_or_over_type,
+    vadhghat_weight_delta,
     weight_type_error_display,
     weight_within_rto_tolerance,
 )
@@ -81,6 +82,7 @@ class MinesWbWorkflow:
         self._forward_timer: Optional[threading.Timer] = None
         self._boom_close_timer: Optional[threading.Timer] = None
         self._idle_s2_s3_timer: Optional[threading.Timer] = None
+        self._idle_weight_timer: Optional[threading.Timer] = None
         self._backward_timer: Optional[threading.Timer] = None
         self._digitizer_hang_timer: Optional[threading.Timer] = None
         self._timer_lock = threading.Lock()
@@ -88,8 +90,15 @@ class MinesWbWorkflow:
         self._digitizer_hang_announced = False
         self._awaiting_rfid = False
         self._forward_loop_active = False
+        self._vadhghat_diff_active = False
+        self._vadhghat_diff_kind = "o"
+        self._vadhghat_diff_kg = 0
+        self._vadhghat_diff_timer: Optional[threading.Timer] = None
         self._idle_s2_s3_loop_active = False
+        self._idle_weight_loop_active = False
         self._backward_loop_active = False
+        self._positioning_weight_seen = False
+        self._positioning_zero_exit = False
         self._rfid_started_direction = ""
         self._pending_rfid_tags: Optional[tuple[List[str], List[dict]]] = None
         self._status_check_alerted = False
@@ -158,43 +167,79 @@ class MinesWbWorkflow:
     # ------------------------------------------------------------------
     # Hardware helpers
     # ------------------------------------------------------------------
-    def apply_idle_hardware(self, delay_exit_boom_close: bool = False) -> None:
-        """
-        Entry green + open; exit red + closed; clear display.
+    def apply_idle_signals(self) -> None:
+        """IDLE lights and booms, without touching the display."""
+        self._set_idle_traffic_lights()
+        if self.ctx.entry_boom:
+            self.ctx.entry_boom.open()
+        if self.ctx.exit_boom:
+            if self._is_bidirectional():
+                self.ctx.exit_boom.open()
+            else:
+                self.ctx.exit_boom.close()
 
-        ``delay_exit_boom_close`` holds the exit boom up for
-        ``TIMEOUTS.BOOM_CLOSE_DELAY_SEC`` so a truck that just cleared the exit
-        sensor is fully past the barrier before it drops.
-        """
-        # Forward loop already stopped by caller; do not purge error clips here
+    def _set_idle_traffic_lights(self) -> None:
+        """Entry lights green, exit lights red. Both sides when bidirectional."""
+        if self._is_bidirectional() and getattr(self.ctx, "traffic_lights", None):
+            for direction in ("entry_a", "entry_b"):
+                entry_tl, exit_tl, _boom = self._side(direction)
+                if entry_tl:
+                    entry_tl.set_green()
+                if exit_tl:
+                    exit_tl.set_red()
+            return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_green()
         if self.ctx.exit_tl:
             self.ctx.exit_tl.set_red()
+
+    def _side(self, direction: str):
+        """Traffic lights and boom for one physical side."""
+        lights = getattr(self.ctx, "traffic_lights", None) or {}
+        pair = lights.get(direction) or {}
+        if direction == "entry_b":
+            return pair.get("entry"), pair.get("exit"), self.ctx.exit_boom
+        entry_tl = pair.get("entry") or self.ctx.entry_tl
+        exit_tl = pair.get("exit") or self.ctx.exit_tl
+        return entry_tl, exit_tl, self.ctx.entry_boom
+
+    def apply_idle_hardware(self, delay_exit_boom_close: bool = False) -> None:
+        """
+        Unidirectional: entry green + open; exit red + closed.
+        Bidirectional: both entry lights green, both exit lights red, both booms open.
+
+        ``delay_exit_boom_close`` holds the unidirectional exit boom up for
+        ``TIMEOUTS.BOOM_CLOSE_DELAY_SEC`` so a truck that just cleared the exit
+        sensor is fully past the barrier before it drops.
+        """
+        # Forward loop already stopped by caller; do not purge error clips here
+        self._set_idle_traffic_lights()
         if self.ctx.entry_boom:
             self.ctx.entry_boom.open()
-        if delay_exit_boom_close:
+        if self._is_bidirectional():
+            self._cancel_timer("_boom_close_timer")
+            if self.ctx.exit_boom:
+                self.ctx.exit_boom.open()
+        elif delay_exit_boom_close:
             self._schedule_exit_boom_close()
         else:
             self._cancel_timer("_boom_close_timer")
             if self.ctx.exit_boom:
                 self.ctx.exit_boom.close()
-        if self.ctx.display:
-            self.ctx.display.send(MSG_IDLE)
+        self._send_display(MSG_IDLE, both=True)
         fe = self._frontend()
         if fe:
             fe.reset_idle()
         else:
             self._ui_devices()
         self._stop_rfid_reader()
-        logger.info(
-            "Hardware reset to IDLE (entry green/open, exit red, exit boom %s)",
-            (
-                f"closing in {TIMEOUTS.BOOM_CLOSE_DELAY_SEC}s"
-                if delay_exit_boom_close
-                else "closed"
-            ),
-        )
+        if self._is_bidirectional():
+            boom_note = "both booms open"
+        elif delay_exit_boom_close:
+            boom_note = f"exit boom closing in {TIMEOUTS.BOOM_CLOSE_DELAY_SEC}s"
+        else:
+            boom_note = "exit boom closed"
+        logger.info("Hardware reset to IDLE (%s)", boom_note)
 
     def _schedule_exit_boom_close(self) -> None:
         """Close the exit boom after the post-crossing delay."""
@@ -216,6 +261,17 @@ class MinesWbWorkflow:
         )
 
     def _set_entry_closed(self) -> None:
+        if self._is_bidirectional():
+            approach = (
+                "entry_b" if self._active_direction_key() == "entry_b" else "entry_a"
+            )
+            entry_tl, _exit_tl, boom = self._side(approach)
+            if entry_tl:
+                entry_tl.set_red()
+            if boom:
+                boom.close()
+            self._ui_devices()
+            return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_red()
         if self.ctx.entry_boom:
@@ -225,12 +281,26 @@ class MinesWbWorkflow:
     def _grant_exit_hardware(self) -> None:
         # A pending post-crossing close must not drop the boom on this truck.
         self._cancel_timer("_boom_close_timer")
-        if self.ctx.exit_tl:
-            self.ctx.exit_tl.set_green()
-        if self.ctx.exit_boom:
-            self.ctx.exit_boom.open()
-        if self.ctx.display:
-            self.ctx.display.send(MSG_EXIT)
+        if self._is_bidirectional():
+            depart_a = self._active_direction_key() == "entry_b"
+            approach = "entry_b" if depart_a else "entry_a"
+            depart = "entry_a" if depart_a else "entry_b"
+            a_entry, _a_exit, a_boom = self._side(approach)
+            d_entry, d_exit, d_boom = self._side(depart)
+            if a_entry:
+                a_entry.set_red()
+            if a_boom:
+                a_boom.close()
+            if d_exit:
+                d_exit.set_green()
+            if d_boom:
+                d_boom.open()
+        else:
+            if self.ctx.exit_tl:
+                self.ctx.exit_tl.set_green()
+            if self.ctx.exit_boom:
+                self.ctx.exit_boom.open()
+        self._send_display(MSG_EXIT)
         fe = self._frontend()
         if fe:
             fe.publish_display(MSG_EXIT)
@@ -326,11 +396,31 @@ class MinesWbWorkflow:
         if fe:
             fe.publish_device_status()
 
+    def _active_display_side(self) -> Optional[str]:
+        """``a`` or ``b`` while a bidirectional transaction has a direction."""
+        if not self._is_bidirectional():
+            return None
+        txn = self.ctx.transactions
+        direction = str(getattr(txn, "direction", "") or "").strip().upper()
+        if direction == "ENTRY_B":
+            return "b"
+        if direction == "ENTRY_A":
+            return "a"
+        return None
+
+    def _send_display(self, text: str, *, both: bool = False) -> None:
+        display = self.ctx.display
+        if not display:
+            return
+        side = None if both else self._active_display_side()
+        try:
+            display.send(text, side=side)
+        except TypeError:
+            display.send(text)
+
     def _announce(self, msg: str) -> None:
         """Display text + mapped voice (wb-old style)."""
-        display = self.ctx.display
-        if display:
-            display.send(msg)
+        self._send_display(msg)
         fe = self._frontend()
         if fe:
             fe.publish_display(msg)
@@ -383,6 +473,66 @@ class MinesWbWorkflow:
             self._forward_timer = timer
         timer.start()
 
+    def _start_vadhghat_difference_announcement(
+        self, kind: str, diff_kg: int
+    ) -> None:
+        """
+        First play error_start + g100/g101 + difference kg.
+        Then repeat only the difference kg until the truck has exited.
+        Move-forward is not used on this path.
+        """
+        self._stop_move_forward_announcement(stop_audio=False)
+        self._vadhghat_diff_active = True
+        self._vadhghat_diff_kind = kind
+        self._vadhghat_diff_kg = int(diff_kg or 0)
+        voice = self._voice()
+        if voice and hasattr(voice, "vadhghat_difference"):
+            voice.vadhghat_difference(kind, self._vadhghat_diff_kg, intro=True)
+        self._schedule_vadhghat_diff_loop()
+
+    def _schedule_vadhghat_diff_loop(self) -> None:
+        if not self._vadhghat_diff_active:
+            return
+
+        def _tick():
+            if not self._vadhghat_diff_active:
+                return
+            sm = self.ctx.state_machine
+            if not sm or sm.current_state not in (
+                State.EXIT_GRANTED,
+                State.WAIT_EXIT,
+            ):
+                self._vadhghat_diff_active = False
+                return
+            voice = self._voice()
+            busy = False
+            if voice:
+                check = getattr(voice, "is_multi_play_active", None)
+                if callable(check) and check() is True:
+                    busy = True
+            if voice and not busy and hasattr(voice, "vadhghat_difference"):
+                voice.vadhghat_difference(
+                    self._vadhghat_diff_kind,
+                    self._vadhghat_diff_kg,
+                    intro=False,
+                )
+            self._schedule_vadhghat_diff_loop()
+
+        self._cancel_timer("_vadhghat_diff_timer")
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._vadhghat_diff_timer = timer
+        timer.start()
+
+    def _stop_vadhghat_difference_announcement(self, stop_audio: bool = True) -> None:
+        self._vadhghat_diff_active = False
+        self._cancel_timer("_vadhghat_diff_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
+
     def _stop_move_forward_announcement(self, stop_audio: bool = True) -> None:
         self._forward_loop_active = False
         self._cancel_timer("_forward_timer")
@@ -400,20 +550,27 @@ class MinesWbWorkflow:
         exit_ = bool(st.get("exit_active") or st.get("exit_occupied_latch"))
         return wb and exit_
 
-    def _digitizer_weight_nonzero(self) -> bool:
-        """True when live digitizer weight > 0 (MQTT live feed only)."""
+    def _live_digitizer_weight(self) -> Optional[float]:
+        """Current MQTT weight, or None when the live feed is unavailable."""
         dig = getattr(self.ctx, "digitizer", None)
         if not dig or not hasattr(dig, "supports_live_weight"):
-            return False
+            return None
         if not dig.supports_live_weight():
-            return False
-        weight = dig.get_current_weight() if hasattr(dig, "get_current_weight") else None
+            return None
+        if not hasattr(dig, "get_current_weight"):
+            return None
+        weight = dig.get_current_weight()
         if weight is None:
-            return False
+            return None
         try:
-            return float(weight) > 0.0
+            return float(weight)
         except (TypeError, ValueError):
-            return False
+            return None
+
+    def _digitizer_weight_nonzero(self) -> bool:
+        """True when live digitizer weight > 0 (MQTT live feed only)."""
+        weight = self._live_digitizer_weight()
+        return weight is not None and weight > 0.0
 
     def _idle_platform_fault(self) -> bool:
         """
@@ -472,17 +629,128 @@ class MinesWbWorkflow:
             if voice:
                 voice.stop()
 
+    def _play_check_weighbridge_weight(self) -> None:
+        voice = self._voice()
+        if not voice:
+            return
+        check = getattr(voice, "is_multi_play_active", None)
+        if callable(check) and check() is True:
+            return
+        play = getattr(voice, "check_weighbridge_weight", None)
+        if callable(play):
+            play()
+
+    def _start_idle_weight_announcement(self) -> None:
+        """Repeat error_start + Digitizer_error while IDLE weight is not zero."""
+        if self._idle_weight_loop_active:
+            return
+        self._idle_weight_loop_active = True
+        self._schedule_idle_weight_loop(delay=0.0)
+
+    def _schedule_idle_weight_loop(self, delay: Optional[float] = None) -> None:
+        if not self._idle_weight_loop_active:
+            return
+        wait = (
+            TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC if delay is None else delay
+        )
+
+        def _tick():
+            sm = self.ctx.state_machine
+            if (
+                not self._idle_weight_loop_active
+                or not sm
+                or sm.current_state != State.IDLE
+                or not self._digitizer_weight_nonzero()
+            ):
+                self._stop_idle_weight_announcement(stop_audio=False)
+                return
+            self._play_check_weighbridge_weight()
+            self._schedule_idle_weight_loop()
+
+        self._cancel_timer("_idle_weight_timer")
+        timer = threading.Timer(wait, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._idle_weight_timer = timer
+        timer.start()
+
+    def _stop_idle_weight_announcement(self, stop_audio: bool = False) -> None:
+        self._idle_weight_loop_active = False
+        self._cancel_timer("_idle_weight_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
+
     def _maybe_announce_idle_s2_s3(self) -> bool:
         """True when IDLE and platform fault (s2+s3 cut and/or weight≠0)."""
         sm = self.ctx.state_machine
         if not sm or sm.current_state != State.IDLE:
             self._stop_idle_s2_s3_announcement()
+            self._stop_idle_weight_announcement()
             return False
-        if not self._idle_platform_fault():
+        if self._digitizer_weight_nonzero():
             self._stop_idle_s2_s3_announcement()
-            return False
-        self._start_idle_s2_s3_announcement()
-        return True
+            self._start_idle_weight_announcement()
+            return True
+        self._stop_idle_weight_announcement()
+        if self._wb_and_exit_occupied():
+            self._start_idle_s2_s3_announcement()
+            return True
+        self._stop_idle_s2_s3_announcement()
+        return False
+
+    def _platform_clear_except_wb(self) -> bool:
+        """True when entry and exit sensors are clear (WB may still be cut)."""
+        poller = getattr(self.ctx, "sensor_poller", None)
+        if not poller or not hasattr(poller, "get_status"):
+            return True
+        st = poller.get_status() or {}
+        entry = bool(st.get("entry_active") or st.get("entry_occupied_latch"))
+        exit_ = bool(st.get("exit_active") or st.get("exit_occupied_latch"))
+        return not entry and not exit_
+
+    def _maybe_exit_on_positioning_zero(self) -> None:
+        """Weight rose, then returned to 0, before the truck is only on the WB sensor."""
+        sm = self.ctx.state_machine
+        if (
+            not sm
+            or sm.current_state != State.VEHICLE_POSITIONING
+            or self._positioning_zero_exit
+        ):
+            return
+        if self._platform_clear_except_wb() and self._sensor_cut("wb"):
+            return
+        weight = self._live_digitizer_weight()
+        if weight is None:
+            return
+        if weight > 0.0:
+            self._positioning_weight_seen = True
+            return
+        if not self._positioning_weight_seen:
+            return
+        if not self._worker_lock.acquire(blocking=False):
+            return
+        self._positioning_zero_exit = True
+
+        def _run() -> None:
+            try:
+                current = self.ctx.state_machine
+                if not current or current.current_state != State.VEHICLE_POSITIONING:
+                    return
+                logger.warning(
+                    "Weight returned to 0 before the vehicle was only on the weighbridge"
+                )
+                self._cancel_timer("_pos_timer")
+                self._stop_move_forward_announcement(stop_audio=True)
+                self._stop_backward_announcement(stop_audio=False)
+                self._play_check_weighbridge_weight()
+                if current.current_state == State.VEHICLE_POSITIONING:
+                    self._enter_exit_granted(reason="weight_zero_error")
+            finally:
+                self._worker_lock.release()
+
+        threading.Thread(target=_run, name="ZeroWeightExit", daemon=True).start()
 
     def attach_digitizer_monitor(self) -> None:
         """Watch live MQTT weight (idle weight≠0) and decoder heartbeat (hang)."""
@@ -495,6 +763,8 @@ class MinesWbWorkflow:
         sm = self.ctx.state_machine
         if sm and sm.current_state == State.IDLE:
             self._maybe_announce_idle_s2_s3()
+        elif sm and sm.current_state == State.VEHICLE_POSITIONING:
+            self._maybe_exit_on_positioning_zero()
         self._maybe_notify_digitizer_hang()
         # Push live weight to operator UI (Current Weight above RFID)
         dig = getattr(self.ctx, "digitizer", None)
@@ -731,8 +1001,12 @@ class MinesWbWorkflow:
 
     def _cancel_all_timers(self) -> None:
         self._forward_loop_active = False
+        self._vadhghat_diff_active = False
         self._idle_s2_s3_loop_active = False
+        self._idle_weight_loop_active = False
         self._backward_loop_active = False
+        self._positioning_weight_seen = False
+        self._positioning_zero_exit = False
         for name in (
             "_pos_timer",
             "_weight_timer",
@@ -740,8 +1014,10 @@ class MinesWbWorkflow:
             "_exit_timer",
             "_rfid_err_timer",
             "_forward_timer",
+            "_vadhghat_diff_timer",
             "_boom_close_timer",
             "_idle_s2_s3_timer",
+            "_idle_weight_timer",
             "_backward_timer",
         ):
             self._cancel_timer(name)
@@ -761,7 +1037,12 @@ class MinesWbWorkflow:
         sm = self.ctx.state_machine
         if not sm or not sm.trigger(Event.ENTRY_SENSOR):
             return
+        self._positioning_weight_seen = False
+        self._positioning_zero_exit = False
         self._stop_idle_s2_s3_announcement()
+        self._stop_idle_weight_announcement(stop_audio=True)
+        if self._is_bidirectional():
+            self._hold_opposite_side(direction)
         if self.ctx.transactions:
             self.ctx.transactions.begin()
             self.ctx.transactions.direction = direction
@@ -801,6 +1082,13 @@ class MinesWbWorkflow:
             return
         if sm.current_state != State.IDLE:
             return
+        if self._digitizer_weight_nonzero():
+            logger.info(
+                "Entry sensor cut while digitizer weight is not zero - "
+                "transaction not started"
+            )
+            self._maybe_announce_idle_s2_s3()
+            return
         if not self._worker_lock.acquire(blocking=False):
             return
         try:
@@ -820,6 +1108,19 @@ class MinesWbWorkflow:
         ):
             self._complete_lane_exit("ENTRY sensor cleared - ENTRY_B vehicle crossed")
             return
+        if sm.current_state == State.VEHICLE_POSITIONING and self._sensor_cut("wb"):
+            self.on_wb_occupied()
+
+    def _hold_opposite_side(self, direction: str) -> None:
+        """Close the boom on the side the truck did not enter.
+
+        That side's traffic lights and display stay on the idle pattern.
+        """
+        other = "entry_a" if str(direction).upper() == "ENTRY_B" else "entry_b"
+        _entry_tl, _exit_tl, boom = self._side(other)
+        if boom:
+            boom.close()
+        self._ui_devices()
 
     def on_wb_occupied(self) -> None:
         sm = self.ctx.state_machine
@@ -833,6 +1134,11 @@ class MinesWbWorkflow:
         if self._sensor_cut("exit"):
             logger.info("WB occupied while exit (s3) cut - wait for reverse")
             self._start_backward_announcement()
+            return
+        if not self._platform_clear_except_wb():
+            logger.info(
+                "WB occupied - waiting until the vehicle is only on the weighbridge sensor"
+            )
             return
         self._stop_backward_announcement()
         if not self._worker_lock.acquire(blocking=False):
@@ -1026,6 +1332,7 @@ class MinesWbWorkflow:
         self._cancel_all_timers()
         self._stop_move_forward_announcement(stop_audio=False)
         self._stop_idle_s2_s3_announcement(stop_audio=False)
+        self._stop_idle_weight_announcement(stop_audio=False)
         self._stop_backward_announcement(stop_audio=False)
         sm = self.ctx.state_machine
         if sm:
@@ -1064,16 +1371,22 @@ class MinesWbWorkflow:
         ):
             self.ctx.sensor_poller.reset_edge_state()
         self._cancel_timer("_boom_close_timer")
-        if self.ctx.entry_tl:
-            self.ctx.entry_tl.set_green()
-        if self.ctx.exit_tl:
-            self.ctx.exit_tl.set_green()
+        lights = getattr(self.ctx, "traffic_lights", None) or {}
+        if lights:
+            for pair in lights.values():
+                for tl in pair.values():
+                    if tl:
+                        tl.set_green()
+        else:
+            if self.ctx.entry_tl:
+                self.ctx.entry_tl.set_green()
+            if self.ctx.exit_tl:
+                self.ctx.exit_tl.set_green()
         if self.ctx.entry_boom:
             self.ctx.entry_boom.open()
         if self.ctx.exit_boom:
             self.ctx.exit_boom.open()
-        if self.ctx.display:
-            self.ctx.display.send(MSG_FREE_PASS)
+        self._send_display(MSG_FREE_PASS, both=True)
         fe = self._frontend()
         if fe:
             fe.publish_display(MSG_FREE_PASS)
@@ -1814,23 +2127,21 @@ class MinesWbWorkflow:
                     self._enter_exit_granted(reason="weight_confirm_rejected")
                     return
 
-        # Vadhghat (V): out of RTO band → weight-adjustment, then exit (no boom-close).
+        # Vadhghat (V): own APIs. In band → weight details then boom close.
+        # Out of band → weight adjustment, difference voice, boom open, no move-forward.
         if trip == "V":
             in_band, band_msg = weight_within_rto_tolerance(
                 txn.weight_kg, txn.truck_details or ""
             )
             if not in_band:
-                err_msg = weight_type_error_display(trip)
                 logger.warning(
                     "Vadhghat weight out of tolerance: %s", band_msg
                 )
-                self._announce(err_msg)
                 self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
-                voice = self._voice()
-                if voice:
-                    voice.weight_out_of_tolerance(trip)
                 self._vadhghat_weight_adjustment_and_exit()
                 return
+            self._vadhghat_in_band_and_exit()
+            return
 
         sm.trigger(Event.WEIGHT_OK)
 
@@ -1947,28 +2258,105 @@ class MinesWbWorkflow:
             )
         )
 
+    def _vadhghat_in_band_and_exit(self) -> None:
+        """
+        Weight inside (gross − tolerance) … gross.
+        POST vadhghat_weight_details, then vadhghat_boom_close, then exit.
+        """
+        sm = self.ctx.state_machine
+        oci = self.ctx.oci
+        txn = self.ctx.transactions
+        assert sm and oci and txn
+        sm.trigger(Event.WEIGHT_OK)
+        if not (txn.top_image or "").strip():
+            self._capture_top_photo()
+        top_photo_name = (txn.top_image or "").strip() or "error.jpg"
+        txn.top_image = top_photo_name
+        if sm.current_state != State.IMAGE_CAPTURE:
+            sm.force_state(State.IMAGE_CAPTURE)
+        sm.trigger(Event.DETAILS_OK)
+        self._ui_status(
+            STEP_VALIDATING_WEIGHT, "info", "Submitting Vadhghat weight details."
+        )
+        truck_disp = txn.vehicle_no or "TRUCK"
+        try:
+            weight_disp = int(txn.weight_kg or 0)
+        except (TypeError, ValueError):
+            weight_disp = txn.weight_kg
+        self._announce(
+            MSG_WEIGHT_DETAILS_FMT.format(truck=truck_disp, weight=weight_disp)
+        )
+        details = oci.vadhghat_weight_details(
+            current_weight=str(int(txn.weight_kg or 0)),
+            truck_details=txn.truck_details or "",
+            front_image_name=txn.front_image,
+            top_image_name=top_photo_name,
+            anpr_image_name=txn.anpr_image,
+        )
+        details_ok = bool(details.ok or details.status == 200)
+        if details_ok:
+            self._ui_status(
+                STEP_VALIDATING_WEIGHT,
+                "success",
+                "Vadhghat weight details submitted.",
+            )
+            self._speak_final_weight()
+        elif is_api_failure(details):
+            self._ui_api_failure(
+                STEP_VALIDATING_WEIGHT,
+                details,
+                fallback="Vadhghat weight-details service not reachable",
+            )
+        else:
+            self._ui_status(
+                STEP_VALIDATING_WEIGHT,
+                "error",
+                "Vadhghat weight details failed.",
+            )
+        close = oci.vadhghat_boom_close(truck_details=txn.truck_details or "")
+        logger.info(
+            "vadhghat boom-close truck_details=%r ok=%s status=%s",
+            txn.truck_details,
+            close.ok,
+            close.status,
+        )
+        if close.status != 200:
+            self._ui_api_failure(
+                STEP_EXIT_START,
+                close,
+                fallback="Vadhghat boom-close rejected.",
+            )
+        self._enter_exit_granted(
+            reason="vadhghat_details_ok" if details_ok else "vadhghat_details_fail"
+        )
+
     def _vadhghat_weight_adjustment_and_exit(self) -> None:
         """
-        Vadhghat out-of-tolerance: POST captured weight + o/u, then exit.
-        Does not call weight-details or boom-close.
+        Vadhghat out of the minus-only band.
+
+        POST weight adjustment, announce the kg to load or unload, open the
+        boom, and keep announcing only that difference until the truck exits.
+        Does not call weight-details, boom-close, or move-forward.
         """
         oci = self.ctx.oci
         settings = self.ctx.settings
         txn = self.ctx.transactions
         assert oci and settings and txn
         details = txn.truck_details or ""
-        weight_type = under_or_over_type(txn.weight_kg or 0, details)
+        weight_type, diff_kg = vadhghat_weight_delta(txn.weight_kg or 0, details)
         device_ip = str(getattr(settings, "device_ip", "") or "")
         logger.info(
-            "Vadhghat weight-adjustment weight=%s type=%s device_ip=%s",
+            "Vadhghat weight-adjustment weight=%s type=%s diff=%s device_ip=%s",
             txn.weight_kg,
             weight_type,
+            diff_kg,
             device_ip,
         )
+        action = "unload" if weight_type == "o" else "load"
         self._ui_status(
             STEP_VALIDATING_WEIGHT,
-            "info",
-            f"Submitting Vadhghat weight adjustment ({weight_type}).",
+            "warning",
+            f"Vadhghat {action} {diff_kg} kg.",
         )
         resp = oci.vadhghat_weight_adjustment(
             device_ip=device_ip,
@@ -1986,9 +2374,14 @@ class MinesWbWorkflow:
             self._ui_status(
                 STEP_VALIDATING_WEIGHT,
                 "success",
-                str(resp.message or "Vadhghat weight adjustment processed."),
+                str(resp.message or f"Vadhghat {action} {diff_kg} kg."),
             )
-        self._enter_exit_granted(reason="vadhghat_weight_adjustment")
+        self._enter_exit_granted(
+            reason="vadhghat_difference", speak_forward=False
+        )
+        label = "Overweight" if weight_type == "o" else "Underweight"
+        self._announce(f"{label} by:@{diff_kg}Kg")
+        self._start_vadhghat_difference_announcement(weight_type, diff_kg)
 
     def _gross_tolerance_confirm_until_ok(self) -> str:
         """
@@ -2203,7 +2596,9 @@ class MinesWbWorkflow:
 
         return False
 
-    def _enter_exit_granted(self, reason: str = "") -> None:
+    def _enter_exit_granted(
+        self, reason: str = "", *, speak_forward: bool = True
+    ) -> None:
         sm = self.ctx.state_machine
         if sm and sm.current_state != State.EXIT_GRANTED:
             sm.force_state(State.EXIT_GRANTED)
@@ -2230,10 +2625,10 @@ class MinesWbWorkflow:
             )
         else:
             self._ui_status(STEP_EXIT_START, "success", "Exit granted - proceed.")
-        self._announce(MSG_MOVE_FORWARD)
         self._grant_exit_hardware()
-        # Continuous move-forward while waiting for exit sensor (legacy)
-        self._start_move_forward_announcement()
+        if speak_forward:
+            self._announce(MSG_MOVE_FORWARD)
+            self._start_move_forward_announcement()
         self._arm_timer(
             "_exit_timer",
             TIMEOUTS.EXIT_WAIT_SEC,

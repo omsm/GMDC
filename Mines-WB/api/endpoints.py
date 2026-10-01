@@ -22,6 +22,36 @@ _APP_VERSION = load_app_version(Path(__file__).resolve().parent.parent)
 logger = logging.getLogger("mines_wb.api.endpoints")
 
 
+def _rfid_post_matches_active_side(ctx: AppContext) -> bool:
+    """Bidirectional: a reader port only feeds the side that truck entered."""
+    settings = getattr(ctx, "settings", None)
+    is_bi = getattr(settings, "is_bidirectional", None)
+    if not settings or not callable(is_bi) or not is_bi():
+        return True
+    txn = getattr(ctx, "transactions", None)
+    direction = str(getattr(txn, "direction", "") or "").strip().upper()
+    if direction not in ("ENTRY_A", "ENTRY_B"):
+        return True
+    try:
+        server_port = int(request.environ.get("SERVER_PORT") or 0)
+    except (TypeError, ValueError):
+        return True
+    try:
+        app_port = int(getattr(settings, "api_port", 0) or 0)
+    except (TypeError, ValueError):
+        app_port = 0
+    if server_port in (0, app_port):
+        return True
+    key = "entry_b" if direction == "ENTRY_B" else "entry_a"
+    configs = settings.rfid_configs() if hasattr(settings, "rfid_configs") else {}
+    raw_port = (configs.get(key) or {}).get("api_port")
+    try:
+        expected = int(raw_port)
+    except (TypeError, ValueError):
+        return True
+    return server_port == expected
+
+
 def _accept_rfid_payload(payload: Any, source: str):
     ctx = AppContext.get_instance()
     id_hexes = extract_id_hexes(payload)
@@ -37,6 +67,22 @@ def _accept_rfid_payload(payload: Any, source: str):
                 }
             ),
             400,
+        )
+
+    if not _rfid_post_matches_active_side(ctx):
+        logger.info(
+            "POST %s ignored - tag arrived on the other bidirectional reader",
+            source,
+        )
+        return (
+            jsonify(
+                {
+                    "status": "ignored",
+                    "message": "RFID data is for the other entry side",
+                    "tags": id_hexes,
+                }
+            ),
+            200,
         )
 
     raw_list = payload if isinstance(payload, list) else []
@@ -127,7 +173,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"status": "error", "message": "Empty body"}), 400
         return _accept_rfid_payload(payload, "/rfid_data")
 
-    @app.post("/rfid_management")
+    @app.route("/rfid_management", methods=["GET", "POST"])
     def rfid_management():
         try:
             payload = request.get_json(force=True, silent=True)

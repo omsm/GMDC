@@ -4,7 +4,7 @@ Python runtimes for Gujarat Mineral Development Corporation (GMDC) mine-yard che
 
 This workspace is one site install. Shared packages (`gmdc_common`, `checkpoint-config`, `digitizer-app`) live next to two family runtimes so every PC can commission hardware, share drivers, and run the matching site flow via `checkpoint_type`.
 
-**Current product version:** see [`version.md`](version.md) (**1.15**).
+**Current product version:** see [`version.md`](version.md) (**1.16**).
 
 ## Site flow
 
@@ -74,7 +74,7 @@ Standalone PySide6 serial reader. HTTP API: **http://0.0.0.0:8800/read_stable_we
 
 ### `digitizer-decoder`
 
-Web replacement for the PySide shell (same calibration / stable-weight logic). Dashboard default **http://127.0.0.1:8800/**. Modes: **API** (`/read_stable_weight`) or **MQTT** request/response. Live UI status over MQTT WebSocket (`gmdc/digitizer/status` on **:9001**). See [`digitizer-decoder/README.md`](digitizer-decoder/README.md).
+Web replacement for the PySide shell. Dashboard default **http://127.0.0.1:8800/**. **API** mode serves `/read_stable_weight`. **MQTT** mode publishes live weight (zero once until it changes); Mines-WB decides when that stream is stable. Live UI status over MQTT WebSocket (`gmdc/digitizer/status` on **:9001**). See [`digitizer-decoder/README.md`](digitizer-decoder/README.md).
 
 ### `mqtt_broker_setup`
 

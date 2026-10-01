@@ -260,5 +260,31 @@ class TestTransaction(unittest.TestCase):
         self.assertEqual(t.rfid_tags, [])
 
 
+class TestRfidListenPorts(unittest.TestCase):
+    def test_checkpoint_opens_one_rfid_port(self):
+        from config.settings import Settings
+
+        settings = Settings(
+            api_port=8000,
+            raw_config={
+                "rfid": {"api_port": "8080"},
+                "rfids": {
+                    "entry_a": {"api_port": "8080"},
+                    "entry_b": {"api_port": "8081"},
+                },
+            },
+        )
+        self.assertEqual(settings.rfid_api_listen_ports(), [8080])
+
+    def test_application_port_is_not_bound_twice(self):
+        from config.settings import Settings
+
+        settings = Settings(
+            api_port=8080,
+            raw_config={"rfid": {"api_port": "8080"}},
+        )
+        self.assertEqual(settings.rfid_api_listen_ports(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

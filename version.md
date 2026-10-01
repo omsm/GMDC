@@ -1,13 +1,48 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.15**
+**Current version: 1.16**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.15.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.16.0`). This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.15 — 2026-09-30 (latest)
+## 1.16 — 2026-10-01 (latest)
+
+Bidirectional weighbridge commissioning, live digitizer weight owned by Mines-WB, and the Vadhghat load/unload path.
+
+### checkpoint-config
+- Camera order is Front, Top on a unidirectional bridge and Front-1, Front-2, Top on a bidirectional bridge. Top can be skipped. Saving one camera keeps the other camera's tick
+- Display check publishes `pcb_id`, waits 2 seconds, then publishes `data_info` once for that board
+- I/O devices have an Enable switch. Off skips the device. On makes the pins editable and the relay test available. A bidirectional bridge has four traffic lights
+- A successful I/O connection writes `device_ip`: the controller Ethernet IP, or the COM port when the controller is serial. That value is not the Mac's LAN address
+- Both bidirectional RFID readers must pass Check & Save. Saving one reader leaves the other reader's result in place. The RFID result button is Done
+
+### Digitizer
+- In MQTT mode the decoder publishes live readings. Non-zero values go out continuously. Zero is sent once until the weight changes. A message on the request topic always publishes the current value
+- Mines-WB decides stable weight: the same non-zero reading must repeat for `digitizer_stable_count` samples (default 10). Zero is not a stable capture
+- HTTP `/read_stable_weight` on the decoder still waits for its own stable reading
+
+### Mines-WB lane
+- Before a trip starts, the platform weight must be 0. A non-zero idle weight plays `error_start.wav` then `Digitizer_error.wav` and does not start the transaction
+- If the weight rises and then returns to 0 after the approach sensor is cut, and before only the weighbridge sensor is cut, the same clips play and the truck is sent out
+- Bidirectional idle: both booms open, both entry lights green, both exit lights red. Sensor 1 starts side A. Sensor 3 starts side B. Sensor 2 never starts a trip. A non-zero idle weight blocks both approach sensors
+- During a trip, the display, RFID reader, and traffic lights update only the side the truck entered. Idle text still goes to both displays
+- Configured RFID API ports are opened in addition to the dashboard port (one port on a checkpoint or unidirectional bridge, two on a bidirectional bridge)
+
+### Vadhghat (`V|` truck details)
+- Allowed weight is target down to target minus tolerance, inclusive. For `45000` and `50`, that is 44950–45000 kg
+- Inside the band: `vadhghat_weight_details`, then `vadhghat_boom_close`, then exit with Move forward
+- Outside the band: `vadhghat_weight_adjustment` only. The boom opens. Move forward is not played
+- Over the target: display `Overweight@{difference}Kg`. Voice is `error_start.wav`, then `g100.wav`, then the difference in kg. After that, only the difference repeats until the truck has exited
+- Under the low end: display `Underweight@{difference}Kg`. Voice uses `g101.wav` in that first sequence, then only the difference until exit
+
+### ANPR
+- Mines-Checkpoint and Mines-WB: ANPR on with `anpr_status` 0 or 2, and ANPR switched off on the page, post `invalid-truck-number` once and then poll `status_check` until the vehicle is updated
+
+---
+
+## 1.15 — 2026-09-30
 
 Operator dashboards use the liquid-glass UI on macOS, and the Transaction Flow panel stays usable on phones and tablets.
 
@@ -358,6 +393,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.16** | Bi-directional commissioning; Mines-WB stable weight; Vadhghat in-band details/boom-close and out-of-band adjustment with Overweight/Underweight |
 | **1.15** | Liquid glass on macOS (`OS_TYPE`); RFID online is an IP ping; Transaction Flow stays on top when the dashboard stacks |
 | **1.14** | Config types are Checkpoint or Weigh Bridge; front-camera tick stays; checkpoint I/O ignores hidden exit hardware |
 | **1.13** | Mines Exit `X|` polls download/docs until documentDownloaded; `RESET_CHECKPOINT_FLAG` gates reset_checkpoint |

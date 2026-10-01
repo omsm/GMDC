@@ -96,6 +96,31 @@ def _display_ips_from_config(
     return ips
 
 
+def _rfid_listen_ports(blocks, *, application_port: int) -> list[int]:
+    """Unique RFID_API_PORT values other than the application port."""
+    try:
+        app_port = int(application_port or 0)
+    except (TypeError, ValueError):
+        app_port = 0
+    ports: list[int] = []
+    seen: set[int] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        raw_port = block.get("api_port")
+        if raw_port in (None, ""):
+            continue
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            continue
+        if port < 1 or port > 65535 or port == app_port or port in seen:
+            continue
+        seen.add(port)
+        ports.append(port)
+    return ports
+
+
 @dataclass
 class Settings:
     demo_mode: bool = True
@@ -192,6 +217,17 @@ class Settings:
 
     def rfid_config(self, key: str = "entry_a") -> Dict[str, Any]:
         return self.raw_config.get("rfids", {}).get(key, {})
+
+    def rfid_api_listen_ports(self) -> list[int]:
+        """The checkpoint RFID_API_PORT, when it is not the application port."""
+        blocks = []
+        rfid = self.raw_config.get("rfid") if isinstance(self.raw_config, dict) else None
+        if isinstance(rfid, dict):
+            blocks.append(rfid)
+        entry = self.rfid_config("entry_a")
+        if isinstance(entry, dict) and entry:
+            blocks.append(entry)
+        return _rfid_listen_ports(blocks, application_port=self.api_port)
 
 
 def _env_bool(name: str, default: bool) -> bool:

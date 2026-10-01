@@ -1,4 +1,5 @@
 <div id="tlBidirectionalBlock" style="display: none;">
+    <p class="text-muted" style="font-size: 0.85rem;">Turn Enable on for each light you will use. Off skips that light.</p>
     <p class="direction-subsection-title"><i class="bi bi-arrow-right-circle"></i> ENTRY A</p>
     <div class="tl-config-grid">
         <div class="device-config-card">
@@ -7,6 +8,13 @@
                 <span class="device-status" id="directionA_entryTLStatus"></span>
             </div>
             <div class="device-fields">
+                <div class="io-device-enable">
+                    <label class="toggle-label">
+                        <input type="checkbox" class="io-enable-input" id="directionA_entryTLEnabled" data-kind="tl" data-location="entry" data-direction="entry_a" onchange="onTrafficLightEnableToggle(this, true)">
+                        <span>Enable</span>
+                    </label>
+                    <small class="text-muted">Off skips this light.</small>
+                </div>
                 <div class="row">
                     <div class="col-md-6"><div class="form-group"><label>Make / Brand</label><input type="text" class="form-control" id="directionA_entryTLMake"></div></div>
                     <div class="col-md-6"><div class="form-group"><label>Model Number</label><input type="text" class="form-control" id="directionA_entryTLModel"></div></div>
@@ -19,7 +27,6 @@
             <div class="btn-group-actions" style="margin-top: 12px;">
                 <button class="btn btn-sm btn-error" onclick="testTrafficLightColor('entry_a', 'entry', 'red')"><i class="bi bi-circle-fill"></i> Test Red</button>
                 <button class="btn btn-sm btn-success" onclick="testTrafficLightColor('entry_a', 'entry', 'green')"><i class="bi bi-circle-fill"></i> Test Green</button>
-                <button type="button" class="btn btn-sm btn-outline skip-btn skip-tl-debug" onclick="skipTrafficLightTest('entry', 'entry_a')"><i class="bi bi-skip-forward"></i> Skip</button>
             </div>
         </div>
         <div class="device-config-card">
@@ -28,6 +35,13 @@
                 <span class="device-status" id="directionA_exitTLStatus"></span>
             </div>
             <div class="device-fields">
+                <div class="io-device-enable">
+                    <label class="toggle-label">
+                        <input type="checkbox" class="io-enable-input" id="directionA_exitTLEnabled" data-kind="tl" data-location="exit" data-direction="entry_a" onchange="onTrafficLightEnableToggle(this, true)">
+                        <span>Enable</span>
+                    </label>
+                    <small class="text-muted">Off skips this light.</small>
+                </div>
                 <div class="row">
                     <div class="col-md-6"><div class="form-group"><label>Make / Brand</label><input type="text" class="form-control" id="directionA_exitTLMake"></div></div>
                     <div class="col-md-6"><div class="form-group"><label>Model Number</label><input type="text" class="form-control" id="directionA_exitTLModel"></div></div>
@@ -40,7 +54,6 @@
             <div class="btn-group-actions" style="margin-top: 12px;">
                 <button class="btn btn-sm btn-error" onclick="testTrafficLightColor('entry_a', 'exit', 'red')"><i class="bi bi-circle-fill"></i> Test Red</button>
                 <button class="btn btn-sm btn-success" onclick="testTrafficLightColor('entry_a', 'exit', 'green')"><i class="bi bi-circle-fill"></i> Test Green</button>
-                <button type="button" class="btn btn-sm btn-outline skip-btn skip-tl-debug" onclick="skipTrafficLightTest('exit', 'entry_a')"><i class="bi bi-skip-forward"></i> Skip</button>
             </div>
         </div>
     </div>
@@ -52,6 +65,13 @@
                 <span class="device-status" id="directionB_entryTLStatus"></span>
             </div>
             <div class="device-fields">
+                <div class="io-device-enable">
+                    <label class="toggle-label">
+                        <input type="checkbox" class="io-enable-input" id="directionB_entryTLEnabled" data-kind="tl" data-location="entry" data-direction="entry_b" onchange="onTrafficLightEnableToggle(this, true)">
+                        <span>Enable</span>
+                    </label>
+                    <small class="text-muted">Off skips this light.</small>
+                </div>
                 <div class="row">
                     <div class="col-md-6"><div class="form-group"><label>Make / Brand</label><input type="text" class="form-control" id="directionB_entryTLMake"></div></div>
                     <div class="col-md-6"><div class="form-group"><label>Model Number</label><input type="text" class="form-control" id="directionB_entryTLModel"></div></div>
@@ -64,7 +84,6 @@
             <div class="btn-group-actions" style="margin-top: 12px;">
                 <button class="btn btn-sm btn-error" onclick="testTrafficLightColor('entry_b', 'entry', 'red')"><i class="bi bi-circle-fill"></i> Test Red</button>
                 <button class="btn btn-sm btn-success" onclick="testTrafficLightColor('entry_b', 'entry', 'green')"><i class="bi bi-circle-fill"></i> Test Green</button>
-                <button type="button" class="btn btn-sm btn-outline skip-btn skip-tl-debug" onclick="skipTrafficLightTest('entry', 'entry_b')"><i class="bi bi-skip-forward"></i> Skip</button>
             </div>
         </div>
         <div class="device-config-card">
@@ -73,6 +92,13 @@
                 <span class="device-status" id="directionB_exitTLStatus"></span>
             </div>
             <div class="device-fields">
+                <div class="io-device-enable">
+                    <label class="toggle-label">
+                        <input type="checkbox" class="io-enable-input" id="directionB_exitTLEnabled" data-kind="tl" data-location="exit" data-direction="entry_b" onchange="onTrafficLightEnableToggle(this, true)">
+                        <span>Enable</span>
+                    </label>
+                    <small class="text-muted">Off skips this light.</small>
+                </div>
                 <div class="row">
                     <div class="col-md-6"><div class="form-group"><label>Make / Brand</label><input type="text" class="form-control" id="directionB_exitTLMake"></div></div>
                     <div class="col-md-6"><div class="form-group"><label>Model Number</label><input type="text" class="form-control" id="directionB_exitTLModel"></div></div>
@@ -85,7 +111,6 @@
             <div class="btn-group-actions" style="margin-top: 12px;">
                 <button class="btn btn-sm btn-error" onclick="testTrafficLightColor('entry_b', 'exit', 'red')"><i class="bi bi-circle-fill"></i> Test Red</button>
                 <button class="btn btn-sm btn-success" onclick="testTrafficLightColor('entry_b', 'exit', 'green')"><i class="bi bi-circle-fill"></i> Test Green</button>
-                <button type="button" class="btn btn-sm btn-outline skip-btn skip-tl-debug" onclick="skipTrafficLightTest('exit', 'entry_b')"><i class="bi bi-skip-forward"></i> Skip</button>
             </div>
         </div>
     </div>

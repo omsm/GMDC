@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from api.server import start_api_server
+from api.server import start_api_server, start_rfid_api_ports
 from config.settings import load_settings
 from core.app_context import AppContext
 from core.state_machine import StateMachine
@@ -79,25 +79,36 @@ def _io_mode(section: Dict[str, Any]) -> str:
 
 
 def _resolve_tl_pins(
-    io_cfg: Dict[str, Any], side: str, do_start: int
+    io_cfg: Dict[str, Any],
+    side: str,
+    do_start: int,
+    direction: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[int]]:
     """
     Resolve traffic-light DO addresses.
     relay mode: single pin as red_pin (HIGH=red, LOW=green per relay_logic).
-    direct mode: red_pin + green_pin (uni or nested bi layout).
+    direct mode: red_pin + green_pin.
+    Bidirectional pins live under entry_a / entry_b, each with entry and exit.
     """
     tl = io_cfg.get("traffic_lights") or {}
     if _io_mode(tl) == "relay":
-        relay = (tl.get("relay") or {}).get(side) or {}
-        pin = _pin(relay.get("pin"))
+        relay = tl.get("relay") or {}
+        cfg: Dict[str, Any] = {}
+        if direction:
+            cfg = (relay.get(direction) or {}).get(side) or {}
+        if not cfg:
+            cfg = relay.get(side) or {}
+        pin = _pin(cfg.get("pin"))
         if pin is None:
             return None, None
         return do_start + pin, None
 
     direct = tl.get("direct") or {}
-    cfg = direct.get(side) or {}
+    cfg = {}
+    if direction:
+        cfg = (direct.get(direction) or {}).get(side) or {}
     if not cfg:
-        cfg = (direct.get("entry_a") or {}).get(side) or {}
+        cfg = direct.get(side) or {}
     red = _pin(cfg.get("red_pin"))
     green = _pin(cfg.get("green_pin"))
     return (
@@ -148,15 +159,44 @@ def _build_hardware(ctx: AppContext) -> None:
 
     do_start = int(io_cfg.get("digital_outputs", {}).get("start_address") or 0)
 
-    entry_red, entry_green = _resolve_tl_pins(io_cfg, "entry", do_start)
-    exit_red, exit_green = _resolve_tl_pins(io_cfg, "exit", do_start)
-
-    ctx.entry_tl = TrafficLight(
-        ctx.io, red_pin=entry_red, green_pin=entry_green, name="entry"
-    )
-    ctx.exit_tl = TrafficLight(
-        ctx.io, red_pin=exit_red, green_pin=exit_green, name="exit"
-    )
+    ctx.traffic_lights = {}
+    if settings.is_bidirectional():
+        for direction in ("entry_a", "entry_b"):
+            entry_red, entry_green = _resolve_tl_pins(
+                io_cfg, "entry", do_start, direction
+            )
+            exit_red, exit_green = _resolve_tl_pins(
+                io_cfg, "exit", do_start, direction
+            )
+            ctx.traffic_lights[direction] = {
+                "entry": TrafficLight(
+                    ctx.io,
+                    red_pin=entry_red,
+                    green_pin=entry_green,
+                    name=f"{direction}_entry",
+                ),
+                "exit": TrafficLight(
+                    ctx.io,
+                    red_pin=exit_red,
+                    green_pin=exit_green,
+                    name=f"{direction}_exit",
+                ),
+            }
+        ctx.entry_tl = ctx.traffic_lights["entry_a"]["entry"]
+        ctx.exit_tl = ctx.traffic_lights["entry_a"]["exit"]
+        entry_red = ctx.entry_tl.red_pin
+        entry_green = ctx.entry_tl.green_pin
+        exit_red = ctx.exit_tl.red_pin
+        exit_green = ctx.exit_tl.green_pin
+    else:
+        entry_red, entry_green = _resolve_tl_pins(io_cfg, "entry", do_start)
+        exit_red, exit_green = _resolve_tl_pins(io_cfg, "exit", do_start)
+        ctx.entry_tl = TrafficLight(
+            ctx.io, red_pin=entry_red, green_pin=entry_green, name="entry"
+        )
+        ctx.exit_tl = TrafficLight(
+            ctx.io, red_pin=exit_red, green_pin=exit_green, name="exit"
+        )
 
     e_open, e_close, e_en = _resolve_boom_pins(io_cfg, "entry", do_start)
     x_open, x_close, x_en = _resolve_boom_pins(io_cfg, "exit", do_start)
@@ -284,6 +324,8 @@ def bootstrap() -> AppContext:
         weight_confirm_url=settings.weight_confirm_url,
         gross_tolerance_confirm_url=settings.gross_tolerance_confirm_url,
         vadhghat_weight_adjustment_url=settings.vadhghat_weight_adjustment_url,
+        vadhghat_weight_details_url=settings.vadhghat_weight_details_url,
+        vadhghat_boom_close_url=settings.vadhghat_boom_close_url,
         anpr_username=settings.anpr_username,
         anpr_password=settings.anpr_password,
         endpoint_auth=settings.endpoint_auth,
@@ -387,15 +429,9 @@ def bootstrap() -> AppContext:
 
     # Set TL/boom immediately. Do not call Zebra login/mode/start at boot;
     # the selected reader starts only after a valid > minimum weight result.
-    if ctx.entry_tl:
-        ctx.entry_tl.set_green()
-    if ctx.exit_tl:
-        ctx.exit_tl.set_red()
-    if ctx.entry_boom:
-        ctx.entry_boom.open()
-    if ctx.exit_boom:
-        ctx.exit_boom.close()
-    # Do not clear display at boot — MQTT Welcome stays until first transaction message
+    # Do not clear display at boot — MQTT Welcome stays until first transaction message.
+    if ctx.workflow:
+        ctx.workflow.apply_idle_signals()
 
     # Start sensors after workflow + MQTT exist so an already-cut S1 is
     # published to the dashboard and can start positioning.
@@ -405,7 +441,14 @@ def bootstrap() -> AppContext:
         ctx.frontend.publish_device_status()
         ctx.frontend.republish_snapshot()
     logger.info("RFID cloud idle at boot - login/mode/start deferred until weight OK")
-    logger.info("Hardware reset to IDLE (entry green/open, exit red/closed)")
+    logger.info(
+        "Hardware reset to IDLE (%s)",
+        (
+            "both entries green, both exits red, both booms open"
+            if settings.is_bidirectional()
+            else "entry green/open, exit red/closed"
+        ),
+    )
 
     if ctx.voice and ctx.voice.is_enabled():
         ctx.voice.welcome()
@@ -425,7 +468,9 @@ def main() -> int:
     settings = ctx.settings
     assert settings
 
-    start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
+    app = start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
+    rfid_ports = settings.rfid_api_listen_ports()
+    start_rfid_api_ports(app, settings.api_host, rfid_ports)
 
     banner = (
         "\n"
@@ -435,6 +480,7 @@ def main() -> int:
         f"  Dashboard  : http://127.0.0.1:{settings.api_port}/\n"
         f"  Animation  : http://127.0.0.1:{settings.api_port}/animated.html\n"
         f"  API        : http://127.0.0.1:{settings.api_port}/api/status\n"
+        f"  RFID ports : {', '.join(str(p) for p in rfid_ports) or 'application port'}\n"
         f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
         f"  MQTT WS    : ws://<this-pc-ip>:{settings.mqtt_ws_port}\n"
         f"  Config     : {settings.config_path}\n"

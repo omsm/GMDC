@@ -7,7 +7,8 @@ Protocol (device identity = Display IP):
       Bi (2 IPs): first IP → a (Entry A), second IP → b (Entry B)
   - Transaction text:
       Uni / checkpoint: publish data_info/a (or data_info/{pcb_mode})
-      Bi-directional:   publish data_info/a AND data_info/b
+      Bi-directional idle: publish data_info/a AND data_info/b
+      Bi-directional transaction: publish only the side the vehicle entered
 """
 
 from __future__ import annotations
@@ -80,21 +81,28 @@ def data_info_topic(pcb_mode: str) -> str:
 
 
 def data_info_topics_for_ips(
-    display_ips: Sequence[str], *, pcb_mode: str = "a"
+    display_ips: Sequence[str], *, pcb_mode: str = "a", side: Optional[str] = None
 ) -> List[str]:
     """
     TX topics for configured displays.
 
     Uni / checkpoint (1 IP, mode a): data_info/a
     Bi-directional (2 IPs): data_info/a and data_info/b (Entry A + Entry B)
+
+    ``side`` "a" or "b" keeps only that topic when both exist.
     """
     ips = normalize_display_ips(display_ips)
     if len(ips) >= 2:
-        return [data_info_topic("a"), data_info_topic("b")]
-    mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-    if mode not in ("a", "b"):
-        mode = "a"
-    return [data_info_topic(mode)]
+        topics = [data_info_topic("a"), data_info_topic("b")]
+    else:
+        mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
+        if mode not in ("a", "b"):
+            mode = "a"
+        topics = [data_info_topic(mode)]
+    letter = str(side or "").strip().lower()[:1]
+    if letter in ("a", "b") and data_info_topic(letter) in topics:
+        return [data_info_topic(letter)]
+    return topics
 
 
 def pcb_letter_for_display_ip(
@@ -158,10 +166,10 @@ class ConsoleDisplayService(DisplayService):
     def disconnect(self) -> None:
         pass
 
-    def send(self, text: str) -> bool:
+    def send(self, text: str, side: Optional[str] = None) -> bool:
         self._last = text
         topics = data_info_topics_for_ips(
-            self.display_ips, pcb_mode=self.pcb_mode
+            self.display_ips, pcb_mode=self.pcb_mode, side=side
         )
         for topic in topics:
             logger.info("DISPLAY[%s]: %s", topic, text)
@@ -191,8 +199,9 @@ class MQTTDisplayService(DisplayService):
     MQTT display client.
 
     Subscribes to display_info/{ip} for each configured Display IP and answers
-    pcb_id/{ip} with a/b (per IP on bi). Transaction payloads go to
-    data_info/a (uni) or both data_info/a and data_info/b (bi).
+    pcb_id/{ip} with a/b (per IP on bi).     Transaction payloads go to data_info/a (uni). On a bidirectional
+    bridge, idle text goes to both boards and a transaction goes only to
+    the side the vehicle entered.
     """
 
     def __init__(
@@ -228,10 +237,10 @@ class MQTTDisplayService(DisplayService):
         self._handshake_counts = {ip: 0 for ip in self.display_ips}
         self._welcome_sent = False
 
-    def _publish_text(self, client, text: str) -> bool:
-        """Publish transaction text to all TX topics (a and/or b)."""
+    def _publish_text(self, client, text: str, side: Optional[str] = None) -> bool:
+        """Publish transaction text. ``side`` limits a bidirectional board."""
         topics = data_info_topics_for_ips(
-            self.display_ips, pcb_mode=self.pcb_mode
+            self.display_ips, pcb_mode=self.pcb_mode, side=side
         )
         self._tx_topics = topics
         if topics:
@@ -366,13 +375,13 @@ class MQTTDisplayService(DisplayService):
                 self._client = None
             self._connected = False
 
-    def send(self, text: str) -> bool:
+    def send(self, text: str, side: Optional[str] = None) -> bool:
         self._last = text
         with self._lock:
             if not self._client:
                 logger.warning("MQTT display not connected - text=%s", text)
                 return False
-            return self._publish_text(self._client, text)
+            return self._publish_text(self._client, text, side=side)
 
     def clear(self) -> bool:
         return self.send("")

@@ -897,7 +897,7 @@ def save_section_config(section):
     if section == 'device_ip':
         return jsonify({
             "status": 403,
-            "message": "device_ip is set automatically when configuration is finished.",
+            "message": "device_ip is set from the I/O controller when Connect succeeds.",
         }), 403
     if section == 'camera' and not ENABLE_CAMERA_CONFIGURATION:
         return jsonify({
@@ -1648,9 +1648,21 @@ def stop_digitizer():
 @app.route('/api/io/check', methods=['POST'])
 def check_io_controller():
     """Check I/O controller connectivity"""
-    data = request.json
+    data = request.json or {}
     result = io_controller_service.check_connection(data)
+    if isinstance(result, dict) and result.get("status") == 200:
+        config_manager.record_device_ip_from_io(data)
     return jsonify(result)
+
+
+@app.route('/api/config/io_controller/device', methods=['POST'])
+def save_io_controller_device():
+    """Persist one sensor, traffic light, or boom barrier as soon as it is configured."""
+    data = request.get_json(silent=True) or {}
+    ok, message = config_manager.merge_io_controller_device(data)
+    if ok:
+        return jsonify({"status": 200, "message": "I/O device saved"})
+    return jsonify({"status": 400, "message": message or "Could not save I/O device"}), 400
 
 @app.route('/api/io/test', methods=['POST'])
 def test_io_pin():

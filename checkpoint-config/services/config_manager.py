@@ -506,9 +506,26 @@ def _collect_tl_direct_pins(
             _add_io_pin(entries, loc_data.get("green_pin"), f"{loc_label} traffic light green")
 
 
-def _collect_tl_relay_pins(entries: List[tuple], tl: dict) -> None:
+def _collect_tl_relay_pins(entries: List[tuple], tl: dict, wb_type: str) -> None:
     relay_section = tl.get("relay") if isinstance(tl, dict) else {}
     if not isinstance(relay_section, dict):
+        return
+    if wb_type == "bidirectional":
+        for direction in ("entry_a", "entry_b"):
+            dir_label = bidirectional_entry_label(direction)
+            dir_data = relay_section.get(direction)
+            if not isinstance(dir_data, dict):
+                continue
+            for loc in ("entry", "exit"):
+                if not _tl_side_active(tl, loc, direction):
+                    continue
+                loc_data = dir_data.get(loc)
+                if not isinstance(loc_data, dict):
+                    continue
+                loc_label = loc.capitalize()
+                _add_io_pin(
+                    entries, loc_data.get("pin"), f"{dir_label} {loc_label} traffic light relay"
+                )
         return
     for loc in ("entry", "exit"):
         if not _tl_side_active(tl, loc):
@@ -583,7 +600,7 @@ def collect_io_output_pins(io: dict, wb_type: str) -> List[tuple]:
         _collect_tl_direct_pins(entries, tl if isinstance(tl, dict) else {}, wb_type)
         _collect_boom_direct_pins(entries, bb.get("direct") if isinstance(bb, dict) else {})
     else:
-        _collect_tl_relay_pins(entries, tl if isinstance(tl, dict) else {})
+        _collect_tl_relay_pins(entries, tl if isinstance(tl, dict) else {}, wb_type)
         _collect_boom_relay_pins(entries, bb.get("relay") if isinstance(bb, dict) else {})
 
     return entries
@@ -787,10 +804,6 @@ def _migrate_traffic_lights_to_bidirectional(tl: dict) -> None:
             side_meta.setdefault("make", "")
             side_meta.setdefault("model", "")
             side_meta["validated"] = _resolve_tl_side_validated(side_meta, legacy_meta)
-
-    if isinstance(relay, dict):
-        relay.pop("entry_a", None)
-        relay.pop("entry_b", None)
 
 
 def validate_bidirectional_traffic_lights(io: dict, wb_type: str) -> Optional[str]:
@@ -1189,6 +1202,37 @@ if not ENABLE_CAMERA_CONFIGURATION:
     DEFAULT_CONFIG.pop("camera", None)
 
 
+_LOOPBACK_DEVICE_IPS = {"127.0.0.1", "0.0.0.0", "localhost", "::1"}
+
+
+def io_controller_device_address(io_payload: dict) -> str:
+    """Address to store as device_ip after a successful I/O connection.
+
+    Ethernet stores the controller IP from the connection form.
+    MODBUS RTU stores the COM port. This PC's own LAN address is never used.
+    """
+    if not isinstance(io_payload, dict):
+        return ""
+    kind = str(io_payload.get("type") or "ethernet").strip().lower()
+    connection = io_payload.get("connection") if isinstance(io_payload.get("connection"), dict) else {}
+    if kind in ("serial", "rtu"):
+        serial = connection.get("serial") if isinstance(connection.get("serial"), dict) else {}
+        return str(serial.get("port") or "").strip()
+    ethernet = connection.get("ethernet") if isinstance(connection.get("ethernet"), dict) else {}
+    ip = str(ethernet.get("ip") or "").strip()
+    if not ip or ip.lower() in _LOOPBACK_DEVICE_IPS:
+        return ""
+    try:
+        from utils.local_ip import detect_device_ip
+
+        local_ip = detect_device_ip()
+    except Exception:
+        local_ip = None
+    if local_ip and ip == str(local_ip).strip():
+        return ""
+    return ip
+
+
 class ConfigManager:
     def __init__(self):
         self.config = self._load_config()
@@ -1247,7 +1291,8 @@ class ConfigManager:
         """
         Config payload for the commissioning UI.
 
-        device_ip is auto-detected on Finish and must not appear in the UI.
+        device_ip is the I/O controller address (or COM port) captured when Connect succeeds.
+        It must not appear in the UI.
         """
         data = self._deep_copy(self.config)
         if isinstance(data, dict):
@@ -1408,11 +1453,41 @@ class ConfigManager:
             self.config["device_ip"] = existing_device_ip
         self._sanitize_config_for_layout(self.config)
         return self._save_config()
+
+    def record_device_ip_from_io(self, io_payload: dict) -> bool:
+        """Write device_ip when the I/O controller connection succeeds.
+
+        Ethernet: the controller IP the operator connected to.
+        RTU: the COM port. This machine's LAN IP is not stored.
+        """
+        address = io_controller_device_address(io_payload)
+        if not address:
+            return False
+        self.config["device_ip"] = address
+        return self._save_config()
+
+    def merge_io_controller_device(self, partial: dict):
+        """Save one I/O device into io_controller without marking the module complete."""
+        if not isinstance(partial, dict) or not partial:
+            return False, "Nothing to save"
+        incoming = dict(partial)
+        incoming.pop("validated", None)
+        current = self.config.get("io_controller")
+        if not isinstance(current, dict):
+            current = self._deep_copy(DEFAULT_CONFIG.get("io_controller") or {})
+        merged = self._deep_merge(self._deep_copy(current), incoming)
+        err = self.validate_io_pin_uniqueness(merged, self.get_wb_type())
+        if err:
+            return False, err
+        self.config["io_controller"] = merged
+        if not self._save_config():
+            return False, "Could not save I/O device"
+        return True, None
     
     def save_section(self, section, data):
         """Save configuration for a specific section"""
         if section == "device_ip":
-            # Auto-set on finalize only — not editable via API/UI
+            # Set from a successful I/O connection, not from the UI.
             return False
         if section == "rfids":
             self.config["rfids"] = (
@@ -1608,7 +1683,7 @@ class ConfigManager:
                 cam = {}
                 self.config["camera"] = cam
             cam["validated"] = False
-            for sub in ("top", "front"):
+            for sub in ("top", "front", "front_a", "front_b"):
                 block = cam.get(sub)
                 if isinstance(block, dict):
                     block["validated"] = False
@@ -1667,6 +1742,8 @@ class ConfigManager:
         Camera nav status.
 
         Checkpoint requires Front only. Weigh Bridge requires Top and Front.
+        Bidirectional Weigh Bridge requires Front Entry A and Front Entry B.
+        Top may be skipped (validated null).
         A stale parent ``validated: false`` must not hide a camera that already
         passed Check & Save.
         """
@@ -1680,6 +1757,16 @@ class ConfigManager:
         parent = camera_config.get("validated", None)
 
         if getattr(profile, "family", "") == "weighbridge":
+            if self.get_wb_type() == "bidirectional":
+                front_a = camera_config.get("front_a") if isinstance(camera_config.get("front_a"), dict) else {}
+                front_b = camera_config.get("front_b") if isinstance(camera_config.get("front_b"), dict) else {}
+                top_ok = top_valid is True or top_valid is None
+                fronts_ok = front_a.get("validated") is True and front_b.get("validated") is True
+                if top_ok and fronts_ok:
+                    return True
+                if parent is None and top_valid is None and front_a.get("validated") is None and front_b.get("validated") is None:
+                    return None
+                return False
             if top_valid is True and front_valid is True:
                 return True
             if parent is None and top_valid is None and front_valid is None:
@@ -1927,26 +2014,9 @@ class ConfigManager:
         if 'setup_info' in final:
             final['setup_info']['verification_date'] = datetime.now().strftime('%Y-%m-%d')
 
-        # Capture this PC's LAN IP (Ethernet preferred over Wi-Fi) for OCI device_ip
-        try:
-            from utils.local_ip import detect_device_ip
-
-            detected = detect_device_ip()
-            if detected:
-                final["device_ip"] = detected
-            else:
-                final.setdefault("device_ip", "")
-        except Exception as e:
-            # Never block finish on IP detection failure
-            final.setdefault("device_ip", "")
-            try:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "device_ip detection failed during finalize: %s", e
-                )
-            except Exception:
-                pass
+        # device_ip was stored when the I/O controller connected.
+        # Keep that controller IP or COM port. Do not replace it with this PC's address.
+        final["device_ip"] = str(final.get("device_ip") or "").strip()
         
         # Remove internal fields not needed by weighbridge_app
         fields_to_remove = ['ip_range', '_meta']

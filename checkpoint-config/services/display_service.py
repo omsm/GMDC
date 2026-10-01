@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 TOPIC_DISPLAY_INFO = "display_info"
 TOPIC_PCB_ID = "pcb_id"
 TOPIC_DATA_INFO = "data_info"
+# Display needs time to handle pcb_id before it will accept the test payload.
+DATA_INFO_AFTER_PCB_SEC = 2.0
 
 
 class DisplayService:
@@ -41,7 +43,9 @@ class DisplayService:
           1. Subscribe display_info/{ip} for each Display IP
           2. Wait for device message
           3. Publish pcb_id/{ip} = a|b (Entry A → a, Entry B → b on bi)
-          4. Publish test payload on data_info/a (and data_info/b when bi)
+          4. Wait 2 seconds, then publish the test payload once:
+             data_info/a for Entry A, then data_info/b for Entry B.
+             Each topic is sent one time.
         """
         if display_type == "api":
             return self._check_api(display_ip, display_port)
@@ -130,7 +134,6 @@ class DisplayService:
             one = self._check_mqtt_one(
                 ip,
                 pcb_letter=letter,
-                tx_both=bi,
                 broker=broker,
                 broker_port=broker_port,
                 wait_sec=wait_sec,
@@ -161,7 +164,7 @@ class DisplayService:
             "status": 200,
             "message": (
                 f"Both displays OK ({', '.join(ips)}) — "
-                f"pcb a/b per Entry; tx data_info/a and data_info/b"
+                "published data_info/a once, then data_info/b once"
             ),
             "results": results,
             "pcb_mode": mode,
@@ -172,7 +175,6 @@ class DisplayService:
         display_ip: str,
         *,
         pcb_letter: str,
-        tx_both: bool,
         broker: str,
         broker_port: int,
         wait_sec: float,
@@ -182,11 +184,8 @@ class DisplayService:
             letter = "a"
         info_topic = f"{TOPIC_DISPLAY_INFO}/{display_ip}"
         pcb_topic = f"{TOPIC_PCB_ID}/{display_ip}"
-        data_topics = (
-            [f"{TOPIC_DATA_INFO}/a", f"{TOPIC_DATA_INFO}/b"]
-            if tx_both
-            else [f"{TOPIC_DATA_INFO}/{letter}"]
-        )
+        # One topic for this display. Entry A is data_info/a, Entry B is data_info/b.
+        data_topics = [f"{TOPIC_DATA_INFO}/{letter}"]
         got_info = threading.Event()
         received_payload = {"text": ""}
 
@@ -238,7 +237,9 @@ class DisplayService:
                     ),
                 }
 
-            # Transmit test transaction payload (both a+b on bi)
+            # Transmit this display's topic only (a, then b on the next display).
+            # pcb_id was just published in on_message; wait before data_info.
+            time.sleep(DATA_INFO_AFTER_PCB_SEC)
             test_msg = "TEST@OK"
             for data_topic in data_topics:
                 client.publish(data_topic, test_msg, qos=1)

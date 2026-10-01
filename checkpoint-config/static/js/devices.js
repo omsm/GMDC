@@ -169,9 +169,117 @@ function getSensorFromConfig(sensors, sensorNum) {
 /** Traffic light setup test tri-state for JSON: true = passed, null = skipped, false = not tested. */
 function getTrafficLightValidatedForSave(location) {
     if (location === 'exit' && isCheckpointFamily()) return null;
+    if (!isTrafficLightEnabled(location)) return null;
     if (location === 'entry') return ioTestStatus.entryTLValidated;
     if (location === 'exit') return ioTestStatus.exitTLValidated;
     return false;
+}
+
+function trafficLightEnableElement(location, directionKey) {
+    const mode = document.getElementById('outputMode')?.value || 'direct';
+    let id = '';
+    if (directionKey === 'entry_a' || directionKey === 'entry_b') {
+        const prefix = directionKey === 'entry_a' ? 'directionA' : 'directionB';
+        id = mode === 'relay'
+            ? `${prefix}_${location}TLRelayEnabled`
+            : `${prefix}_${location}TLEnabled`;
+    } else {
+        id = mode === 'relay' ? `${location}TLRelayEnabled` : `${location}TLEnabled`;
+    }
+    return document.getElementById(id);
+}
+
+/** No checkbox means the light is required (checkpoint entry). Off means skip. */
+function isTrafficLightEnabled(location, directionKey) {
+    if (!directionKey && typeof isCheckpointFamily === 'function' && isCheckpointFamily()) {
+        return location === 'entry';
+    }
+    const el = trafficLightEnableElement(location, directionKey);
+    if (!el) return !directionKey;
+    return !!el.checked;
+}
+
+function setCardControlsEnabled(card, enabled, keep) {
+    if (!card) return;
+    card.classList.toggle('io-device-skipped', !enabled);
+    card.querySelectorAll('input, button, select, textarea').forEach((el) => {
+        if (el === keep) return;
+        el.disabled = !enabled;
+    });
+}
+
+function ioOutputIsRelay() {
+    return (document.getElementById('outputMode')?.value || 'direct') === 'relay';
+}
+
+/** Direct and relay cards share a location. Only the visible mode writes skip/required state. */
+function ioEnableMatchesOutputMode(input) {
+    const inRelay = !!input.closest('#tlRelayMode, #bbRelayMode');
+    return inRelay === ioOutputIsRelay();
+}
+
+function onTrafficLightEnableToggle(input, fromUser) {
+    const card = input.closest('.device-config-card');
+    setCardControlsEnabled(card, input.checked, input);
+    if (!ioEnableMatchesOutputMode(input)) return;
+    const location = input.dataset.location;
+    const direction = input.dataset.direction || undefined;
+    if (!location || typeof applyTrafficLightValidatedFromConfig !== 'function') return;
+    if (!input.checked) {
+        applyTrafficLightValidatedFromConfig(location, null, direction);
+        if (fromUser) persistTrafficLightDevice(location, direction);
+        return;
+    }
+    if (!fromUser) return;
+    const current = typeof getTrafficLightValidatedForSave === 'function'
+        ? getTrafficLightValidatedForSave(location, direction)
+        : false;
+    if (current !== true) {
+        applyTrafficLightValidatedFromConfig(location, false, direction);
+    }
+}
+
+function onBoomEnableToggle(input, fromUser) {
+    const card = input.closest('.device-config-card');
+    setCardControlsEnabled(card, input.checked, input);
+    if (!ioEnableMatchesOutputMode(input)) return;
+    const location = input.dataset.location;
+    if (!location) return;
+    if (!input.checked) {
+        ioTestStatus[`${location}BBValidated`] = null;
+        if (typeof setBoomBarrierStatusUI === 'function') {
+            setBoomBarrierStatusUI(location, 'Skipped', 'device-status skipped');
+        }
+        if (fromUser) persistBoomDevice(location);
+        return;
+    }
+    if (!fromUser) return;
+    if (ioTestStatus[`${location}BBValidated`] !== true && typeof setBoomBarrierStatusUI === 'function') {
+        ioTestStatus[`${location}BBValidated`] = false;
+        setBoomBarrierStatusUI(location, '', 'device-status');
+    }
+}
+
+function syncVisibleIoEnableToggles() {
+    document.querySelectorAll('.io-enable-input').forEach((input) => {
+        if (input.dataset.kind === 'tl') onTrafficLightEnableToggle(input, false);
+        else if (input.dataset.kind === 'bb') onBoomEnableToggle(input, false);
+    });
+}
+
+function applyTrafficLightModeLayout() {
+    const bi = typeof isBidirectionalLayout === 'function'
+        && isBidirectionalLayout()
+        && !(typeof isCheckpointFamily === 'function' && isCheckpointFamily());
+    const direct = (document.getElementById('outputMode')?.value || 'direct') !== 'relay';
+    const show = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = on ? '' : 'none';
+    };
+    show('tlUnidirectionalBlock', direct && !bi);
+    show('tlBidirectionalBlock', direct && bi);
+    show('tlRelayUnidirectionalBlock', !direct && !bi);
+    show('tlRelayBidirectionalBlock', !direct && bi);
 }
 
 function isTrafficLightIoTestSatisfied(location) {
@@ -227,6 +335,7 @@ function skipTrafficLightTest(location) {
     }
     if (location !== 'entry' && location !== 'exit') return;
     applyTrafficLightValidatedFromConfig(location, null);
+    persistTrafficLightDevice(location);
     const label = location === 'entry' ? 'Entry' : 'Exit';
     showToast('warning', 'Skipped', `${label} traffic light test skipped (Debug mode)`);
 }
@@ -286,6 +395,7 @@ function updateBoomBarrierValidatedFromTests(location, outputMode) {
             statusEl.textContent = 'Passed';
             statusEl.className = 'device-status success';
         }
+        persistBoomDevice(location);
     }
 }
 
@@ -560,6 +670,7 @@ function skipWbSensorTest() {
         el.className = 'device-status skipped';
     }
     showToast('warning', 'Skipped', 'WB sensor test skipped (config-enabled bench/demo)');
+    persistSensorDevice(2);
 }
 
 // Keep console focused on boom-barrier debugging only.
@@ -1266,6 +1377,19 @@ function populateFormFields() {
         if (frontCameraUrlEl) frontCameraUrlEl.value = config.camera.front?.rtsp_url || '';
         if (frontCameraMakeEl) frontCameraMakeEl.value = config.camera.front?.make || '';
         if (frontCameraModelEl) frontCameraModelEl.value = config.camera.front?.model || '';
+        const frontAUrl = document.getElementById('frontACameraUrl');
+        const frontAMake = document.getElementById('frontACameraMake');
+        const frontAModel = document.getElementById('frontACameraModel');
+        const frontBUrl = document.getElementById('frontBCameraUrl');
+        const frontBMake = document.getElementById('frontBCameraMake');
+        const frontBModel = document.getElementById('frontBCameraModel');
+        if (frontAUrl) frontAUrl.value = config.camera.front_a?.rtsp_url || '';
+        if (frontAMake) frontAMake.value = config.camera.front_a?.make || '';
+        if (frontAModel) frontAModel.value = config.camera.front_a?.model || '';
+        if (frontBUrl) frontBUrl.value = config.camera.front_b?.rtsp_url || '';
+        if (frontBMake) frontBMake.value = config.camera.front_b?.make || '';
+        if (frontBModel) frontBModel.value = config.camera.front_b?.model || '';
+        applyCameraUiForProfile();
     }
     
     // Display
@@ -1491,6 +1615,14 @@ function populateFormFields() {
         }
         applyTrafficLightValidatedFromConfig('entry', entryTLInfo.validated);
         applyTrafficLightValidatedFromConfig('exit', exitTLInfo.validated);
+        ['entry', 'exit'].forEach((loc) => {
+            const info = loc === 'entry' ? entryTLInfo : exitTLInfo;
+            const on = info.enabled === true || (info.enabled !== false && info.validated !== null && info.validated !== undefined);
+            const directEl = document.getElementById(`${loc}TLEnabled`);
+            const relayEl = document.getElementById(`${loc}TLRelayEnabled`);
+            if (directEl) directEl.checked = on;
+            if (relayEl) relayEl.checked = on;
+        });
         
         // Boom Barrier configuration
         const bbMode = config.io_controller.boom_barriers?.mode || 'direct';
@@ -1824,7 +1956,7 @@ const MODULE_HELP_CONTENT = {
     },
     camera: {
         title: 'Camera Configuration Help',
-        html: `<h4>RTSP setup</h4><ul><li>Use a full RTSP URL with credentials (rtsp://user:pass@ip:554/...).</li><li>Click <b>Check &amp; Save</b>. The live preview must appear before the Camera step is complete.</li><li>If a stream fails, fix the URL and try again.</li></ul><h4>Required cameras</h4><ul><li><b>Checkpoint:</b> Front camera only.</li><li><b>Weigh Bridge:</b> Top camera and Front camera. Automation captures Top. ANPR supplies the front image.</li></ul>`
+        html: `<h4>RTSP setup</h4><ul><li>Use a full RTSP URL with credentials (rtsp://user:pass@ip:554/...).</li><li>Click <b>Check &amp; Save</b>. The live preview must appear before that camera counts as done.</li><li>If a stream fails, fix the URL and try again.</li></ul><h4>Required cameras</h4><ul><li><b>Checkpoint:</b> Front camera only.</li><li><b>Weigh Bridge, one direction:</b> Front, then Top. Both are required.</li><li><b>Weigh Bridge, bidirectional:</b> Front-1 and Front-2 are required. Top can be skipped when that camera is not installed.</li></ul>`
     },
     display: {
         title: 'Display Configuration Help',
@@ -1852,7 +1984,24 @@ function openModuleHelp(moduleKey) {
     if (!modal || !titleEl || !contentEl || !def) return;
     titleEl.innerHTML = `<i class="bi bi-question-circle"></i> ${def.title}`;
     contentEl.innerHTML = def.html;
+    const debugBtn = document.getElementById('ioDebugPageBtn');
+    if (debugBtn) debugBtn.style.display = moduleKey === 'io-controller' ? '' : 'none';
     modal.classList.add('active');
+}
+
+/** Temporary. Opens the pin page for the current direction and output mode. */
+function showIoDebugPage() {
+    closeModuleHelp();
+    const pin = document.getElementById('ioPinConfig');
+    if (pin) pin.style.display = 'block';
+    if (typeof toggleRelayFields === 'function') toggleRelayFields();
+    const relay = (document.getElementById('outputMode')?.value || 'direct') === 'relay';
+    const bi = typeof isBidirectionalLayout === 'function' && isBidirectionalLayout();
+    const targetId = relay
+        ? (bi ? 'tlRelayBidirectionalBlock' : 'tlRelayUnidirectionalBlock')
+        : (bi ? 'tlBidirectionalBlock' : 'tlUnidirectionalBlock');
+    const target = document.getElementById(targetId) || pin;
+    if (target) target.scrollIntoView({ block: 'start' });
 }
 
 function closeModuleHelp() {
@@ -1939,6 +2088,7 @@ function showRfidCardReadModal(mode, ip, port, pushUrl) {
     if (saveBtn) saveBtn.style.display = 'none';
     if (retryBtn) retryBtn.style.display = 'none';
     if (cancelBtn) cancelBtn.style.display = 'inline-block';
+    setRfidModalDismiss('cancel');
 
     modal.classList.add('active');
     console.log('[RFID Modal] Modal shown');
@@ -1951,6 +2101,44 @@ function closeRfidCardReadModal() {
     }
     _rfidRetryContext = null;
     _rfidPendingResult = null;
+}
+
+function setRfidModalDismiss(mode) {
+    const btn = document.getElementById('rfidModalCancelBtn');
+    const icon = document.getElementById('rfidModalCancelIcon');
+    const label = document.getElementById('rfidModalCancelLabel');
+    if (!btn) return;
+    if (mode === 'done') {
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        btn.onclick = doneRfidCardRead;
+        if (icon) icon.className = 'bi bi-check-lg';
+        if (label) label.textContent = 'Done';
+    } else {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+        btn.onclick = cancelRfidCardRead;
+        if (icon) icon.className = 'bi bi-x-lg';
+        if (label) label.textContent = 'Cancel';
+    }
+}
+
+async function doneRfidCardRead() {
+    const pending = _rfidPendingResult;
+    const bidirectional = typeof isBidirectionalLayout === 'function' && isBidirectionalLayout();
+    if (!bidirectional && pending && pending.result && pending.result.card_read) {
+        await saveRfidCardRead();
+        return;
+    }
+    try {
+        await fetch('/api/rfid/stop', { method: 'POST' }).catch(() => null);
+    } catch (e) { /* ignore */ }
+    if (window.rfidTestTimeoutDevices) {
+        clearTimeout(window.rfidTestTimeoutDevices);
+        window.rfidTestTimeoutDevices = null;
+    }
+    closeRfidCardReadModal();
+    showLoading(false);
 }
 
 async function cancelRfidCardRead() {
@@ -1972,6 +2160,10 @@ async function saveRfidCardRead() {
         return;
     }
     const { result, ip, port, rfidMake, rfidModel } = pending;
+    const directionKey = _rfidRetryContext && _rfidRetryContext.directionKey;
+    if (typeof currentRfidDirectionKey !== 'undefined' && directionKey) {
+        currentRfidDirectionKey = directionKey;
+    }
     closeRfidCardReadModal();
     handleRfidResult(result, ip, port, rfidMake, rfidModel);
 }
@@ -2133,6 +2325,7 @@ function updateRfidModalStatus(status, message, showSave = false, showRetry = fa
     if (cancelBtn) {
         cancelBtn.style.display = showCancel ? 'inline-block' : 'none';
     }
+    setRfidModalDismiss(status === 'success' ? 'done' : 'cancel');
     
     // Hide countdown if test is complete
     if (countdownEl && (status === 'success' || status === 'failed' || status === 'error')) {
@@ -2242,10 +2435,22 @@ async function pollRfidTestStatus(ip, port, rfidMake, rfidModel, mode) {
                     if (finalResult.card_read === true) {
                         const tag = finalResult.parsed_tag || finalResult.card_display || finalResult.card_data || '';
                         if (tag) showRfidModalReceivedData(tag);
+                        let savedBidirectional = false;
+                        if (typeof isBidirectionalLayout === 'function' && isBidirectionalLayout()) {
+                            const directionKey = (_rfidRetryContext && _rfidRetryContext.directionKey)
+                                || (typeof currentRfidDirectionKey !== 'undefined' ? currentRfidDirectionKey : null);
+                            if (directionKey && typeof handleRfidResult === 'function') {
+                                if (typeof currentRfidDirectionKey !== 'undefined') {
+                                    currentRfidDirectionKey = directionKey;
+                                }
+                                handleRfidResult(finalResult, ip, port, rfidMake, rfidModel);
+                                savedBidirectional = true;
+                            }
+                        }
                         // Hide status text - only the tag value is shown in modal
                         const statusEl = document.getElementById('rfidModalStatus');
                         if (statusEl) statusEl.style.display = 'none';
-                        updateRfidModalStatus('success', '', true, true, true);
+                        updateRfidModalStatus('success', '', !savedBidirectional, false, true);
                         // Right-side popup with tag only (skip if already shown live)
                         if (tag && window._rfidToastShownForTag !== tag) {
                             window._rfidToastShownForTag = tag;
@@ -2437,13 +2642,30 @@ function isWeighbridgeProfile() {
     return family === 'weighbridge';
 }
 
+function isBidirectionalWeighbridge() {
+    return isWeighbridgeProfile() && typeof isBidirectionalLayout === 'function' && isBidirectionalLayout();
+}
+
+const CAMERA_FIELD_IDS = {
+    top: { url: 'topCameraUrl', make: 'topCameraMake', model: 'topCameraModel', feed: 'topCameraFeed', placeholder: 'topCameraPlaceholder', label: 'Top' },
+    front: { url: 'frontCameraUrl', make: 'frontCameraMake', model: 'frontCameraModel', feed: 'frontCameraFeed', placeholder: 'frontCameraPlaceholder', label: 'Front' },
+    front_a: { url: 'frontACameraUrl', make: 'frontACameraMake', model: 'frontACameraModel', feed: 'frontACameraFeed', placeholder: 'frontACameraPlaceholder', label: 'Front-1' },
+    front_b: { url: 'frontBCameraUrl', make: 'frontBCameraMake', model: 'frontBCameraModel', feed: 'frontBCameraFeed', placeholder: 'frontBCameraPlaceholder', label: 'Front-2' }
+};
+
 function applyCameraUiForProfile() {
     const topCard = document.getElementById('topCameraCard');
     const frontCard = document.getElementById('frontCameraCard');
-    if (!topCard || !frontCard) return;
-    // Checkpoints configure Front only. Weighbridges configure Top + Front.
-    topCard.style.display = isWeighbridgeProfile() ? '' : 'none';
-    frontCard.style.display = '';
+    const frontA = document.getElementById('frontACameraCard');
+    const frontB = document.getElementById('frontBCameraCard');
+    const topSkip = document.getElementById('topCameraSkipBtn');
+    const bi = isBidirectionalWeighbridge();
+    const wb = isWeighbridgeProfile();
+    if (topCard) topCard.style.display = wb ? '' : 'none';
+    if (frontCard) frontCard.style.display = bi ? 'none' : '';
+    if (frontA) frontA.style.display = bi ? '' : 'none';
+    if (frontB) frontB.style.display = bi ? '' : 'none';
+    if (topSkip) topSkip.style.display = bi ? 'inline-flex' : 'none';
 }
 
 async function checkCamera(cameraId) {
@@ -2451,10 +2673,11 @@ async function checkCamera(cameraId) {
         showToast('error', 'Camera', 'Camera configuration is disabled.');
         return;
     }
-    const urlInput = cameraId === 'top' ? 'topCameraUrl' : 'frontCameraUrl';
-    const rtspUrl = document.getElementById(urlInput).value.trim();
-    const cameraMake = document.getElementById(cameraId + 'CameraMake')?.value.trim() || '';
-    const cameraModel = document.getElementById(cameraId + 'CameraModel')?.value.trim() || '';
+    const fields = CAMERA_FIELD_IDS[cameraId];
+    if (!fields) return;
+    const rtspUrl = document.getElementById(fields.url)?.value.trim() || '';
+    const cameraMake = document.getElementById(fields.make)?.value.trim() || '';
+    const cameraModel = document.getElementById(fields.model)?.value.trim() || '';
     
     if (!rtspUrl) {
         showToast('error', 'Validation Error', 'Please enter RTSP URL');
@@ -2465,7 +2688,8 @@ async function checkCamera(cameraId) {
     if (!validateDeviceInfo(cameraMake, cameraModel, `${cameraId.charAt(0).toUpperCase() + cameraId.slice(1)} Camera`)) {
         return;
     }
-    
+
+    await beginCameraSaveLock();
     showLoading(true);
     
     try {
@@ -2479,8 +2703,8 @@ async function checkCamera(cameraId) {
         
         if (result.status === 200) {
             // Show camera feed
-            const feedImg = document.getElementById(cameraId + 'CameraFeed');
-            const placeholder = document.getElementById(cameraId + 'CameraPlaceholder');
+            const feedImg = document.getElementById(fields.feed);
+            const placeholder = document.getElementById(fields.placeholder);
             
             feedImg.src = `/video_feed/${cameraId}?t=${Date.now()}`;
             feedImg.classList.add('active');
@@ -2504,17 +2728,17 @@ async function checkCamera(cameraId) {
                 config.camera.validated = true;
             }
 
-            const saveResp = await withSectionSaveGuard('camera', () => fetch('/api/config/camera', {
+            const saveResp = await fetch('/api/config/camera', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
-            }));
+            });
             const saveData = await saveResp.json().catch(() => ({}));
             if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
                 throw new Error(saveData.message || 'Could not save Camera');
             }
             
-            showToast('success', 'Success', `${cameraId.charAt(0).toUpperCase() + cameraId.slice(1)} camera connected`);
+            showToast('success', 'Success', `${fields.label} camera connected`);
             
             await loadCompletionStatus();
             showLoading(false);
@@ -2531,12 +2755,22 @@ async function checkCamera(cameraId) {
                 } else {
                     navigateToNext('camera');
                 }
+            } else if (isBidirectionalWeighbridge()) {
+                const pending = ['front_a', 'front_b', 'top'].filter((id) => {
+                    const block = config.camera && config.camera[id];
+                    if (id === 'top' && block && block.validated === null) return false;
+                    return !(block && block.validated === true);
+                });
+                if (pending.length) {
+                    const next = CAMERA_FIELD_IDS[pending[0]];
+                    showToast('info', 'Camera', `${fields.label} feed OK. Check & Save ${next.label} next, or Skip the top camera.`);
+                }
             } else if (isWeighbridgeProfile()) {
                 const other = cameraId === 'top' ? 'front' : 'top';
                 showToast(
                     'info',
                     'Camera',
-                    `${cameraId.charAt(0).toUpperCase() + cameraId.slice(1)} feed OK. Check & Save ${other} camera next.`
+                    `${fields.label} feed OK. Check & Save ${CAMERA_FIELD_IDS[other].label} camera next.`
                 );
             }
             return;
@@ -2547,20 +2781,154 @@ async function checkCamera(cameraId) {
         console.error('[Camera Check] Error:', error);
         showToast('error', 'Connection Error', 'Unable to check camera connection. Re-enter RTSP URL and try again.');
     } finally {
+        endCameraSaveLock();
         showLoading(false);
     }
+}
+
+function cameraBlockPassed(block, allowSkip) {
+    if (!block) return false;
+    if (block.validated === true) return true;
+    return allowSkip && block.validated === null;
 }
 
 /** True when required camera(s) for this profile are validated. */
 function isCameraSectionComplete() {
     const cam = (config && config.camera) || {};
-    const frontOk = !!(cam.front && cam.front.validated === true);
-    if (isWeighbridgeProfile()) {
-        const topOk = !!(cam.top && cam.top.validated === true);
-        return topOk && frontOk;
+    if (isBidirectionalWeighbridge()) {
+        return cameraBlockPassed(cam.top, true)
+            && cameraBlockPassed(cam.front_a, false)
+            && cameraBlockPassed(cam.front_b, false);
     }
-    // Checkpoints: Front camera only
+    const frontOk = cameraBlockPassed(cam.front, false);
+    if (isWeighbridgeProfile()) {
+        return cameraBlockPassed(cam.top, false) && frontOk;
+    }
     return frontOk;
+}
+
+const CAMERA_CARD_IDS = {
+    topCameraCard: 'top',
+    frontCameraCard: 'front',
+    frontACameraCard: 'front_a',
+    frontBCameraCard: 'front_b',
+};
+const _cameraBlockInvalidateTimers = {};
+let _cameraBlockInvalidateInFlight = 0;
+
+function cameraIdFromField(el) {
+    const card = el && el.closest ? el.closest('.camera-card') : null;
+    if (!card) return null;
+    return CAMERA_CARD_IDS[card.id] || null;
+}
+
+function cancelScheduledCameraInvalidation() {
+    Object.keys(_cameraBlockInvalidateTimers).forEach((key) => {
+        clearTimeout(_cameraBlockInvalidateTimers[key]);
+        delete _cameraBlockInvalidateTimers[key];
+    });
+}
+
+function scheduleCameraBlockInvalidation(cameraId) {
+    if (typeof _suppressSectionInvalidation !== 'undefined' && _suppressSectionInvalidation) return;
+    if (!cameraId || _sectionSaveLock.camera) return;
+    if (config && config.camera) {
+        if (!config.camera[cameraId]) config.camera[cameraId] = {};
+        config.camera[cameraId].validated = false;
+        config.camera.validated = false;
+    }
+    if (typeof markSectionNotValidated === 'function' && !isCameraSectionComplete()) {
+        markSectionNotValidated('camera', { persist: false });
+    }
+    if (_cameraBlockInvalidateTimers[cameraId]) {
+        clearTimeout(_cameraBlockInvalidateTimers[cameraId]);
+    }
+    _cameraBlockInvalidateTimers[cameraId] = setTimeout(() => {
+        delete _cameraBlockInvalidateTimers[cameraId];
+        persistCameraBlockInvalidation(cameraId);
+    }, 250);
+}
+
+async function persistCameraBlockInvalidation(cameraId) {
+    if (typeof _suppressSectionInvalidation !== 'undefined' && _suppressSectionInvalidation) return;
+    if (_sectionSaveLock.camera) return;
+    _cameraBlockInvalidateInFlight += 1;
+    try {
+        const response = await fetch('/api/config/camera', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                [cameraId]: { validated: false },
+                validated: false,
+            }),
+        });
+        if (_sectionSaveLock.camera || !response.ok) return;
+        if (typeof loadCompletionStatus === 'function') {
+            await loadCompletionStatus();
+        }
+    } catch (err) {
+        console.warn('[Camera] Could not clear validation for', cameraId, err);
+    } finally {
+        _cameraBlockInvalidateInFlight = Math.max(0, _cameraBlockInvalidateInFlight - 1);
+    }
+}
+
+async function beginCameraSaveLock() {
+    if (typeof cancelScheduledSectionInvalidation === 'function') {
+        cancelScheduledSectionInvalidation('camera');
+    }
+    cancelScheduledCameraInvalidation();
+    const start = Date.now();
+    while ((_sectionInvalidateInFlight.camera || _cameraBlockInvalidateInFlight) && Date.now() - start < 4000) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    _sectionSaveLock.camera = true;
+    _sectionInvalidateEpoch.camera = (_sectionInvalidateEpoch.camera || 0) + 1;
+}
+
+function endCameraSaveLock() {
+    _sectionSaveLock.camera = false;
+}
+
+async function skipTopCamera() {
+    if (!isBidirectionalWeighbridge()) return;
+    if (!config.camera) config.camera = {};
+    config.camera.top = {
+        rtsp_url: '',
+        make: document.getElementById('topCameraMake')?.value.trim() || '',
+        model: document.getElementById('topCameraModel')?.value.trim() || '',
+        validated: null,
+        skipped: true
+    };
+    const payload = { top: config.camera.top };
+    if (isCameraSectionComplete()) {
+        payload.validated = true;
+        config.camera.validated = true;
+    }
+    await beginCameraSaveLock();
+    try {
+        const saveResp = await fetch('/api/config/camera', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || (saveData.status && saveData.status !== 200)) {
+            throw new Error(saveData.message || 'Could not skip top camera');
+        }
+        showToast('warning', 'Skipped', 'Top camera skipped. Front-1 and Front-2 are still required.');
+        await loadCompletionStatus();
+        if (isCameraSectionComplete()) {
+            markSectionValidated('camera');
+            const sections = getWizardNavSections();
+            if (sections.includes('display')) showSection('display');
+        }
+    } catch (error) {
+        console.error('[Skip Top Camera]', error);
+        showToast('error', 'Camera', 'Could not skip the top camera');
+    } finally {
+        endCameraSaveLock();
+    }
 }
 
 async function stopCamera(cameraId) {
@@ -2570,14 +2938,16 @@ async function stopCamera(cameraId) {
     try {
         await fetch(`/api/camera/stop/${cameraId}`, { method: 'POST' });
         
-        const feedImg = document.getElementById(cameraId + 'CameraFeed');
-        const placeholder = document.getElementById(cameraId + 'CameraPlaceholder');
+        const fields = CAMERA_FIELD_IDS[cameraId];
+        const feedImg = fields ? document.getElementById(fields.feed) : null;
+        const placeholder = fields ? document.getElementById(fields.placeholder) : null;
+        if (feedImg) {
+            feedImg.src = '';
+            feedImg.classList.remove('active');
+        }
+        if (placeholder) placeholder.classList.remove('hidden');
         
-        feedImg.src = '';
-        feedImg.classList.remove('active');
-        placeholder.classList.remove('hidden');
-        
-        showToast('success', 'Stopped', `${cameraId} camera stopped`);
+        showToast('success', 'Stopped', `${fields ? fields.label : cameraId} camera stopped`);
     } catch (error) {
         console.error('[Camera Stop] Error:', error);
         showToast('error', 'Error', 'Unable to stop camera stream');
@@ -2647,8 +3017,11 @@ function syncDisplayIpFieldsVisibility() {
         }
     }
     if (modeHint) {
-        const mode = getDisplayPcbMode();
-        modeHint.innerHTML = `This site answers with <strong>${mode}</strong> on data_info/${mode}`;
+        if (bi) {
+            modeHint.innerHTML = 'Transactions publish <strong>data_info/a</strong> once for Entry A, then <strong>data_info/b</strong> once for Entry B';
+        } else {
+            modeHint.innerHTML = 'This site publishes <strong>data_info/a</strong> once';
+        }
     }
     ['displayIp', 'displayIpSelect', 'displayIpB', 'displayIpBSelect', 'displayIpManual', 'displayIpBManual'].forEach((id) => {
         const el = document.getElementById(id);
@@ -2892,11 +3265,13 @@ function toggleRelayFields() {
         bbRelay.style.display = 'block';
     }
     applyCheckpointIoConstraints();
+    applyTrafficLightModeLayout();
     if (isCheckpointFamily()) {
         document.querySelectorAll('#io-controller .profile-wb-only').forEach((el) => {
             el.style.display = 'none';
         });
     }
+    syncVisibleIoEnableToggles();
 }
 
 async function loadIOSerialPorts() {
@@ -3302,6 +3677,7 @@ async function testSensor(sensorNum) {
                     } else if (Number(sensorNum) === 3) {
                         ioTestStatus.sensor3Validated = true;
                     }
+                    persistSensorDevice(sensorNum);
                     showToast('success', 'Test Passed', `${getSensorRoleLabel(sensorNum)} (address ${registerAddress}) working correctly!`);
                 } else {
                     statusEl.textContent = 'Failed';
@@ -3399,6 +3775,7 @@ async function testTrafficLightColor(location, color) {
                 statusEl.className = 'device-status success';
                 ioTestStatus[`${location}TL`] = true;
                 ioTestStatus[`${location}TLValidated`] = true;
+                persistTrafficLightDevice(location);
                 showToast('success', 'Test Passed', `${location} ${color} light working!`);
             } else {
                 statusEl.textContent = 'Failed';
@@ -3488,6 +3865,7 @@ async function testTrafficLight(location, relayMode) {
                 statusEl.className = 'device-status success';
                 ioTestStatus[`${location}TL`] = true;
                 ioTestStatus[`${location}TLValidated`] = true;
+                persistTrafficLightDevice(location);
                 showToast('success', 'Test Passed', `${location} traffic light ${color} working!`);
             } else {
                 statusEl.textContent = 'Failed';
@@ -3648,7 +4026,7 @@ function resetDeviceStatus(deviceType, identifier) {
 
 // ============== Relay Mode Test Functions ==============
 
-async function testTrafficLightRelay(location, color) {
+async function testTrafficLightRelay(location, color, directionKey) {
     // Test traffic light in relay mode using new API
     if (!ioConnected) {
         showToast('error', 'Not Connected', 'Please connect to I/O controller first');
@@ -3656,13 +4034,17 @@ async function testTrafficLightRelay(location, color) {
     }
     
     const slaveId = document.getElementById('ioSlaveId').value;
-    const pinField = document.getElementById(`${location}TLRelayPin`);
-    const statusEl = document.getElementById(`${location}TLRelayStatus`);
+    const prefix = directionKey === 'entry_a' ? 'directionA_' : (directionKey === 'entry_b' ? 'directionB_' : '');
+    const pinField = document.getElementById(`${prefix}${location}TLRelayPin`);
+    const statusEl = document.getElementById(`${prefix}${location}TLRelayStatus`)
+        || document.getElementById(`${location}TLRelayStatus`);
+    const stateLocation = directionKey ? `${directionKey}_${location}` : location;
     
-    if (!pinField || !pinField.value) {
+    if (!pinField || pinField.value === '') {
         showToast('error', 'Missing Pin', `Please enter relay pin for ${location} traffic light`);
         return;
     }
+    if (pinField.disabled || !statusEl) return;
     
     statusEl.textContent = `Testing ${color}...`;
     statusEl.className = 'device-status testing';
@@ -3688,8 +4070,9 @@ async function testTrafficLightRelay(location, color) {
                 if (confirmed) {
                     statusEl.textContent = `${color.toUpperCase()} OK`;
                     statusEl.className = 'device-status success';
-                    ioTestStatus[`${location}TL`] = true;
-                    ioTestStatus[`${location}TLValidated`] = true;
+                    ioTestStatus[`${stateLocation}TL`] = true;
+                    ioTestStatus[`${stateLocation}TLValidated`] = true;
+                    persistTrafficLightDevice(location, directionKey);
                     showToast('success', 'Test Passed', `${location} traffic light ${color} working correctly!`);
                 } else {
                     statusEl.textContent = 'Failed';
@@ -4179,6 +4562,158 @@ function setupIoPinInputOutputClasses() {
         if (el.classList.contains('io-pin-input-input')) return;
         el.classList.add('io-pin-input-output');
     });
+}
+
+function ioConnectionPartial() {
+    const ioType = document.getElementById('ioType')?.value || 'ethernet';
+    const outputMode = document.getElementById('outputMode')?.value || 'direct';
+    const partial = {
+        type: ioType,
+        output_mode: outputMode,
+        slave_id: document.getElementById('ioSlaveId')?.value || '1',
+        make: document.getElementById('ioMake')?.value.trim() || '',
+        model: document.getElementById('ioModel')?.value.trim() || '',
+        connection: {
+            ethernet: { ip: '', port: '502', timeout: '1' },
+            serial: {
+                port: '',
+                baud_rate: document.getElementById('ioBaudRate')?.value || '9600',
+                bytesize: '8',
+                parity: 'N',
+                stopbits: '1',
+                timeout: '0.5'
+            }
+        },
+        digital_inputs: {
+            start_address: document.getElementById('inputStartAddress')?.value || '0',
+            count: '8',
+            function_code: (document.getElementById('inputRegisterType')?.value || 'discrete') === 'coil' ? '1' : '2'
+        },
+        digital_outputs: {
+            start_address: document.getElementById('outputStartAddress')?.value || '0',
+            count: '8',
+            function_code: (document.getElementById('outputRegisterType')?.value || 'coil') === 'coil' ? '5' : '6'
+        }
+    };
+    if (ioType === 'ethernet') {
+        const isManual = document.getElementById('ioIpManual')?.checked;
+        const ip = isManual
+            ? document.getElementById('ioIp')?.value.trim()
+            : (document.getElementById('ioIpSelect')?.value || document.getElementById('ioIp')?.value.trim());
+        partial.connection.ethernet.ip = ip || '';
+        partial.connection.ethernet.port = document.getElementById('ioPort')?.value.trim() || '502';
+    } else {
+        partial.connection.serial.port = document.getElementById('ioSerialPort')?.value || '';
+    }
+    return partial;
+}
+
+async function persistConfiguredIoDevice(devicePartial) {
+    const body = ioConnectionPartial();
+    Object.keys(devicePartial || {}).forEach((key) => {
+        const value = devicePartial[key];
+        if (value && typeof value === 'object' && !Array.isArray(value) && body[key] && typeof body[key] === 'object') {
+            body[key] = { ...body[key], ...value };
+        } else {
+            body[key] = value;
+        }
+    });
+    delete body.validated;
+    try {
+        const saveResp = await withSectionSaveGuard('io-controller', () => fetch('/api/config/io_controller/device', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }));
+        const saveData = await saveResp.json().catch(() => ({}));
+        if (!saveResp.ok || saveData.status !== 200) {
+            showToast('error', 'I/O device', saveData.message || 'This device could not be saved');
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.error('[I/O] Device save failed', error);
+        showToast('error', 'I/O device', 'This device could not be saved');
+        return false;
+    }
+}
+
+function persistSensorDevice(sensorNum) {
+    const key = SENSOR_JSON_KEYS[Number(sensorNum)];
+    if (!key) return;
+    const validated = getSensorValidatedForSave(sensorNum);
+    if (validated !== true && validated !== null) return;
+    persistConfiguredIoDevice({
+        sensors: {
+            [key]: {
+                pin: sensorPinForSave(sensorNum),
+                default_signal: document.getElementById(`sensor${sensorNum}DefaultSignal`)?.value || 'low',
+                validated
+            }
+        }
+    });
+}
+
+function persistTrafficLightDevice(location, directionKey) {
+    const outputMode = document.getElementById('outputMode')?.value || 'direct';
+    const validated = getTrafficLightValidatedForSave(location, directionKey);
+    if (validated !== true && validated !== null) return;
+    const traffic_lights = { mode: outputMode };
+    if (directionKey && typeof buildBidirectionalTrafficLightsForSave === 'function') {
+        const holder = { traffic_lights: { mode: outputMode, direct: {}, relay: {} } };
+        buildBidirectionalTrafficLightsForSave(outputMode, holder);
+        traffic_lights[directionKey] = {
+            [location]: holder.traffic_lights[directionKey]?.[location]
+        };
+        if (outputMode === 'direct') {
+            traffic_lights.direct = {
+                [directionKey]: {
+                    [location]: holder.traffic_lights.direct?.[directionKey]?.[location]
+                }
+            };
+        } else {
+            traffic_lights.relay = {
+                [directionKey]: {
+                    [location]: holder.traffic_lights.relay?.[directionKey]?.[location]
+                }
+            };
+        }
+    } else if (outputMode === 'direct') {
+        traffic_lights.direct = { [location]: uniTrafficLightDirectPinsForSave(location) };
+        traffic_lights[location] = {
+            make: document.getElementById(`${location}TLMake`)?.value.trim() || '',
+            model: document.getElementById(`${location}TLModel`)?.value.trim() || '',
+            validated
+        };
+    } else {
+        traffic_lights.relay = { [location]: uniTrafficLightRelayPinForSave(location) };
+        traffic_lights[location] = {
+            make: document.getElementById(`${location}TLMake`)?.value.trim() || '',
+            model: document.getElementById(`${location}TLModel`)?.value.trim() || '',
+            validated
+        };
+    }
+    persistConfiguredIoDevice({ traffic_lights });
+}
+
+function persistBoomDevice(location) {
+    const outputMode = document.getElementById('outputMode')?.value || 'direct';
+    const validated = getBoomBarrierValidatedForSave(location, outputMode);
+    if (validated !== true && validated !== null) return;
+    const boom_barriers = {
+        mode: outputMode,
+        [location]: {
+            make: document.getElementById(`${location}BBMake`)?.value.trim() || document.getElementById('boomBarrierMake')?.value.trim() || '',
+            model: document.getElementById(`${location}BBModel`)?.value.trim() || document.getElementById('boomBarrierModel')?.value.trim() || '',
+            validated
+        }
+    };
+    if (outputMode === 'direct') {
+        boom_barriers.direct = { [location]: boomDirectConfigForSave(location) };
+    } else {
+        boom_barriers.relay = { [location]: boomRelayConfigForSave(location) };
+    }
+    persistConfiguredIoDevice({ boom_barriers });
 }
 
 async function saveIOConfig() {
@@ -5089,7 +5624,7 @@ async function resetSection(section) {
     }
 }
 
-function markSectionNotValidated(section) {
+function markSectionNotValidated(section, options) {
     // Map section names if needed
     const sectionMap = {
         'io-controller': 'io_controller',
@@ -5122,7 +5657,12 @@ function markSectionNotValidated(section) {
     }
 
     // Persist validated:false immediately (debounced) so re-runs keep truth.
-    schedulePersistSectionInvalidation(section);
+    // persist:false updates the nav only. Bidirectional RFID uses that when one
+    // reader is saved and the other is still pending — a full invalidate clears both.
+    const persist = !options || options.persist !== false;
+    if (persist) {
+        schedulePersistSectionInvalidation(section);
+    }
     
     console.log(`[Reset] Section '${configSection}' marked as not validated`);
 }
@@ -5248,6 +5788,19 @@ function initSectionChangeInvalidation() {
         const root = document.getElementById(sectionId);
         if (!root || root.dataset.invalidateBound === 'true') return;
         root.dataset.invalidateBound = 'true';
+        if (sectionId === 'camera') {
+            const onCameraEdit = (event) => {
+                const t = event.target;
+                if (!t || !t.matches) return;
+                if (!t.matches('input, select, textarea')) return;
+                if (t.matches('button, [type="button"], [type="submit"]')) return;
+                const cameraId = cameraIdFromField(t);
+                if (cameraId) scheduleCameraBlockInvalidation(cameraId);
+            };
+            root.addEventListener('input', onCameraEdit, true);
+            root.addEventListener('change', onCameraEdit, true);
+            return;
+        }
         const onEdit = (event) => {
             const t = event.target;
             if (!t || !t.matches) return;

@@ -326,11 +326,13 @@ html.legacy-browser[data-theme="dark"] .header {
 
 /* ==================== CONTENT ==================== */
 .content {
-    flex: 1;
+    flex: 1 1 auto;
     margin-left: 256px;
     padding: 32px 40px;
-    max-width: 960px;
+    max-width: none;
+    width: calc(100% - 256px);
     min-width: 0; /* Allow shrinking */
+    box-sizing: border-box;
     overflow-x: hidden; /* Prevent overflow */
 }
 
@@ -576,6 +578,35 @@ select.form-control {
     flex-wrap: wrap;
 }
 
+.io-device-enable {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.io-device-enable .toggle-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.io-device-enable .toggle-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+.device-config-card.io-device-skipped .form-control,
+.device-config-card.io-device-skipped select,
+.device-config-card.io-device-skipped .btn {
+    opacity: 0.4;
+    filter: grayscale(1);
+    pointer-events: none;
+}
+
 .skip-btn {
     display: none;
     margin-left: auto;
@@ -752,6 +783,15 @@ body.wb-sensor-skip-enabled .skip-btn.skip-wb-sensor-debug {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 12px;
+    margin-top: 12px;
+}
+
+/* Two cards per row, each taking half the row. A third empty column is not reserved. */
+.tl-config-grid,
+.bb-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
     margin-top: 12px;
 }
 
@@ -1856,7 +1896,8 @@ a:focus:not(:focus-visible) {
 /* Large Desktop (1920px+) */
 @media (min-width: 1920px) {
     .content {
-        max-width: 1200px;
+        max-width: none;
+        width: calc(100% - 280px);
         padding: 40px 60px;
     }
     
@@ -1873,9 +1914,13 @@ a:focus:not(:focus-visible) {
         gap: 24px;
     }
     
-    .sensor-config-grid,
-    .tl-config-grid {
+    .sensor-config-grid {
         grid-template-columns: repeat(3, 1fr);
+    }
+
+    .tl-config-grid,
+    .bb-config-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     
     .checklist-card {
@@ -1894,20 +1939,24 @@ a:focus:not(:focus-visible) {
 /* Standard Desktop (1440px - 1919px) */
 @media (min-width: 1440px) and (max-width: 1919px) {
     .content {
-        max-width: 1000px;
+        max-width: none;
         padding: 32px 48px;
     }
     
-    .sensor-config-grid,
-    .tl-config-grid {
+    .sensor-config-grid {
         grid-template-columns: repeat(3, 1fr);
+    }
+
+    .tl-config-grid,
+    .bb-config-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
 /* Medium Desktop (1280px - 1439px) */
 @media (min-width: 1280px) and (max-width: 1439px) {
     .content {
-        max-width: 900px;
+        max-width: none;
         padding: 28px 40px;
     }
     
@@ -1930,6 +1979,7 @@ a:focus:not(:focus-visible) {
     .content {
         margin-left: 220px;
         max-width: none;
+        width: calc(100% - 220px);
         padding: 24px 28px;
     }
     
@@ -2011,6 +2061,8 @@ a:focus:not(:focus-visible) {
     
     .content {
         margin-left: 200px;
+        max-width: none;
+        width: calc(100% - 200px);
         padding: 20px 24px;
     }
     
@@ -2761,12 +2813,14 @@ select.form-control {
     .camera-grid,
     .sensor-config-grid,
     .tl-config-grid,
+    .bb-config-grid,
     .results-tables {
         grid-template-columns: 1fr;
     }
 
     .sensor-config-grid,
-    .tl-config-grid {
+    .tl-config-grid,
+    .bb-config-grid {
         grid-template-columns: minmax(0, 1fr);
     }
 

@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from api.server import start_api_server
+from api.server import start_api_server, start_rfid_api_ports
 from config.constants import State
 from config.settings import load_settings
 from core.app_context import AppContext
@@ -282,7 +282,9 @@ def main() -> int:
     settings = ctx.settings
     assert settings
 
-    start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
+    app = start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
+    rfid_ports = settings.rfid_api_listen_ports()
+    start_rfid_api_ports(app, settings.api_host, rfid_ports)
     banner = (
         "\n"
         "============================================================\n"
@@ -291,6 +293,7 @@ def main() -> int:
         f"  DEMO_MODE  : {settings.demo_mode}\n"
         f"  Dashboard  : http://127.0.0.1:{settings.api_port}/\n"
         f"  API        : http://127.0.0.1:{settings.api_port}/api/status\n"
+        f"  RFID ports : {', '.join(str(p) for p in rfid_ports) or 'application port'}\n"
         f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
         f"  MQTT WS    : ws://<this-pc-ip>:{settings.mqtt_ws_port}\n"
         f"  State      : {ctx.state_machine.current_state.name if ctx.state_machine else '?'}\n"

@@ -92,6 +92,31 @@ def _display_ips_from_config(
     return ips
 
 
+def _rfid_listen_ports(blocks, *, application_port: int) -> list[int]:
+    """Unique RFID_API_PORT values other than the application port."""
+    try:
+        app_port = int(application_port or 0)
+    except (TypeError, ValueError):
+        app_port = 0
+    ports: list[int] = []
+    seen: set[int] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        raw_port = block.get("api_port")
+        if raw_port in (None, ""):
+            continue
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            continue
+        if port < 1 or port > 65535 or port == app_port or port in seen:
+            continue
+        seen.add(port)
+        ports.append(port)
+    return ports
+
+
 @dataclass
 class Settings:
     demo_mode: bool = True
@@ -123,6 +148,12 @@ class Settings:
     )
     vadhghat_weight_adjustment_path: str = (
         "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment"
+    )
+    vadhghat_weight_details_path: str = (
+        "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details"
+    )
+    vadhghat_boom_close_path: str = (
+        "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close"
     )
 
     anpr_base_url: str = "http://192.168.25.79:5001"
@@ -226,6 +257,14 @@ class Settings:
         return _join_url(self.oci_base_url, self.vadhghat_weight_adjustment_path)
 
     @property
+    def vadhghat_weight_details_url(self) -> str:
+        return _join_url(self.oci_base_url, self.vadhghat_weight_details_path)
+
+    @property
+    def vadhghat_boom_close_url(self) -> str:
+        return _join_url(self.oci_base_url, self.vadhghat_boom_close_path)
+
+    @property
     def digitizer_url(self) -> str:
         host = self.digitizer_host or "127.0.0.1"
         path = self.digitizer_path or "/read_stable_weight"
@@ -269,6 +308,16 @@ class Settings:
         if isinstance(rfids.get(key), dict):
             return rfids[key]
         return {}
+
+    def rfid_api_listen_ports(self) -> list[int]:
+        """RFID_API_PORT values to open besides the application port.
+
+        Unidirectional uses the single reader port. Bidirectional uses both
+        entry_a and entry_b ports.
+        """
+        return _rfid_listen_ports(
+            self.rfid_configs().values(), application_port=self.api_port
+        )
 
     def digitizer_config(self) -> Dict[str, Any]:
         return self.raw_config.get("digitizer", {}) or {}
@@ -417,6 +466,20 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             api_eps.get("weight_details_username") or oci_user,
             api_eps.get("weight_details_password") or oci_pass,
         ),
+        "vadhghat_weight_details": _endpoint_cred(
+            api_eps,
+            "vadhghat_weight_details_username",
+            "vadhghat_weight_details_password",
+            api_eps.get("weight_details_username") or oci_user,
+            api_eps.get("weight_details_password") or oci_pass,
+        ),
+        "vadhghat_boom_close": _endpoint_cred(
+            api_eps,
+            "vadhghat_boom_close_username",
+            "vadhghat_boom_close_password",
+            api_eps.get("weight_details_username") or oci_user,
+            api_eps.get("weight_details_password") or oci_pass,
+        ),
     }
 
     dig_port = dig.get("port") or "8100"
@@ -499,6 +562,14 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         vadhghat_weight_adjustment_path=api_eps.get(
             "vadhghat_weight_adjustment_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment",
+        ),
+        vadhghat_weight_details_path=api_eps.get(
+            "vadhghat_weight_details_url",
+            "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details",
+        ),
+        vadhghat_boom_close_path=api_eps.get(
+            "vadhghat_boom_close_url",
+            "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close",
         ),
         anpr_base_url=anpr_base.rstrip("/"),
         anpr_detect_path=api_eps.get("anpr_detect_url") or "/api/detect",

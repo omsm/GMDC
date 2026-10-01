@@ -80,6 +80,31 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.voice.move_forward.assert_called()
         workflow.force_reset()
 
+    def test_transaction_display_and_lights_stay_on_the_entry_side(self):
+        workflow, ctx = self._make_workflow()
+        ctx.display.send = MagicMock()
+        ctx.traffic_lights = {
+            "entry_a": {"entry": MagicMock(), "exit": MagicMock()},
+            "entry_b": {"entry": MagicMock(), "exit": MagicMock()},
+        }
+        ctx.entry_tl = ctx.traffic_lights["entry_a"]["entry"]
+        ctx.exit_tl = ctx.traffic_lights["entry_a"]["exit"]
+
+        workflow.on_entry_occupied()
+
+        _args, kwargs = ctx.display.send.call_args
+        self.assertEqual(kwargs.get("side"), "a")
+        ctx.traffic_lights["entry_b"]["entry"].set_red.assert_not_called()
+        ctx.traffic_lights["entry_b"]["exit"].set_green.assert_not_called()
+        ctx.exit_boom.close.assert_called()
+        workflow.force_reset()
+
+        ctx.display.send.reset_mock()
+        workflow.on_exit_occupied()
+        _args, kwargs = ctx.display.send.call_args
+        self.assertEqual(kwargs.get("side"), "b")
+        workflow.force_reset()
+
     def test_idle_s2_and_s3_cut_plays_weighbridge_0(self):
         from config.constants import State
 
@@ -220,14 +245,111 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.exit_boom.close.assert_called_once()
         workflow.force_reset()
 
-    def test_timeout_reset_closes_exit_boom_immediately(self):
+    def test_bidirectional_idle_opens_both_booms_and_entry_lights(self):
         workflow, ctx = self._make_workflow()
+        ctx.traffic_lights = {
+            "entry_a": {"entry": MagicMock(), "exit": MagicMock()},
+            "entry_b": {"entry": MagicMock(), "exit": MagicMock()},
+        }
+        ctx.entry_tl = ctx.traffic_lights["entry_a"]["entry"]
+        ctx.exit_tl = ctx.traffic_lights["entry_a"]["exit"]
+        ctx.entry_boom.open.reset_mock()
+        ctx.exit_boom.open.reset_mock()
+        ctx.exit_boom.close.reset_mock()
+
+        workflow.apply_idle_hardware()
+
+        ctx.entry_boom.open.assert_called()
+        ctx.exit_boom.open.assert_called()
+        ctx.exit_boom.close.assert_not_called()
+        for direction in ("entry_a", "entry_b"):
+            ctx.traffic_lights[direction]["entry"].set_green.assert_called()
+            ctx.traffic_lights[direction]["exit"].set_red.assert_called()
+        self.assertIsNone(getattr(workflow, "_boom_close_timer"))
+
+    def test_unidirectional_reset_closes_exit_boom_immediately(self):
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
         ctx.exit_boom.close.reset_mock()
 
         workflow.force_reset()
 
         ctx.exit_boom.close.assert_called_once()
         self.assertIsNone(getattr(workflow, "_boom_close_timer"))
+
+    def test_entry_sensor_does_not_start_while_idle_weight_is_nonzero(self):
+        import time
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 8000.0
+
+        workflow.on_entry_occupied()
+
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.voice.move_forward.assert_not_called()
+        for _ in range(40):
+            if ctx.voice.check_weighbridge_weight.called:
+                break
+            time.sleep(0.02)
+        ctx.voice.check_weighbridge_weight.assert_called()
+        workflow.force_reset()
+
+    def test_idle_nonzero_weight_plays_digitizer_check(self):
+        import time
+
+        workflow, ctx = self._make_workflow()
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 8000.0
+
+        workflow._on_digitizer_update()
+
+        for _ in range(40):
+            if ctx.voice.check_weighbridge_weight.called:
+                break
+            time.sleep(0.02)
+        ctx.voice.check_weighbridge_weight.assert_called()
+        ctx.voice.weighbridge_0.assert_not_called()
+        workflow.force_reset()
+
+    def test_weight_drop_before_wb_only_starts_exit(self):
+        import time
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": False,
+            "exit_active": False,
+        }
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+
+        ctx.digitizer.get_current_weight.return_value = 0.0
+        workflow._on_digitizer_update()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+        ctx.voice.check_weighbridge_weight.assert_not_called()
+
+        ctx.digitizer.get_current_weight.return_value = 12000.0
+        workflow._on_digitizer_update()
+        ctx.digitizer.get_current_weight.return_value = 0.0
+        workflow._on_digitizer_update()
+
+        for _ in range(50):
+            if ctx.state_machine.current_state == State.EXIT_GRANTED:
+                break
+            time.sleep(0.02)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        ctx.voice.check_weighbridge_weight.assert_called()
+        ctx.exit_boom.open.assert_called()
+        workflow.force_reset()
 
 
 class TestBidirectionalSettings(unittest.TestCase):
@@ -246,6 +368,48 @@ class TestBidirectionalSettings(unittest.TestCase):
 
         self.assertEqual(set(settings.rfid_configs()), {"entry_a", "entry_b"})
         self.assertEqual(settings.rfid_config("entry_b")["ip"], "10.0.0.2")
+
+    def test_bidirectional_opens_both_rfid_ports_besides_the_app(self):
+        from config.settings import Settings
+
+        settings = Settings(
+            api_port=8000,
+            wb_type="bidirectional",
+            raw_config={
+                "rfid": {"api_port": "8080"},
+                "rfids": {
+                    "entry_a": {"api_port": "8080"},
+                    "entry_b": {"api_port": "8081"},
+                },
+            },
+        )
+        self.assertEqual(settings.rfid_api_listen_ports(), [8080, 8081])
+
+    def test_unidirectional_opens_only_the_single_rfid_port(self):
+        from config.settings import Settings
+
+        settings = Settings(
+            api_port=8000,
+            wb_type="unidirectional",
+            raw_config={
+                "rfid": {"api_port": "8080"},
+                "rfids": {
+                    "entry_a": {"api_port": "8080"},
+                    "entry_b": {"api_port": "8081"},
+                },
+            },
+        )
+        self.assertEqual(settings.rfid_api_listen_ports(), [8080])
+
+    def test_rfid_port_already_on_the_application_is_not_opened_again(self):
+        from config.settings import Settings
+
+        settings = Settings(
+            api_port=8080,
+            wb_type="unidirectional",
+            raw_config={"rfid": {"api_port": "8080"}},
+        )
+        self.assertEqual(settings.rfid_api_listen_ports(), [])
 
 
 class TestSensorAlreadyActive(unittest.TestCase):

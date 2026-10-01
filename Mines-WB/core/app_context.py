@@ -36,6 +36,8 @@ class AppContext:
         self.io: Optional["IOController"] = None
         self.entry_tl: Optional["TrafficLight"] = None
         self.exit_tl: Optional["TrafficLight"] = None
+        # Bidirectional: {"entry_a"|"entry_b": {"entry": TrafficLight, "exit": TrafficLight}}
+        self.traffic_lights: Dict[str, Dict[str, "TrafficLight"]] = {}
         self.entry_boom: Optional["BoomBarrier"] = None
         self.exit_boom: Optional["BoomBarrier"] = None
         self.sensor_poller: Optional["SensorPoller"] = None

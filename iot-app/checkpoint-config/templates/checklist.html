@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Device Configuration{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<header class="header">
+    <div class="header-brand">
+        <i class="bi bi-cpu"></i>
+        <span>{{ app_name }}</span>
+    </div>
+    <div class="header-actions">
+        <button type="button" class="header-version-btn" onclick="showAppVersionInfo()" title="Application version">
+            <i class="bi bi-info-circle"></i>
+            <span>Version</span>
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+            <i class="bi bi-sun-fill" id="themeIcon"></i>
+        </button>
+        <button class="theme-toggle" id="adminToggle" title="Admin / Debug Tools">
+            <i class="bi bi-shield-lock"></i>
+        </button>
+    </div>
+</header>
+
+<div class="checklist-page">
+    <div class="checklist-header">
+        <i class="bi bi-cpu brand-icon"></i>
+        <h1>GMDC Device Configuration</h1>
+        <p class="subtitle">Checkpoint and Weigh Bridge setup</p>
+    </div>
+    
+    <div class="checklist-card">
+        <h2><i class="bi bi-signpost-split"></i> Site type</h2>
+        <p class="checklist-intro">Choose Checkpoint or Weigh Bridge, then the IP range to scan.</p>
+
+        <div class="ip-range-section" style="margin-top: 0;">
+            <label class="form-label" for="siteTypeSelect">Configuration type</label>
+            <select id="siteTypeSelect" class="form-select">
+                {% for c in checkpoint_type_choices %}
+                <option value="{{ c.id }}" data-family="{{ c.family }}"
+                    {% if c.id == checkpoint_type %}selected{% endif %}>
+                    {{ c.label }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="directionChoiceBlock" class="layout-choice-list" role="radiogroup" aria-label="Weighbridge direction"
+            {% if checkpoint_profile.family != 'weighbridge' %}style="display:none"{% endif %}>
+            <p class="checklist-intro direction-choice-label">Weigh Bridge direction</p>
+            <label class="layout-choice-card">
+                <input type="radio" name="weighbridgeLayoutChoice" value="unidirectional" class="layout-choice-input"
+                    {% if wb_type != 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-icon layout-choice-icon--uni" aria-hidden="true"><i class="bi bi-arrow-right"></i></span>
+                <span class="layout-choice-content">
+                    <span class="layout-choice-title">Unidirectional</span>
+                </span>
+                <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+            </label>
+            <label class="layout-choice-card">
+                <input type="radio" name="weighbridgeLayoutChoice" value="bidirectional" class="layout-choice-input"
+                    {% if wb_type == 'bidirectional' %}checked{% endif %}>
+                <span class="layout-choice-icon layout-choice-icon--bi" aria-hidden="true"><i class="bi bi-arrow-left-right"></i></span>
+                <span class="layout-choice-content">
+                    <span class="layout-choice-title">Bidirectional</span>
+                </span>
+                <span class="layout-choice-check" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+            </label>
+        </div>
+        
+        <div class="ip-range-section">
+            <h3><i class="bi bi-router"></i> Network IP Range</h3>
+            <p>Enter the IP range of your local network to auto-discover devices:</p>
+            <div class="ip-range-inputs">
+                <div class="ip-input-group">
+                    <label>Starting IP</label>
+                    <input type="text" id="startIp" placeholder="Detecting...">
+                </div>
+                <span class="ip-separator">to</span>
+                <div class="ip-input-group">
+                    <label>Ending IP</label>
+                    <input type="text" id="endIp" placeholder="Detecting...">
+                </div>
+            </div>
+            <p class="ip-note" id="ipNote" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                <i class="bi bi-info-circle"></i> IP range auto-detected based on your network. Edit if needed.
+            </p>
+        </div>
+        
+        <div class="checklist-footer">
+            <button class="btn btn-primary btn-lg" id="proceedBtn" onclick="proceedToScan()">
+                <i class="bi bi-arrow-right-circle"></i>
+                Next
+            </button>
+            <button class="btn btn-outline" id="startFreshBtn" type="button" onclick="confirmStartFreshConfig()" title="Wipe saved configuration and start empty">
+                <i class="bi bi-arrow-counterclockwise"></i>
+                Start fresh configuration
+            </button>
+            <p class="checklist-note">
+                <i class="bi bi-info-circle"></i>
+                Existing configuration is kept on re-run. Use <b>Start fresh</b> only to wipe it.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/checklist.js') }}"></script>
+{% endblock %}
+

@@ -270,6 +270,8 @@ html[data-theme="dark"] .sidebar {
 
 .content {
     margin-left: 248px;
+    max-width: none;
+    width: calc(100% - 248px);
 }
 
 .checklist-page,

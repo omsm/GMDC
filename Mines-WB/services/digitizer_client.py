@@ -2,9 +2,8 @@
 Digitizer clients for Mines-WB.
 
 - API mode: POST /read_stable_weight (digitizer-app / digitizer-decoder HTTP)
-- MQTT mode: subscribe to live weight + status from digitizer-decoder;
-  request stable weight on demand. Broker runs on the Mines-WB Mac;
-  decoder on another PC connects to that broker IP.
+- MQTT mode: the decoder publishes live readings. Mines-WB decides when the
+  weight is stable from that stream.
 """
 
 from __future__ import annotations
@@ -211,7 +210,7 @@ class DigitizerClient:
 
 
 class DigitizerMqttClient:
-    """MQTT digitizer client — live weight stream + request/response stable read."""
+    """MQTT digitizer client. Stability is counted here from the live stream."""
 
     mode = "mqtt"
 
@@ -230,6 +229,7 @@ class DigitizerMqttClient:
         heartbeat_timeout_sec: float = DEFAULT_HEARTBEAT_TIMEOUT_SEC,
         demo_mode: bool = False,
         demo_weight_kg: float = 12500.0,
+        stable_count: int = 10,
     ) -> None:
         self.broker_host = (broker_host or "127.0.0.1").strip() or "127.0.0.1"
         self.broker_port = int(broker_port or 1883)
@@ -249,6 +249,11 @@ class DigitizerMqttClient:
         )
         self.demo_mode = demo_mode
         self.demo_weight_kg = demo_weight_kg
+        try:
+            count = int(stable_count)
+        except (TypeError, ValueError):
+            count = 10
+        self.stable_count = count if count > 0 else 10
 
         self._client = None
         self._connected = False
@@ -256,6 +261,9 @@ class DigitizerMqttClient:
         self._current_weight: Optional[float] = None
         self._stable_weight: Optional[float] = None
         self._stable = False
+        self._stable_candidate: Optional[float] = None
+        self._stable_seen = 0
+        self._stable_wait = threading.Event()
         self._last_heartbeat = 0.0
         self._last_raw: Dict[str, Any] = {}
         self._pending_event = threading.Event()
@@ -370,20 +378,32 @@ class DigitizerMqttClient:
             }
 
         with self._lock:
-            self._awaiting_request = True
-            self._pending_response = None
-            self._pending_event.clear()
+            if (
+                self._stable
+                and self._stable_weight is not None
+                and float(self._stable_weight) > 0
+            ):
+                weight = float(self._stable_weight)
+                return {
+                    "ok": True,
+                    "weight": weight,
+                    "raw": {
+                        "stable_weight": weight,
+                        "current_weight": self._current_weight,
+                        "source": "live_stable",
+                    },
+                    "message": "ok",
+                }
+            self._stable_wait.clear()
 
         try:
             self._client.publish(
                 self.topic_request,
-                json.dumps({"action": "read_stable_weight"}),
+                json.dumps({"action": "read_weight"}),
                 qos=0,
             )
         except Exception as exc:
             logger.warning("Digitizer MQTT request publish failed: %s", exc)
-            with self._lock:
-                self._awaiting_request = False
             short, title = operator_copy("digitizer", KIND_UNREACHABLE)
             return {
                 "ok": False,
@@ -396,55 +416,43 @@ class DigitizerMqttClient:
                 "popup_title": title,
             }
 
-        ok = self._pending_event.wait(timeout=self.timeout)
-        with self._lock:
-            self._awaiting_request = False
-            parsed = self._pending_response
-            live_stable = self._stable_weight if self._stable else None
+        deadline = time.monotonic() + self.timeout
+        while True:
+            with self._lock:
+                if (
+                    self._stable
+                    and self._stable_weight is not None
+                    and float(self._stable_weight) > 0
+                ):
+                    weight = float(self._stable_weight)
+                    return {
+                        "ok": True,
+                        "weight": weight,
+                        "raw": {
+                            "stable_weight": weight,
+                            "current_weight": self._current_weight,
+                            "stable_count": self.stable_count,
+                        },
+                        "message": "ok",
+                    }
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._stable_wait.wait(timeout=min(remaining, 0.25))
 
-        if not ok or not parsed:
-            # Fall back to last known stable from live stream if available.
-            if live_stable is not None and float(live_stable) > 0:
-                logger.info(
-                    "Digitizer MQTT request timed out — using live stable=%.1f",
-                    live_stable,
-                )
-                return {
-                    "ok": True,
-                    "weight": float(live_stable),
-                    "raw": {"stable_weight": live_stable, "source": "live_fallback"},
-                    "message": "ok",
-                }
-            short, title = operator_copy("digitizer", KIND_UNREACHABLE)
-            return {
-                "ok": False,
-                "weight": None,
-                "message": f"No MQTT weight response within {self.timeout:.0f}s",
-                "raw": {},
-                "kind": KIND_UNREACHABLE,
-                "operator_message": short,
-                "popup": True,
-                "popup_title": title,
-            }
-
-        weight = _extract_weight(parsed)
-        status = parsed.get("statusCode") if isinstance(parsed, dict) else None
-        if weight is None or (status is not None and int(status) != 200):
-            return {
-                "ok": False,
-                "weight": weight,
-                "raw": parsed,
-                "message": "Invalid MQTT weight payload",
-                "kind": KIND_HTTP,
-                "operator_message": "Digitizer failed",
-                "popup": False,
-                "popup_title": "",
-            }
+        short, title = operator_copy("digitizer", KIND_UNREACHABLE)
         return {
-            "ok": True,
-            "weight": weight,
-            "raw": parsed,
-            "message": "ok",
+            "ok": False,
+            "weight": None,
+            "message": (
+                f"Weight did not stay stable for {self.stable_count} readings "
+                f"within {self.timeout:.0f}s"
+            ),
+            "raw": {},
+            "kind": KIND_UNREACHABLE,
+            "operator_message": short,
+            "popup": True,
+            "popup_title": title,
         }
 
     def _notify(self) -> None:
@@ -494,32 +502,33 @@ class DigitizerMqttClient:
             if topic == self.topic_weight or weight is not None:
                 # Weight messages also prove liveness.
                 self._last_heartbeat = now
-            if weight is not None:
-                if self._current_weight != weight:
-                    changed = True
-                self._current_weight = weight
-            if "stable" in parsed:
-                self._stable = bool(parsed.get("stable"))
-            if parsed.get("stable_weight") is not None:
-                try:
-                    self._stable_weight = float(parsed["stable_weight"])
-                    self._stable = True
-                except (TypeError, ValueError):
-                    pass
+            if topic == self.topic_weight and weight is not None:
+                changed = self._observe_weight(weight)
             self._last_raw = parsed
-
-            if self._awaiting_request and topic == self.topic_weight:
-                # Prefer request responses; also accept stable live payloads.
-                source = str(parsed.get("source") or "")
-                has_stable = parsed.get("stable_weight") is not None or (
-                    parsed.get("stable") and weight is not None
-                )
-                if source == "request" or has_stable or weight is not None:
-                    self._pending_response = parsed
-                    self._pending_event.set()
 
         if changed or topic == self.topic_status:
             self._notify()
+
+    def _observe_weight(self, weight: float) -> bool:
+        """Count identical non-zero readings. Caller holds ``self._lock``."""
+        changed = self._current_weight != weight
+        self._current_weight = weight
+        if weight > 0 and self._stable_candidate is not None and float(self._stable_candidate) == float(weight):
+            self._stable_seen += 1
+        elif weight > 0:
+            self._stable_candidate = float(weight)
+            self._stable_seen = 1
+        else:
+            self._stable_candidate = None
+            self._stable_seen = 0
+        if weight > 0 and self._stable_seen >= self.stable_count:
+            self._stable = True
+            self._stable_weight = float(weight)
+            self._stable_wait.set()
+        else:
+            self._stable = False
+            self._stable_weight = None
+        return changed
 
 
 def create_digitizer_client(settings: Any) -> Any:
@@ -583,6 +592,11 @@ def create_digitizer_client(settings: Any) -> Any:
                 dig.get("heartbeat_timeout_sec") or DEFAULT_HEARTBEAT_TIMEOUT_SEC
             ),
             demo_mode=demo,
+            stable_count=int(
+                getattr(settings, "digitizer_stable_count", None)
+                or dig.get("stable_count")
+                or 10
+            ),
         )
 
     return DigitizerClient(

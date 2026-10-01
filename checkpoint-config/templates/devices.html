@@ -462,7 +462,118 @@
             </div>
             
             <div class="camera-grid">
-                <!-- Top Camera -->
+                <!-- Front Camera (unidirectional and checkpoint) -->
+                <div class="config-card camera-card" id="frontCameraCard">
+                    <h4><i class="bi bi-camera"></i> Front Camera</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontCameraMake">Make / Brand</label>
+                                <input type="text" class="form-control" id="frontCameraMake" placeholder="e.g., Hikvision, Dahua">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontCameraModel">Model Number</label>
+                                <input type="text" class="form-control" id="frontCameraModel" placeholder="e.g., DS-2CD2T45">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="camera-preview">
+                        <img id="frontCameraFeed" src="" alt="Front Camera Feed">
+                        <div class="camera-placeholder" id="frontCameraPlaceholder">
+                            <i class="bi bi-camera-video-off"></i>
+                            <span>No feed</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="frontCameraUrl">RTSP URL</label>
+                        <input type="text" class="form-control" id="frontCameraUrl" placeholder="rtsp://user:pass@192.168.1.61:554/stream">
+                    </div>
+                    <div class="btn-group-actions">
+                        <button class="btn btn-primary btn-sm" onclick="checkCamera('front')">
+                            <i class="bi bi-check-lg"></i> Check & Save
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="stopCamera('front')">
+                            <i class="bi bi-stop-circle"></i> Stop
+                        </button>
+                    </div>
+                </div>
+
+                <div class="config-card camera-card" id="frontACameraCard" style="display:none">
+                    <h4><i class="bi bi-camera"></i> Front-1</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontACameraMake">Make / Brand</label>
+                                <input type="text" class="form-control" id="frontACameraMake" placeholder="e.g., Hikvision, Dahua">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontACameraModel">Model Number</label>
+                                <input type="text" class="form-control" id="frontACameraModel" placeholder="e.g., DS-2CD2T45">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="camera-preview">
+                        <img id="frontACameraFeed" src="" alt="Front Camera Entry A">
+                        <div class="camera-placeholder" id="frontACameraPlaceholder">
+                            <i class="bi bi-camera-video-off"></i>
+                            <span>No feed</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="frontACameraUrl">RTSP URL</label>
+                        <input type="text" class="form-control" id="frontACameraUrl" placeholder="rtsp://user:pass@192.168.1.61:554/stream">
+                    </div>
+                    <div class="btn-group-actions">
+                        <button class="btn btn-primary btn-sm" onclick="checkCamera('front_a')">
+                            <i class="bi bi-check-lg"></i> Check & Save
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="stopCamera('front_a')">
+                            <i class="bi bi-stop-circle"></i> Stop
+                        </button>
+                    </div>
+                </div>
+
+                <div class="config-card camera-card" id="frontBCameraCard" style="display:none">
+                    <h4><i class="bi bi-camera"></i> Front-2</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontBCameraMake">Make / Brand</label>
+                                <input type="text" class="form-control" id="frontBCameraMake" placeholder="e.g., Hikvision, Dahua">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="frontBCameraModel">Model Number</label>
+                                <input type="text" class="form-control" id="frontBCameraModel" placeholder="e.g., DS-2CD2T45">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="camera-preview">
+                        <img id="frontBCameraFeed" src="" alt="Front Camera Entry B">
+                        <div class="camera-placeholder" id="frontBCameraPlaceholder">
+                            <i class="bi bi-camera-video-off"></i>
+                            <span>No feed</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="frontBCameraUrl">RTSP URL</label>
+                        <input type="text" class="form-control" id="frontBCameraUrl" placeholder="rtsp://user:pass@192.168.1.62:554/stream">
+                    </div>
+                    <div class="btn-group-actions">
+                        <button class="btn btn-primary btn-sm" onclick="checkCamera('front_b')">
+                            <i class="bi bi-check-lg"></i> Check & Save
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="stopCamera('front_b')">
+                            <i class="bi bi-stop-circle"></i> Stop
+                        </button>
+                    </div>
+                </div>
+
                 <div class="config-card camera-card" id="topCameraCard">
                     <h4><i class="bi bi-camera"></i> Top Camera</h4>
                     <div class="row">
@@ -497,43 +608,8 @@
                         <button class="btn btn-secondary btn-sm" onclick="stopCamera('top')">
                             <i class="bi bi-stop-circle"></i> Stop
                         </button>
-                    </div>
-                </div>
-                
-                <!-- Front Camera -->
-                <div class="config-card camera-card" id="frontCameraCard">
-                    <h4><i class="bi bi-camera"></i> Front Camera</h4>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="frontCameraMake">Make / Brand</label>
-                                <input type="text" class="form-control" id="frontCameraMake" placeholder="e.g., Hikvision, Dahua">
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="frontCameraModel">Model Number</label>
-                                <input type="text" class="form-control" id="frontCameraModel" placeholder="e.g., DS-2CD2T45">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="camera-preview">
-                        <img id="frontCameraFeed" src="" alt="Front Camera Feed">
-                        <div class="camera-placeholder" id="frontCameraPlaceholder">
-                            <i class="bi bi-camera-video-off"></i>
-                            <span>No feed</span>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="frontCameraUrl">RTSP URL</label>
-                        <input type="text" class="form-control" id="frontCameraUrl" placeholder="rtsp://user:pass@192.168.1.61:554/stream">
-                    </div>
-                    <div class="btn-group-actions">
-                        <button class="btn btn-primary btn-sm" onclick="checkCamera('front')">
-                            <i class="bi bi-check-lg"></i> Check & Save
-                        </button>
-                        <button class="btn btn-secondary btn-sm" onclick="stopCamera('front')">
-                            <i class="bi bi-stop-circle"></i> Stop
+                        <button type="button" class="btn btn-outline btn-sm" id="topCameraSkipBtn" style="display:none" onclick="skipTopCamera()">
+                            <i class="bi bi-skip-forward"></i> Skip
                         </button>
                     </div>
                 </div>
@@ -629,7 +705,7 @@
                             <p>Broker TCP: localhost:1883 (Mosquitto on this PC)</p>
                             <p>Display publishes: <code id="displayPublishTopic">display_info/display IP</code></p>
                             <p>App answers on: <code id="displayReplyTopic">pcb_id/display IP</code></p>
-                            <p>Transactions: <code>data_info/a</code> or <code>data_info/b</code></p>
+                            <p>Transactions: <code>data_info/a</code> once, then <code>data_info/b</code> once on a bidirectional weighbridge</p>
                             <p id="displayModeHint">This site mode: <strong>a</strong></p>
                         </div>
                     </div>
@@ -986,6 +1062,13 @@
                                 <span class="device-status" id="entryTLStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable profile-wb-only">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="entryTLEnabled" data-kind="tl" data-location="entry" checked onchange="onTrafficLightEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this light. On unlocks the pins and test buttons.</small>
+                                </div>
                                 <div class="row">
                                     <div class="col-md-6">
                                         <div class="form-group">
@@ -1035,6 +1118,13 @@
                                 <span class="device-status" id="exitTLStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="exitTLEnabled" data-kind="tl" data-location="exit" checked onchange="onTrafficLightEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this light. On unlocks the pins and test buttons.</small>
+                                </div>
                                 <div class="same-as-first-option">
                                     <label class="toggle-label">
                                         <input type="checkbox" id="exitTLSameAsFirst" onchange="toggleSameAsFirst('tl', 'exit')">
@@ -1096,6 +1186,7 @@
                         <strong>Relay OFF (LOW)</strong> → NC contact → RED light
                     </p>
                     
+                    <div id="tlRelayUnidirectionalBlock">
                     <div class="tl-config-grid">
                         <!-- Entry Traffic Light -->
                         <div class="device-config-card">
@@ -1104,6 +1195,13 @@
                                 <span class="device-status" id="entryTLRelayStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable profile-wb-only">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="entryTLRelayEnabled" data-kind="tl" data-location="entry" checked onchange="onTrafficLightEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this light.</small>
+                                </div>
                                 <div class="form-group">
                                     <label>Relay Pin (DO)</label>
                                     <input type="number" class="form-control io-pin-input io-pin-input-output" id="entryTLRelayPin" placeholder="0" value="0" min="0">
@@ -1130,6 +1228,13 @@
                                 <span class="device-status" id="exitTLRelayStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="exitTLRelayEnabled" data-kind="tl" data-location="exit" checked onchange="onTrafficLightEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this light.</small>
+                                </div>
                                 <div class="form-group">
                                     <label>Relay Pin (DO)</label>
                                     <input type="number" class="form-control io-pin-input io-pin-input-output" id="exitTLRelayPin" placeholder="1" value="1" min="0">
@@ -1149,12 +1254,66 @@
                             </div>
                         </div>
                     </div>
+                    </div>
+                    <div id="tlRelayBidirectionalBlock" style="display:none;">
+                        <p class="text-muted" style="font-size: 0.85rem;">Four relay lights. Enable turns the pin and relay buttons on. Off skips that light.</p>
+                        <p class="direction-subsection-title"><i class="bi bi-arrow-right-circle"></i> ENTRY A</p>
+                        <div class="tl-config-grid">
+                            <div class="device-config-card">
+                                <div class="device-header"><span class="device-name">ENTRY A - Entry Traffic Light</span><span class="device-status" id="directionA_entryTLRelayStatus"></span></div>
+                                <div class="device-fields">
+                                    <div class="io-device-enable"><label class="toggle-label"><input type="checkbox" class="io-enable-input" id="directionA_entryTLRelayEnabled" data-kind="tl" data-location="entry" data-direction="entry_a" onchange="onTrafficLightEnableToggle(this, true)"><span>Enable</span></label></div>
+                                    <div class="form-group"><label>Relay Pin (DO)</label><input type="number" class="form-control io-pin-input io-pin-input-output" id="directionA_entryTLRelayPin" value="0" min="0"></div>
+                                </div>
+                                <div class="btn-group-actions" style="margin-top:12px;">
+                                    <button class="btn btn-sm btn-success" onclick="testTrafficLightRelay('entry', 'green', 'entry_a')">GREEN (Relay ON)</button>
+                                    <button class="btn btn-sm btn-error" onclick="testTrafficLightRelay('entry', 'red', 'entry_a')">RED (Relay OFF)</button>
+                                </div>
+                            </div>
+                            <div class="device-config-card">
+                                <div class="device-header"><span class="device-name">ENTRY A - Exit Traffic Light</span><span class="device-status" id="directionA_exitTLRelayStatus"></span></div>
+                                <div class="device-fields">
+                                    <div class="io-device-enable"><label class="toggle-label"><input type="checkbox" class="io-enable-input" id="directionA_exitTLRelayEnabled" data-kind="tl" data-location="exit" data-direction="entry_a" onchange="onTrafficLightEnableToggle(this, true)"><span>Enable</span></label></div>
+                                    <div class="form-group"><label>Relay Pin (DO)</label><input type="number" class="form-control io-pin-input io-pin-input-output" id="directionA_exitTLRelayPin" value="1" min="0"></div>
+                                </div>
+                                <div class="btn-group-actions" style="margin-top:12px;">
+                                    <button class="btn btn-sm btn-success" onclick="testTrafficLightRelay('exit', 'green', 'entry_a')">GREEN (Relay ON)</button>
+                                    <button class="btn btn-sm btn-error" onclick="testTrafficLightRelay('exit', 'red', 'entry_a')">RED (Relay OFF)</button>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="direction-subsection-title"><i class="bi bi-arrow-left-circle"></i> ENTRY B</p>
+                        <div class="tl-config-grid">
+                            <div class="device-config-card">
+                                <div class="device-header"><span class="device-name">ENTRY B - Entry Traffic Light</span><span class="device-status" id="directionB_entryTLRelayStatus"></span></div>
+                                <div class="device-fields">
+                                    <div class="io-device-enable"><label class="toggle-label"><input type="checkbox" class="io-enable-input" id="directionB_entryTLRelayEnabled" data-kind="tl" data-location="entry" data-direction="entry_b" onchange="onTrafficLightEnableToggle(this, true)"><span>Enable</span></label></div>
+                                    <div class="form-group"><label>Relay Pin (DO)</label><input type="number" class="form-control io-pin-input io-pin-input-output" id="directionB_entryTLRelayPin" value="2" min="0"></div>
+                                </div>
+                                <div class="btn-group-actions" style="margin-top:12px;">
+                                    <button class="btn btn-sm btn-success" onclick="testTrafficLightRelay('entry', 'green', 'entry_b')">GREEN (Relay ON)</button>
+                                    <button class="btn btn-sm btn-error" onclick="testTrafficLightRelay('entry', 'red', 'entry_b')">RED (Relay OFF)</button>
+                                </div>
+                            </div>
+                            <div class="device-config-card">
+                                <div class="device-header"><span class="device-name">ENTRY B - Exit Traffic Light</span><span class="device-status" id="directionB_exitTLRelayStatus"></span></div>
+                                <div class="device-fields">
+                                    <div class="io-device-enable"><label class="toggle-label"><input type="checkbox" class="io-enable-input" id="directionB_exitTLRelayEnabled" data-kind="tl" data-location="exit" data-direction="entry_b" onchange="onTrafficLightEnableToggle(this, true)"><span>Enable</span></label></div>
+                                    <div class="form-group"><label>Relay Pin (DO)</label><input type="number" class="form-control io-pin-input io-pin-input-output" id="directionB_exitTLRelayPin" value="3" min="0"></div>
+                                </div>
+                                <div class="btn-group-actions" style="margin-top:12px;">
+                                    <button class="btn btn-sm btn-success" onclick="testTrafficLightRelay('exit', 'green', 'entry_b')">GREEN (Relay ON)</button>
+                                    <button class="btn btn-sm btn-error" onclick="testTrafficLightRelay('exit', 'red', 'entry_b')">RED (Relay OFF)</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Boom Barrier - Direct Mode -->
                 <div class="pin-section" id="bbDirectMode">
                     <h5><i class="bi bi-sign-stop"></i> Boom Barriers (Direct Mode)</h5>
-                    <p class="text-muted" style="font-size: 0.85rem;">Separate open and close pins for each boom barrier</p>
+                    <p class="text-muted" style="font-size: 0.85rem;">Enable a barrier to edit its pins and use Open / Close. Off skips that barrier.</p>
                     
                     <div class="bb-config-grid">
                         <!-- Entry Boom Barrier -->
@@ -1164,26 +1323,24 @@
                                 <span class="device-status" id="entryBBStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="entryBoomEnabled" data-kind="bb" data-location="entry" onchange="onBoomEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this barrier.</small>
+                                </div>
                                 <div class="row">
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <div class="form-group">
                                             <label>Open Pin</label>
                                             <input type="number" class="form-control io-pin-input io-pin-input-output" id="entryBoomOpenPin" placeholder="4" value="4" min="0">
                                         </div>
                                     </div>
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <div class="form-group">
                                             <label>Close Pin</label>
                                             <input type="number" class="form-control io-pin-input io-pin-input-output" id="entryBoomClosePin" placeholder="5" value="5" min="0">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>Enabled</label>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="entryBoomEnabled">
-                                                <label for="entryBoomEnabled">Enable Entry Barrier</label>
-                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1205,26 +1362,24 @@
                                 <span class="device-status" id="exitBBStatus"></span>
                             </div>
                             <div class="device-fields">
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="exitBoomEnabled" data-kind="bb" data-location="exit" onchange="onBoomEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this barrier.</small>
+                                </div>
                                 <div class="row">
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <div class="form-group">
                                             <label>Open Pin</label>
                                             <input type="number" class="form-control io-pin-input io-pin-input-output" id="exitBoomOpenPin" placeholder="5" value="5" min="0">
                                         </div>
                                     </div>
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <div class="form-group">
                                             <label>Close Pin</label>
                                             <input type="number" class="form-control io-pin-input io-pin-input-output" id="exitBoomClosePin" placeholder="6" value="6" min="0">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>Enabled</label>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="exitBoomEnabled">
-                                                <label for="exitBoomEnabled">Enable Exit Barrier</label>
-                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1258,23 +1413,17 @@
                                 <span class="device-status" id="entryBBRelayStatus"></span>
                             </div>
                             <div class="device-fields">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label>Relay Pin (DO)</label>
-                                            <input type="number" class="form-control io-pin-input io-pin-input-output" id="entryBoomRelayPin" placeholder="2" value="2" min="0">
-                                            <small class="text-muted">NO=Open, NC=Close</small>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label>Enabled</label>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="entryBoomRelayEnabled">
-                                                <label for="entryBoomRelayEnabled">Enable Entry Barrier</label>
-                                            </div>
-                                        </div>
-                                    </div>
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="entryBoomRelayEnabled" data-kind="bb" data-location="entry" onchange="onBoomEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this barrier.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Relay Pin (DO)</label>
+                                    <input type="number" class="form-control io-pin-input io-pin-input-output" id="entryBoomRelayPin" placeholder="2" value="2" min="0">
+                                    <small class="text-muted">NO=Open, NC=Close. Relay ON opens, Relay OFF closes.</small>
                                 </div>
                             </div>
                             <div class="btn-group-actions" style="margin-top: 12px;">
@@ -1294,23 +1443,17 @@
                                 <span class="device-status" id="exitBBRelayStatus"></span>
                             </div>
                             <div class="device-fields">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label>Relay Pin (DO)</label>
-                                            <input type="number" class="form-control io-pin-input io-pin-input-output" id="exitBoomRelayPin" placeholder="3" value="3" min="0">
-                                            <small class="text-muted">NO=Open, NC=Close</small>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label>Enabled</label>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="exitBoomRelayEnabled">
-                                                <label for="exitBoomRelayEnabled">Enable Exit Barrier</label>
-                                            </div>
-                                        </div>
-                                    </div>
+                                <div class="io-device-enable">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" class="io-enable-input" id="exitBoomRelayEnabled" data-kind="bb" data-location="exit" onchange="onBoomEnableToggle(this, true)">
+                                        <span>Enable</span>
+                                    </label>
+                                    <small class="text-muted">Off skips this barrier.</small>
+                                </div>
+                                <div class="form-group">
+                                    <label>Relay Pin (DO)</label>
+                                    <input type="number" class="form-control io-pin-input io-pin-input-output" id="exitBoomRelayPin" placeholder="3" value="3" min="0">
+                                    <small class="text-muted">NO=Open, NC=Close. Relay ON opens, Relay OFF closes.</small>
                                 </div>
                             </div>
                             <div class="btn-group-actions" style="margin-top: 12px;">
@@ -1875,7 +2018,7 @@
                         <i class="bi bi-arrow-clockwise"></i> Retry
                     </button>
                     <button class="btn btn-secondary" onclick="cancelRfidCardRead()" id="rfidModalCancelBtn" style="display: none;">
-                        <i class="bi bi-x-lg"></i> Cancel
+                        <i class="bi bi-x-lg" id="rfidModalCancelIcon"></i> <span id="rfidModalCancelLabel">Cancel</span>
                     </button>
                 </div>
             </div>
@@ -1962,6 +2105,10 @@
                 <div id="moduleHelpContent" class="module-help-content"></div>
             </div>
             <div class="modal-footer">
+                <!-- Temporary: remove with showIoDebugPage() -->
+                <button type="button" class="btn btn-outline" id="ioDebugPageBtn" style="display:none" onclick="showIoDebugPage()">
+                    DEBUG PAGE
+                </button>
                 <button class="btn btn-secondary" onclick="closeModuleHelp()">
                     <i class="bi bi-x-lg"></i> Close
                 </button>

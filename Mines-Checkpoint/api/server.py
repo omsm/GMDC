@@ -101,6 +101,40 @@ def create_app(os_type: str = "auto") -> Flask:
     return app
 
 
+def start_rfid_api_ports(app: Flask, host: str, ports: list[int]) -> None:
+    """Listen for RFID tag push on each configured RFID_API_PORT.
+
+    The application port already serves /rfid_data. These extra ports are the
+    ones saved on the readers, and they stay open for the life of the process.
+    """
+    if not ports:
+        logger.info("RFID data is served on the application port only")
+        return
+    from werkzeug.serving import make_server
+
+    for port in ports:
+        try:
+            server = make_server(host, int(port), app, threaded=True)
+        except OSError as exc:
+            logger.error(
+                "RFID API port %s did not open (%s). Reader posts to this port will fail.",
+                port,
+                exc,
+            )
+            continue
+
+        threading.Thread(
+            target=server.serve_forever,
+            name=f"RfidApi-{port}",
+            daemon=True,
+        ).start()
+        logger.info(
+            "RFID data port open on %s:%s (POST /rfid_data, /rfid_management)",
+            host,
+            port,
+        )
+
+
 def start_api_server(host: str = "0.0.0.0", port: int = 8080, os_type: str = "auto") -> Flask:
     global _thread
     app = create_app(os_type=os_type)

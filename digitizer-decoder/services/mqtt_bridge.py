@@ -1,4 +1,4 @@
-"""MQTT transport for stable-weight request / response + live UI status."""
+"""MQTT transport for live digitizer weight and dashboard status."""
 
 from __future__ import annotations
 
@@ -27,9 +27,10 @@ def _unique_client_id(base: str) -> str:
 
 class MqttBridge:
     """
-    Subscribe for weight requests; publish stable-weight JSON responses.
-    Publishes live weight only when the value changes.
-    Publishes retained status snapshots + periodic heartbeats for Mines-WB sync.
+    In MQTT mode the decoder only reads the digitizer and publishes it.
+    Non-zero values are published continuously. Zero is published once
+    until the value changes. A message on the request topic always
+    publishes the current value on the weight topic.
     """
 
     def __init__(
@@ -46,6 +47,7 @@ class MqttBridge:
         client_id: str = "gmdc-digitizer-decoder",
         on_status: Optional[Callable[[str], None]] = None,
         heartbeat_interval_sec: float = HEARTBEAT_INTERVAL_SEC,
+        weight_stream: bool = False,
     ) -> None:
         self.runtime = runtime
         self.broker_host = broker_host
@@ -63,6 +65,7 @@ class MqttBridge:
         self.client_id = self.base_client_id
         self.on_status = on_status
         self.heartbeat_interval_sec = max(1.0, float(heartbeat_interval_sec or 2.0))
+        self.weight_stream = bool(weight_stream)
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._lock = threading.RLock()
@@ -137,34 +140,46 @@ class MqttBridge:
         self,
         weight: Optional[float],
         *,
-        stable: bool = False,
-        stable_weight: Optional[float] = None,
         force: bool = False,
+        source: str = "live",
     ) -> None:
-        """Publish live weight only when the numeric value changes (or force)."""
+        """Publish live digitizer readings.
+
+        Non-zero values are published on every update. A zero reading is
+        published once and then held until the value changes. A request on
+        the subscribe topic always publishes the current value.
+        """
+        if not self.weight_stream:
+            return
         client = self._client
         if not client or not self._connected:
             return
         if weight is None and not force:
             return
+        numeric: Optional[float] = None
+        if weight is not None:
+            try:
+                numeric = float(weight)
+            except (TypeError, ValueError):
+                return
         with self._lock:
             prev = self._last_published_weight
-            if (
+            zero_already_sent = (
                 not force
+                and numeric == 0.0
                 and prev is not None
-                and weight is not None
-                and float(prev) == float(weight)
-            ):
+                and float(prev) == 0.0
+            )
+            if zero_already_sent:
                 return
-            self._last_published_weight = weight
+            if numeric is not None:
+                self._last_published_weight = numeric
         payload = {
-            "statusCode": 200,
-            "current_weight": weight,
-            "weight": weight,
-            "stable": bool(stable),
-            "stable_weight": stable_weight if stable else None,
+            "statusCode": 200 if numeric is not None else 503,
+            "current_weight": numeric,
+            "weight": numeric,
             "ts": time.time(),
-            "source": "live",
+            "source": source,
         }
         try:
             client.publish(
@@ -173,7 +188,7 @@ class MqttBridge:
                 qos=0,
                 retain=False,
             )
-            logger.debug("MQTT weight change -> %s %s", self.topic_publish, payload)
+            logger.debug("MQTT weight -> %s %s", self.topic_publish, payload)
         except Exception as exc:
             logger.warning("MQTT weight publish failed: %s", exc)
 
@@ -246,18 +261,19 @@ class MqttBridge:
     def _on_connect(self, client, userdata, flags, rc):  # noqa: ANN001
         self._connected = rc == 0
         if rc == 0:
-            client.subscribe(self.topic_subscribe, qos=0)
-            self._set_status(
-                f"MQTT connected — subscribed {self.topic_subscribe}"
-            )
+            if self.weight_stream:
+                client.subscribe(self.topic_subscribe, qos=0)
+                self._set_status(
+                    f"MQTT connected — subscribed {self.topic_subscribe}"
+                )
+            else:
+                self._set_status("MQTT connected")
             self.publish_ui_status()
-            snap = self.runtime.snapshot()
-            self.publish_weight_if_changed(
-                snap.get("current_weight"),
-                stable=bool(snap.get("stable")),
-                stable_weight=snap.get("stable_weight"),
-                force=True,
-            )
+            if self.weight_stream:
+                snap = self.runtime.snapshot()
+                current = snap.get("current_weight")
+                if current is not None:
+                    self.publish_weight_if_changed(current, force=True, source="live")
         else:
             self._set_status(f"MQTT connect rc={rc}")
 
@@ -266,46 +282,15 @@ class MqttBridge:
         self._set_status(f"MQTT disconnected rc={rc}")
 
     def _on_message(self, client, userdata, msg):  # noqa: ANN001
+        if not self.weight_stream:
+            return
+        if (msg.topic or "") != self.topic_subscribe:
+            return
         raw = msg.payload.decode("utf-8", errors="replace") if msg.payload else ""
         logger.info("MQTT request topic=%s payload=%s", msg.topic, raw[:200])
-        if not self._is_weight_request(raw):
-            return
-        result = self.runtime.wait_stable()
-        body_obj = dict(result) if isinstance(result, dict) else {"result": result}
-        body_obj.setdefault("ts", time.time())
-        body_obj["source"] = "request"
-        body = json.dumps(body_obj)
-        try:
-            client.publish(self.topic_publish, body, qos=0, retain=False)
-            logger.info("MQTT response -> %s %s", self.topic_publish, body)
-            weight = None
-            for key in ("stable_weight", "current_weight", "weight"):
-                if body_obj.get(key) is not None:
-                    try:
-                        weight = float(body_obj[key])
-                        break
-                    except (TypeError, ValueError):
-                        continue
-            if weight is not None:
-                with self._lock:
-                    self._last_published_weight = weight
-        except Exception as exc:
-            logger.error("MQTT response publish failed: %s", exc)
-
-    @staticmethod
-    def _is_weight_request(raw: str) -> bool:
-        text = (raw or "").strip()
-        if not text:
-            return True
-        if text.lower() in ("read_stable_weight", "weight", "stable"):
-            return True
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return True
-        if not isinstance(data, dict):
-            return True
-        action = str(data.get("action") or data.get("cmd") or "").strip().lower()
-        if not action:
-            return True
-        return action in ("read_stable_weight", "weight", "stable", "get_weight")
+        snap = self.runtime.snapshot()
+        self.publish_weight_if_changed(
+            snap.get("current_weight"),
+            force=True,
+            source="request",
+        )

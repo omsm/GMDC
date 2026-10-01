@@ -81,6 +81,7 @@ class AppContext:
                 cfg.get("client_id") or "gmdc-digitizer-decoder"
             ),
             on_status=self._on_mqtt_status,
+            weight_stream=(mode == "mqtt"),
         )
         self.mqtt.set_status_provider(self.status_snapshot)
         ok = self.mqtt.start()
@@ -99,12 +100,8 @@ class AppContext:
         if not (self.mqtt and self.mqtt.connected):
             return
         snap = self.runtime.snapshot()
-        # Live weight topic: publish only when the numeric weight changes.
-        self.mqtt.publish_weight_if_changed(
-            snap.get("current_weight"),
-            stable=bool(snap.get("stable")),
-            stable_weight=snap.get("stable_weight"),
-        )
+        # MQTT mode publishes live readings. Zero is sent once until it changes.
+        self.mqtt.publish_weight_if_changed(snap.get("current_weight"))
         # Throttle UI status publishes (~10 Hz) to avoid flooding Mosquitto
         now = time.monotonic()
         with self._status_publish_lock:

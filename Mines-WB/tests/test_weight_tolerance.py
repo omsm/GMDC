@@ -20,6 +20,7 @@ from services.oci_client import (  # noqa: E402
     replace_truck_details_tolerance,
     rto_weight_band,
     under_or_over_type,
+    vadhghat_weight_delta,
     weight_within_rto_tolerance,
 )
 
@@ -103,6 +104,16 @@ class TestRtoWeightBand(unittest.TestCase):
         self.assertTrue(weight_within_rto_tolerance(44750, VADAGHAT_DETAILS)[0])
         self.assertFalse(weight_within_rto_tolerance(44750, TARE_DETAILS)[0])
 
+    def test_vadhghat_delta_is_minus_only(self):
+        details = (
+            "V|34161fa820328ee847f17ca0|GJ12CT8178|45000|1500|50|"
+            "9582209263|10.80.118.140|GJ12CT8177"
+        )
+        self.assertEqual(vadhghat_weight_delta(45000, details), ("o", 0))
+        self.assertEqual(vadhghat_weight_delta(44950, details), ("o", 0))
+        self.assertEqual(vadhghat_weight_delta(45010, details), ("o", 10))
+        self.assertEqual(vadhghat_weight_delta(44940, details), ("u", 10))
+
     def test_unknown_prefix_skips_check(self):
         ok, _ = weight_within_rto_tolerance(
             99999,
@@ -147,6 +158,12 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
         ctx.oci.vadhghat_weight_adjustment.return_value = OCIResponse(
             ok=True, status=200, http_status=200, message="adjusted"
+        )
+        ctx.oci.vadhghat_weight_details.return_value = OCIResponse(
+            ok=True, status=200, http_status=200
+        )
+        ctx.oci.vadhghat_boom_close.return_value = OCIResponse(
+            ok=True, status=200, http_status=200
         )
         ctx.digitizer = MagicMock()
         ctx.digitizer.read_stable_weight.return_value = {
@@ -235,7 +252,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.weight_confirm.assert_called()
         ctx.oci.weight_details.assert_not_called()
         ctx.oci.boom_close.assert_not_called()
-        ctx.display.send.assert_any_call("TARE WT ERR")
+        ctx.display.send.assert_any_call("TARE WT ERR", side=None)
         ctx.voice.weight_out_of_tolerance.assert_called_with("T")
         ctx.voice.speak_weight.assert_not_called()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
@@ -404,9 +421,12 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         wf, ctx = self._make_workflow(VADAGHAT_DETAILS, 44750)
         wf._final_weight_and_details(boom_close_after=VADAGHAT_DETAILS)
         ctx.oci.vadhghat_weight_adjustment.assert_not_called()
-        ctx.oci.weight_details.assert_called_once()
-        ctx.oci.boom_close.assert_called_once()
+        ctx.oci.weight_details.assert_not_called()
+        ctx.oci.boom_close.assert_not_called()
+        ctx.oci.vadhghat_weight_details.assert_called_once()
+        ctx.oci.vadhghat_boom_close.assert_called_once()
         ctx.voice.speak_weight.assert_called_once_with("g", 44750.0)
+        ctx.voice.move_forward.assert_called()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_vadaghat_over_weight_calls_adjustment_skips_boom_close(self):
@@ -422,9 +442,14 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(call_kw["truck_details"], VADAGHAT_DETAILS)
         ctx.oci.weight_details.assert_not_called()
         ctx.oci.boom_close.assert_not_called()
+        ctx.oci.vadhghat_weight_details.assert_not_called()
+        ctx.oci.vadhghat_boom_close.assert_not_called()
         ctx.oci.weight_confirm.assert_not_called()
-        ctx.voice.weight_out_of_tolerance.assert_called_with("V")
+        ctx.voice.weight_out_of_tolerance.assert_not_called()
+        ctx.voice.vadhghat_difference.assert_any_call("o", 1000, intro=True)
+        ctx.voice.move_forward.assert_not_called()
         ctx.voice.speak_weight.assert_not_called()
+        ctx.display.send.assert_any_call("Overweight@1000Kg", side=None)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_vadaghat_under_weight_calls_adjustment_with_u(self):
@@ -437,8 +462,13 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(call_kw["weight"], 44000)
         ctx.oci.weight_details.assert_not_called()
         ctx.oci.boom_close.assert_not_called()
-        ctx.voice.weight_out_of_tolerance.assert_called_with("V")
+        ctx.oci.vadhghat_weight_details.assert_not_called()
+        ctx.oci.vadhghat_boom_close.assert_not_called()
+        ctx.voice.weight_out_of_tolerance.assert_not_called()
+        ctx.voice.vadhghat_difference.assert_any_call("u", 500, intro=True)
+        ctx.voice.move_forward.assert_not_called()
         ctx.voice.speak_weight.assert_not_called()
+        ctx.display.send.assert_any_call("Underweight@500Kg", side=None)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_weight_details_non_200_does_not_announce(self):

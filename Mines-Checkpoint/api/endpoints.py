@@ -133,7 +133,7 @@ def register_routes(app: Flask) -> None:
 
         return _accept_rfid_payload(payload, "/rfid_data")
 
-    @app.post("/rfid_management")
+    @app.route("/rfid_management", methods=["GET", "POST"])
     def rfid_management():
         """Handle RFID management / keepalive requests from the reader."""
         try:

@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}GMDC - Device Discovery{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<header class="header">
+    <div class="header-brand">
+        <i class="bi bi-cpu"></i>
+        <span>{{ app_name }}</span>
+    </div>
+    <div class="header-actions">
+        <button type="button" class="header-back-btn" onclick="goBack()" title="Back to Checklist">
+            <i class="bi bi-chevron-left"></i>
+            <span>Back</span>
+        </button>
+        <button type="button" class="header-version-btn" id="versionInfoBtn" title="Application version" onclick="showAppVersionInfo()">
+            <i class="bi bi-info-circle"></i>
+            <span>Version</span>
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+            <i class="bi bi-sun-fill" id="themeIcon"></i>
+        </button>
+    </div>
+</header>
+
+<div class="discovery-page">
+    <div class="discovery-header">
+        <h1><i class="bi bi-search"></i> Device Discovery</h1>
+        <p>Scanning network and detecting connected devices...</p>
+    </div>
+    
+    <div class="discovery-progress-card">
+        <div class="progress-section" id="scanProgressSection">
+            <div class="progress-header">
+                <div class="progress-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="scanProgress">0</div>
+                        <div class="stat-label">Scanned</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="scanTotal">0</div>
+                        <div class="stat-label">Total</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="scanFound">0</div>
+                        <div class="stat-label">Found</div>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="scanProgressBar"></div>
+            </div>
+            <div class="current-ip" id="scanCurrentIp">Initializing scan...</div>
+        </div>
+    </div>
+    
+    <div class="discovery-results hidden" id="discoveryResults">
+        <div class="results-summary">
+            <div class="summary-card">
+                <i class="bi bi-hdd-network"></i>
+                <div class="summary-value" id="networkDeviceCount">0</div>
+                <div class="summary-label">Network Devices</div>
+            </div>
+            <div class="summary-card">
+                <i class="bi bi-usb-drive"></i>
+                <div class="summary-value" id="comPortCount">0</div>
+                <div class="summary-label">COM Ports</div>
+            </div>
+        </div>
+        
+        <div class="results-tables">
+            <div class="results-table-container">
+                <h3><i class="bi bi-hdd-network"></i> Network Devices</h3>
+                <table class="results-table" id="networkDevicesTable">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Device Type</th>
+                            <th>Open Ports</th>
+                        </tr>
+                    </thead>
+                    <tbody id="networkDevicesBody">
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="results-table-container">
+                <h3><i class="bi bi-usb-drive"></i> COM Ports</h3>
+                <table class="results-table" id="comPortsTable">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comPortsBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="discovery-footer">
+            <button class="btn btn-secondary" onclick="goBack()">
+                <i class="bi bi-arrow-left"></i> Back
+            </button>
+            <button class="btn btn-secondary" onclick="rescan()">
+                <i class="bi bi-arrow-clockwise"></i> Rescan
+            </button>
+            <button class="btn btn-primary btn-lg" onclick="proceedToConfig()">
+                <i class="bi bi-gear"></i> Continue to Configuration
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/discover.js') }}"></script>
+{% endblock %}
+

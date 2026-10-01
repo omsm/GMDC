@@ -7,11 +7,11 @@ Same serial indexing + stable-weight logic, with a **Mines-Checkpoint / Mines-WB
 | Mode | Behavior |
 |------|----------|
 | **API** | `POST/GET /read_stable_weight` → `{"statusCode":200,"stable_weight":…}` (Mines-WB compatible) |
-| **MQTT** | Subscribe on request topic → wait stable → publish JSON on response topic |
+| **MQTT** | Publish live digitizer readings. Non-zero values go out continuously. Zero is sent once until the weight changes. A message on `topic_subscribe` publishes the current value on `topic_publish`. |
 
 The original `digitizer-app/` PySide UI remains available unchanged.
 
-Product version: **1.15** (see root [`version.md`](../version.md)).
+Product version: **1.16** (see root [`version.md`](../version.md)).
 
 ## Layout
 
@@ -53,7 +53,7 @@ Serial reads are fixed **40-byte** chunks (not line-based). Live raw/weight can 
 
 Retained snapshots on hardcoded topic `gmdc/digitizer/status` over broker WebSocket **:9001** (UI) and TCP **:1883** (Mines-WB). Status includes a **heartbeat every ~2s** so Mines-WB can detect a hung decoder. The status topic is not configurable.
 
-Live weight is published on `gmdc/digitizer/weight` **only when the numeric weight changes** (plus request/response replies). The UI connects with Paho; HTTP `/api/status` is used only for a one-shot bootstrap if MQTT is unavailable.
+Live weight is published on `gmdc/digitizer/weight` in MQTT mode. Non-zero readings are published continuously. A zero reading is published once, then held until the weight changes. A message on the request topic publishes the current value on that same topic, whatever it is. Stable weight is decided by Mines-WB, not by this decoder.
 
 **Site layout:** run Mosquitto on the Mines-WB Mac; point decoder `communication.mqtt.broker_host` at that Mac’s LAN IP.
 
@@ -61,8 +61,8 @@ Live weight is always shown: **red** while unstable, **green** when stable. Stab
 
 ### MQTT weight topics
 
-- **Subscribe** (`topic_subscribe`): empty `{}` or `{"action":"read_stable_weight"}`  
-- **Publish** (`topic_publish`): `{"statusCode":200,"stable_weight":43000.0}`
+- **Subscribe** (`topic_subscribe`): any message publishes the current weight
+- **Publish** (`topic_publish`): `{"statusCode":200,"current_weight":43000.0,"weight":43000.0}`
 
 ## HTTP (always available on the dashboard port)
 

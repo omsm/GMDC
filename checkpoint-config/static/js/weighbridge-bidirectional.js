@@ -38,7 +38,7 @@ function getTlStatusElementIds(directionKey, location) {
             : ['exitTLStatus', 'exitTLRelayStatus', 'exitTLExtStatus'];
     }
     const p = tlIdPrefix(directionKey);
-    return [`${p}_${location}TLStatus`];
+    return [`${p}_${location}TLStatus`, `${p}_${location}TLRelayStatus`];
 }
 
 function getTlPinElementId(directionKey, location, color) {
@@ -92,8 +92,8 @@ function applyWeighbridgeLayoutUI() {
     };
     setDisplay('rfidUnidirectionalBlock', !bi);
     setDisplay('rfidBidirectionalBlock', bi);
-    setDisplay('tlUnidirectionalBlock', !bi);
-    setDisplay('tlBidirectionalBlock', bi);
+    if (typeof applyTrafficLightModeLayout === 'function') applyTrafficLightModeLayout();
+    if (typeof applyCameraUiForProfile === 'function') applyCameraUiForProfile();
     const navLabel = document.getElementById('navRfidLabel');
     if (navLabel) navLabel.textContent = bi ? 'RFID Readers' : 'RFID Reader';
     if (bi) {
@@ -102,6 +102,7 @@ function applyWeighbridgeLayoutUI() {
     } else if (typeof onRfidModeChange === 'function') {
         onRfidModeChange();
     }
+    if (typeof syncVisibleIoEnableToggles === 'function') syncVisibleIoEnableToggles();
 }
 
 function syncWeighbridgeLayoutFromConfig() {
@@ -241,7 +242,8 @@ function updateBidirectionalRfidSectionCompletion() {
     if (aOk && bOk) {
         if (typeof markSectionValidated === 'function') markSectionValidated('rfid');
     } else if (typeof markSectionNotValidated === 'function') {
-        markSectionNotValidated('rfid');
+        // Keep a saved reader validated. A full invalidate clears both entries.
+        markSectionNotValidated('rfid', { persist: false });
     }
     if (typeof loadCompletionStatus === 'function') {
         loadCompletionStatus();
@@ -294,6 +296,15 @@ function populateBidirectionalTrafficLights() {
                 if (redEl && pins.red_pin != null) redEl.value = pins.red_pin;
                 if (greenEl && pins.green_pin != null) greenEl.value = pins.green_pin;
             }
+            if (tlMode === 'relay' && tl.relay?.[dir]?.[loc]) {
+                const pinEl = document.getElementById(`${prefix}_${loc}TLRelayPin`);
+                if (pinEl && tl.relay[dir][loc].pin != null) pinEl.value = tl.relay[dir][loc].pin;
+            }
+            const enableId = tlMode === 'relay'
+                ? `${prefix}_${loc}TLRelayEnabled`
+                : `${prefix}_${loc}TLEnabled`;
+            const enableEl = document.getElementById(enableId);
+            if (enableEl) enableEl.checked = info.enabled === true || info.validated === true;
             applyTrafficLightValidatedFromConfig(loc, info.validated, dir);
         });
     });
@@ -461,29 +472,39 @@ async function saveRfidDirectionConfig(ip, port, mode, rfidMake, rfidModel, vali
     }
     const otherKey = directionKey === 'entry_a' ? 'entry_b' : 'entry_a';
 
-    let response;
-    try {
-        response = await fetch('/api/config/rfids', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-    } catch (error) {
-        console.error('[Save RFID Config] Error:', error);
-        showToast('error', 'Error', 'Failed to save RFID configuration');
-        return;
-    }
+    const postRfids = async () => {
+        let response;
+        try {
+            response = await fetch('/api/config/rfids', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (error) {
+            console.error('[Save RFID Config] Error:', error);
+            showToast('error', 'Error', 'Failed to save RFID configuration');
+            return null;
+        }
 
-    let body = {};
-    try {
-        body = await response.json();
-    } catch (e) { /* ignore */ }
+        let body = {};
+        try {
+            body = await response.json();
+        } catch (e) { /* ignore */ }
 
-    if (!response.ok || body.status === 400) {
-        showToast('error', 'Save Failed', body.message || 'Failed to save RFID configuration');
-        if (typeof markSectionNotValidated === 'function') markSectionNotValidated('rfid');
-        return;
-    }
+        if (!response.ok || body.status === 400) {
+            showToast('error', 'Save Failed', body.message || 'Failed to save RFID configuration');
+            if (typeof markSectionNotValidated === 'function') {
+                markSectionNotValidated('rfid', { persist: false });
+            }
+            return null;
+        }
+        return body;
+    };
+
+    const saved = typeof withSectionSaveGuard === 'function'
+        ? await withSectionSaveGuard('rfid', postRfids)
+        : await postRfids();
+    if (!saved) return;
 
     config.rfids = payload;
     if (payload.entry_a?.ip) {
@@ -508,7 +529,7 @@ async function saveRfidDirectionConfig(ip, port, mode, rfidMake, rfidModel, vali
                 navigateToNext('rfid');
             }
         } else {
-            markSectionNotValidated('rfid');
+            markSectionNotValidated('rfid', { persist: false });
             showToast(
                 'success',
                 'Saved',
@@ -517,7 +538,7 @@ async function saveRfidDirectionConfig(ip, port, mode, rfidMake, rfidModel, vali
         }
     } else {
         applyBidirectionalRfidValidatedFromConfig(directionKey, false, mode);
-        markSectionNotValidated('rfid');
+        markSectionNotValidated('rfid', { persist: false });
     }
     updateBidirectionalRfidSectionCompletion();
     return true;
@@ -644,7 +665,7 @@ function buildBidirectionalTrafficLightsForSave(outputMode, configData) {
             ['entry', 'exit'].forEach((loc) => {
                 const [redDefault, greenDefault] = defaultPins[loc];
                 const validated = getTrafficLightValidatedForSave(loc, dir);
-                const active = typeof deviceUsesIoPin === 'function' && deviceUsesIoPin(validated);
+                const active = validated === true;
                 tl.direct[dir][loc] = {
                     red_pin: active
                         ? (document.getElementById(`${prefix}_${loc}RedPin`)?.value || redDefault)
@@ -656,6 +677,29 @@ function buildBidirectionalTrafficLightsForSave(outputMode, configData) {
                 tl[dir][loc] = {
                     make: document.getElementById(`${prefix}_${loc}TLMake`)?.value.trim() || '',
                     model: document.getElementById(`${prefix}_${loc}TLModel`)?.value.trim() || '',
+                    enabled: active || validated === false,
+                    validated
+                };
+            });
+        });
+    } else {
+        tl.relay = { entry_a: { entry: {}, exit: {} }, entry_b: { entry: {}, exit: {} } };
+        const relayDefaults = { entry_a: { entry: '0', exit: '1' }, entry_b: { entry: '2', exit: '3' } };
+        ['entry_a', 'entry_b'].forEach((dir) => {
+            const prefix = tlIdPrefix(dir);
+            ['entry', 'exit'].forEach((loc) => {
+                const validated = getTrafficLightValidatedForSave(loc, dir);
+                const active = validated === true;
+                tl.relay[dir][loc] = {
+                    pin: active
+                        ? (document.getElementById(`${prefix}_${loc}TLRelayPin`)?.value || relayDefaults[dir][loc])
+                        : '',
+                    description: 'NO=Green, NC=Red'
+                };
+                tl[dir][loc] = {
+                    make: '',
+                    model: '',
+                    enabled: active || validated === false,
                     validated
                 };
             });
@@ -695,6 +739,9 @@ function allRequiredTrafficLightsSatisfied() {
 
     const _getTrafficLightValidatedForSave = getTrafficLightValidatedForSave;
     getTrafficLightValidatedForSave = function (location, directionKey) {
+        if (typeof isTrafficLightEnabled === 'function' && !isTrafficLightEnabled(location, directionKey)) {
+            return null;
+        }
         if (!directionKey) return _getTrafficLightValidatedForSave(location);
         const key = getTlValidatedStateKey(directionKey, location);
         return ioTestStatus[key];
@@ -744,6 +791,9 @@ function allRequiredTrafficLightsSatisfied() {
         }
         if (!directionKey) return _skipTrafficLightTest(location);
         applyTrafficLightValidatedFromConfig(location, null, directionKey);
+        if (typeof persistTrafficLightDevice === 'function') {
+            persistTrafficLightDevice(location, directionKey);
+        }
         const label = RFID_DIRECTION_UI[directionKey]?.label || directionKey;
         showToast('warning', 'Skipped', `${label} ${location} traffic light test skipped (Debug mode)`);
     };
@@ -1023,6 +1073,9 @@ function allRequiredTrafficLightsSatisfied() {
                     if (statusEl) { statusEl.textContent = `${color} OK`; statusEl.className = 'device-status success'; }
                     ioTestStatus[gateKey] = true;
                     ioTestStatus[validatedKey] = true;
+                    if (typeof persistTrafficLightDevice === 'function') {
+                        persistTrafficLightDevice(location, directionKey);
+                    }
                     showToast('success', 'Test Passed', `${location} ${color} light working!`);
                 } else {
                     if (statusEl) { statusEl.textContent = 'Failed'; statusEl.className = 'device-status error'; }

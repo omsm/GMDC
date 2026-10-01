@@ -26,6 +26,21 @@ class DisplayProtocolTests(unittest.TestCase):
         self.assertEqual(display_info_topic("192.168.1.70"), "display_info/192.168.1.70")
         self.assertEqual(pcb_id_topic("192.168.1.70"), "pcb_id/192.168.1.70")
 
+    def test_bi_transaction_topic_is_one_side(self):
+        ips = ["10.0.0.1", "10.0.0.2"]
+        self.assertEqual(
+            data_info_topics_for_ips(ips, pcb_mode="b", side="a"),
+            ["data_info/a"],
+        )
+        self.assertEqual(
+            data_info_topics_for_ips(ips, pcb_mode="b", side="b"),
+            ["data_info/b"],
+        )
+        self.assertEqual(
+            data_info_topics_for_ips(ips, pcb_mode="b"),
+            ["data_info/a", "data_info/b"],
+        )
+
     def test_bi_tx_topics_both(self):
         ips = ["10.0.0.1", "10.0.0.2"]
         self.assertEqual(
