@@ -1,5 +1,5 @@
 # Application codebase analysis
-_Exported on 30/09/2026 at 4:08:46 GMT+5:30 from Cursor (3.22.7)_
+_Exported on 02/10/2026 at 1:31:09 GMT+5:30 from Cursor (3.22.12)_
 
 ---
 
@@ -5242,4 +5242,707 @@ Documentation is already at **1.15** (2026-09-30).
 - `version.md` lists 1.15 as the current release, including the liquid-glass UI, RFID ping status, and the stacked Transaction Flow layout.
 - `README.md` and `digitizer-decoder/README.md` point at 1.15.
 - `Mines-Checkpoint/VERSION` and `Mines-WB/VERSION` are `1.15.0`.
+
+---
+
+**User**
+
+In Checkpoint-config, the below changes are required. I am implementing the WB - Bidirectional, and the following changes are needed.
+1. In Camera, 2 front cameras (Front Camera - Entry A and Front Camera - Entry B). Put the Skip for Top Camera
+2. In display everything works. But the data_info if published to a twice. I want once published to data_info/a, then publish to data_info/b.
+3. In I/O controller there should be 4 traffic lights with skip option. But now shows only 2. And in boom barrier, the UX is not understandable. Change the UX of traffic light and boom barrier so that at first if required enable toogle button will be pressed. On turning on, the pin input will be editable and the relay on /off button can be clickable. If off then all will be disabled and in background will be in skip mode. If enable, then the configuration of the device will be done
+
+---
+
+**Cursor**
+
+Weigh Bridge bidirectional needs two front cameras, display data published once to `data_info/a` then `data_info/b`, and a clearer enable/skip flow for the four traffic lights and boom barriers. I’ll look at how those modules work now.
+
+Bidirectional weighbridge currently publishes `data_info/a` once per display, and the I/O page only exposes two lights. I’ll add the two front cameras, publish each data topic once, and make Enable the switch that opens or skips each light and boom.
+
+Weigh Bridge bidirectional setup in checkpoint-config now matches the three changes you asked for.
+
+**Cameras.** A bidirectional weighbridge shows Top Camera with a Skip button, plus Front Camera - Entry A and Front Camera - Entry B. Skipping the top camera counts as done. Both front cameras still have to pass Check & Save. A one-direction weighbridge stays Top plus a single Front camera.
+
+**Display.** Each display publishes one topic. Entry A publishes `data_info/a` once, then Entry B publishes `data_info/b` once. The earlier check was sending `data_info/a` from both displays.
+
+**Traffic lights and boom barriers.** Bidirectional direct mode and relay mode each show four lights: Entry A and Entry B, entry and exit. Every light and both boom barriers start with Enable off, which skips that device: pins and test buttons stay locked. Turn Enable on and the pins become editable and Red/Green or Open/Close can be used. That light or barrier then has to be configured.
+
+---
+
+**User**
+
+<timestamp>Wednesday, Sep 30, 2026, 11:08 AM (UTC+5:30)</timestamp>
+<system_notification>
+The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
+
+<task>
+kind: shell
+status: error
+task_id: 77814
+title: Start bidirectional devices preview server
+tool_call_id: call-5d471013-0404-4362-9c3d-ba6019bbe851-56
+fc_20a24e6a-b092-9a81-b15b-93d62596a750_0
+detail: exit_code=143
+output_path: /Users/osm/.cursor/projects/Users-osm-Desktop-new-IoT/terminals/77814.txt
+</task>
+</system_notification>
+<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
+
+---
+
+**Cursor**
+
+The preview server used to check the bidirectional weighbridge page was stopped after that check. Exit code 143 is from that stop. The camera, display, and I/O changes are in place.
+
+---
+
+**User**
+
+in the I/O Controller help modal, please add a temporary button named "DEBUG PAGE" When clicked according to the setuo like bi-directional/uni-directional, output mode type will be shown. This button we will delete later
+
+---
+
+**Cursor**
+
+I'll add a temporary DEBUG PAGE button on the I/O Controller help modal that opens the matching traffic-light and boom layout for the current direction and output mode.
+
+The help modal is shared, so the button will appear only for I/O Controller and open the pin layout that matches the current direction and output mode.
+
+The I/O Controller help modal now has a temporary **DEBUG PAGE** button. It only appears on that help screen.
+
+Clicking it closes the help and opens the pin page for the current setup:
+
+- **Bidirectional** shows the four traffic lights (Entry A and Entry B, entry and exit).
+- **Unidirectional** shows the two traffic lights.
+- **Direct** or **Relay** follows the Output Mode already selected on the page.
+
+The button is marked temporary so it can be removed later.
+
+---
+
+**User**
+
+<timestamp>Wednesday, Sep 30, 2026, 11:22 AM (UTC+5:30)</timestamp>
+<system_notification>
+The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
+
+<task>
+kind: shell
+status: error
+task_id: 77815
+title: Start devices page preview server
+tool_call_id: call-4a908059-df06-449b-b368-2000d94aa999-130
+fc_360d26b4-6c5d-902d-b1f3-f88e544b0a29_1
+detail: exit_code=143
+output_path: /Users/osm/.cursor/projects/Users-osm-Desktop-new-IoT/terminals/77815.txt
+</task>
+</system_notification>
+<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
+
+---
+
+**Cursor**
+
+The preview used to check the DEBUG PAGE button was stopped after that check. Exit code 143 is from that stop. The button is on the I/O Controller help modal.
+
+---
+
+**User**
+
+THe content div I think, there is space left at the right. You can consume the enitre width so that design will not look empty
+
+---
+
+**Cursor**
+
+The content area is capped, which leaves empty space on the right. I’ll let it use the full width beside the sidebar.
+
+The content column stops at 960px, so wide screens leave a blank strip beside the sidebar. I’ll let that column fill the remaining width.
+
+The main content column now uses the full width beside the sidebar. It was capped at 960px, which left the empty strip on the right. Cards and fields stretch across that space, with the same padding as before.
+
+---
+
+**User**
+
+<timestamp>Wednesday, Sep 30, 2026, 11:28 AM (UTC+5:30)</timestamp>
+<system_notification>
+The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
+
+<task>
+kind: shell
+status: error
+task_id: 77816
+title: Start preview to check content width
+tool_call_id: call-2693821c-6db4-49a0-88ba-fb64f9a69a25-163
+fc_c50ffe6b-b890-95c8-8a2c-7e05cd3c22b1_1
+detail: exit_code=143
+output_path: /Users/osm/.cursor/projects/Users-osm-Desktop-new-IoT/terminals/77816.txt
+</task>
+</system_notification>
+<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
+
+---
+
+**Cursor**
+
+The preview used to check the content width was stopped after that check. Exit code 143 is from that stop. The main column now fills the space beside the sidebar.
+
+---
+
+**User**
+
+tl-config-grid
+Currently in all the cases in a row only 2 cards are shown. but problem is since there is no 3rd card, it looks empty. Increase the width of the traffic lights cards. For the boom barrier also the cards keep it left to right instead of top bottom
+
+---
+
+**Cursor**
+
+Traffic-light cards are leaving a gap because the row only holds two, and boom barriers stack vertically. I’ll widen the light cards and put the barriers side by side.
+
+The traffic-light grid reserves a third column that stays empty, and the boom barriers stack because they have no side-by-side layout. I’ll make both rows two full-width cards.
+
+Traffic light cards now share the full row. Each pair sits side by side at half the width, so the empty third column is gone. This applies in both direct and relay mode, for unidirectional and bidirectional setups.
+
+Boom barriers sit left to right as well: Entry on the left, Exit on the right, in both direct and relay mode. On a narrow screen they stack again.
+
+---
+
+**User**
+
+<timestamp>Wednesday, Sep 30, 2026, 11:37 AM (UTC+5:30)</timestamp>
+<system_notification>
+The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
+
+<task>
+kind: shell
+status: error
+task_id: 77817
+title: Start preview for traffic light layout
+tool_call_id: call-95c63bd2-0f74-4073-bd29-3b5472b2f6dd-189
+fc_a2a6608c-e558-9830-938d-d39571539e11_0
+detail: exit_code=143
+output_path: /Users/osm/.cursor/projects/Users-osm-Desktop-new-IoT/terminals/77817.txt
+</task>
+</system_notification>
+<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
+
+---
+
+**Cursor**
+
+The preview used to check the traffic-light and boom-barrier layout was stopped after that check. Exit code 143 is from that stop. The light cards fill the row, and the boom barriers sit side by side.
+
+---
+
+**User**
+
+Now a main thing to change in checkpoint-config. Remeber the device_ip in json file. This IP will be autofilled with I/O Controller's IP if controller is ethernet based. If RTU based then here the com port will be saved. This will be writeen once in the I/O Configuration the Connection is established. Make sure this value should be equal to the I/O Controller IP, not the MAC mini IP
+
+---
+
+**Cursor**
+
+`device_ip` should be written from the I/O controller once that connection succeeds: the controller’s Ethernet IP, or the COM port when it is RTU. I’ll trace where the connection is saved so it does not pick up the Mac Mini address.
+
+`device_ip` is still filled from this Mac’s own address at Finish. I’ll store the I/O controller address when Connect succeeds, and stop Finish from replacing it.
+
+`device_ip` in `iot_configuration.json` is now written when the I/O controller connection succeeds, using the controller itself.
+
+- **Ethernet:** the I/O controller IP from the connection form is saved.
+- **MODBUS RTU:** the COM port is saved.
+- **Finish** no longer replaces that value with this Mac’s own LAN address. Loopback and this computer’s IP are not stored.
+
+Each device should be written to the JSON as soon as that device is configured, without waiting for the module’s Save Configuration button. I’ll find where those successes are held only in the page.
+
+I/O devices stay in the page until Save Configuration. I’ll write each sensor, traffic light, and boom barrier into the JSON as soon as that device passes or is skipped, and leave the module itself unfinished until Save.
+
+A successful sensor, traffic light, or boom barrier will be written to the configuration file as soon as that device passes or is skipped. The I/O module stays incomplete until Save Configuration.
+
+---
+
+**User**
+
+In the RFID during bi-directional, both the RFIDs are check and save clicked, with RFID data successfully read, but stilll it doesnt gets validated. Please check
+
+---
+
+**Cursor**
+
+Both bidirectional RFID readers can read a tag and still leave the section unvalidated. I’ll trace the check-and-save path and the completion rule that decides when RFID is done.
+
+A successful tag read was not keeping the RFID section validated. A partial save of one reader was clearing both readers, so the section stayed incomplete after both tags were read.
+
+A successful tag read on a bidirectional weighbridge was not keeping the RFID section validated. Saving one reader cleared both, so the sidebar stayed incomplete even after both tags were read.
+
+Two things were going wrong:
+
+- **Check & Save** showed "RFID tag data received" and stopped there. The reader was not stored as validated until a second Save click in the scan window. A successful read now saves that entry immediately.
+- Saving the first reader then marked the whole RFID section invalid. That cleared **both** Entry A and Entry B. The first reader's success was wiped before the second one could complete the section. A single saved reader now stays validated, and the section is marked complete only when both are.
+
+I checked this on the bidirectional devices page: after Entry A was saved it stayed validated, and after Entry B was saved the RFID item showed as validated. Saving one reader no longer clears the other.
+
+---
+
+**User**
+
+In the checkpoint-config, I am facing problem with the camera module. Since the top camera isn't available with me, I am skipping the top, then putting FRront camera 1 and 2 rtsp check and save, and success is also happening. But aftersometime the camera green tick vanishes, and after finish it shows camera is incomplete something like that
+Please check this validation. ALso bring the alignment in this way
+Uni-directional: Front, Top
+Bi-directional: Front-1, Front-2, Top
+instead of current top then front
+
+In rfid module, after the RFID is read during timer, in the modal it shows Reset or Cancel. This is creating confusion in UX. Instead of cancel, make it TIck icon and Done
+
+---
+
+**Cursor**
+
+The camera tick is dropping after a successful Front check when Top is skipped, and the camera cards are still ordered Top then Front. I’ll trace that validation path and the RFID modal buttons together.
+
+The camera tick drops because editing one RTSP field clears every camera, including a skipped top. I’ll keep each camera’s result on its own, put Front before Top, and change the RFID modal’s Cancel button to Done after a tag is read.
+
+The first camera card picked up the wrong id. I’ll put the cards back in Front, then Top order.
+
+The Camera tick was clearing itself after a successful Front check. Typing the next RTSP URL marked the whole Camera section invalid, which turned a skipped Top camera into “not done” and cleared the Front camera that had already passed. Finish then reported Camera as incomplete.
+
+Editing one camera now clears only that camera. A skipped Top stays skipped. With Top skipped and both Front cameras saved, the Camera step stays complete.
+
+The cards are also reordered:
+
+- **One direction:** Front, then Top
+- **Bidirectional:** Front-1, Front-2, then Top
+
+On the RFID scan window, a successful read now closes with a tick and **Done**. **Cancel** stays only while the timer is still waiting.
+
+---
+
+**User**
+
+next, in the display module, the data_info/a/b I want you to publish after 2 seconds. Not immediately after the pcb_id topic is published
+
+---
+
+**Cursor**
+
+The display handshake currently publishes `data_info` right after `pcb_id`. I’ll add a 2-second wait between those publishes for both Entry A and Entry B.
+
+`pcb_id` is published as soon as the display answers, and `data_info` goes out in the same step. I’ll wait 2 seconds after `pcb_id` before publishing `data_info/a` or `data_info/b`.
+
+During the display check, `data_info` is now published **2 seconds after** `pcb_id`, not in the same step.
+
+For each display the order is:
+
+1. Publish `pcb_id/{display IP}` (`a` for Entry A, `b` for Entry B).
+2. Wait 2 seconds.
+3. Publish `data_info/a` or `data_info/b` once.
+
+On a bidirectional weighbridge, Entry B does the same after Entry A: its own `pcb_id`, a 2-second wait, then `data_info/b`.
+
+---
+
+**User**
+
+Now lets work on digitizer decoder. In MQTT mode the digitizer data will be continously published. No need to do stable weight and 0 kg check. Publish everything, and publish only when the current digitizer value is not equal to previous value. If current and previous are same, then no need to publish. ALso a topic will e subscribed in this digitizer-decoder, when this topic is triggered, at that time the current weight will be published on the same topic, in which the previous publishing was happening
+
+---
+
+**Cursor**
+
+MQTT mode should stream every new digitizer reading, skip repeats, and also publish the current weight when a request topic arrives. I’ll look at how the decoder publishes today.
+
+MQTT mode still waits for a stable, non-zero weight before it answers a request. I’ll publish every new reading, including 0 kg, and send the current weight on the same topic when the request topic arrives.
+
+In MQTT mode the digitizer decoder now publishes every new reading, including **0 kg**, and it does not wait for a stable weight.
+
+- The weight topic is updated only when the current value is different from the previous one. A repeated reading is not sent again.
+- Any message on the request topic publishes the **current** weight immediately on that same weight topic, even if the value has not changed.
+
+API mode is unchanged and still waits for a stable weight.
+
+---
+
+**User**
+
+ALso check the Mines-Wb applciation. Previoiusly stable weight was not handeled, but now it will be handeled in the Mines-WB. digitizer decoder work is to read data from digitizer and publish it
+
+ALso the digitizer-decoder application will now publish the weight continously, but in case the digitizer is 0, then send once then stop. Once weight changes then publish. But make sure to publish whatever the condition the data maybe in case of digitizer-decoder subscribed topic is flagged
+
+---
+
+**Cursor**
+
+The decoder should only publish readings, with 0 kg sent once until the weight changes. Mines-WB will take over the stable-weight decision. I’ll check both sides and wire that split.
+
+The decoder will keep streaming live readings and send 0 kg only once. Mines-WB will decide when that stream is a stable weight.
+
+The digitizer decoder now only reads and publishes. Mines-WB decides when that stream is a stable weight.
+
+**Digitizer decoder (MQTT)**
+- Non-zero readings are published on every update, including repeats.
+- A zero reading is published once, then held until the value changes.
+- A message on the request topic always publishes the current value on the weight topic, including a repeated zero.
+
+**Mines-WB**
+- Stable weight is counted locally from the live stream. The decoder no longer supplies a stable flag.
+- The same non-zero value must arrive `digitizer_stable_count` times in a row (default 10). A change restarts the count. Zero never counts as stable.
+- `read_stable_weight` returns immediately when the stream is already stable. Otherwise it flags the decoder request topic and waits until that count is reached.
+
+---
+
+**User**
+
+great. Now implement a 0 weight check in the IDLE condition. i.e. before entry sensor is cut, the digitizer weight should be 0. If non 0 then announce check weighbridge /Users/osm/Desktop/new-IoT/Mines-WB/voice/error/error_start.wav + /Users/osm/Desktop/new-IoT/Mines-WB/voice/error/Digitizer_error.wav
+
+Then once entry sensor is cut, and till the vehicle reaches only the weighbridge sensor, if the weight becomes 0, then also announce the above and start truck exit flow
+
+One more thing. Remembder that in BI-Directional WB, the truck can enter from any side. So both the BBOM Barrier will be open, and entry traffic light of both sites will be green. But exit traffic light will be red
+
+
+---
+
+**Cursor**
+
+I'll look through the Mines-WB idle flow, the digitizer weight checks, and how bidirectional boom barriers and traffic lights are driven.
+
+The idle lane must stay at 0 kg, and a drop back to 0 before the truck is alone on the weighbridge sensor will send it out. On a bidirectional bridge, idle keeps both booms open, both entry lights green, and both exit lights red.
+
+The idle lane now checks for 0 kg, and a bidirectional weighbridge waits open on both sides.
+
+**Idle, before either approach sensor is cut.** If the live digitizer weight is above 0, the lane repeats `error_start.wav` and then `Digitizer_error.wav` until the weight returns to 0. A truck is not allowed to start while that warning is playing. The existing platform-sensor warning is unchanged when the weight is already 0.
+
+**After the approach sensor is cut, until the truck is on the weighbridge sensor alone.** A weight that stays 0 is normal, because the truck is not on the scale yet. If the weight rises and then falls back to 0 before the truck is only on the weighbridge sensor, the same announcement plays and the truck exit flow starts.
+
+**Bidirectional idle.** Both boom barriers stay open. The entry light on each side is green, and the exit light on each side is red. Once a truck commits to one side, the other side closes. On exit, the departure side's exit light turns green and that boom opens.
+
+---
+
+**User**
+
+One mroe thing to add. in Mines-WB, during IDLE condition i.e. Enter the Vehicle state, if the weight is not 0, and during this time if sensor 1 is active, then transaction shouldn't start and announce check weighbridge. Please check if implemented. If not, then implement
+
+---
+
+**Cursor**
+
+I'll check whether an active entry sensor during idle still starts a transaction when the weight is not zero.
+
+Sensor 1 still starts a transaction while the idle weight is above 0. The exit side already blocks that. I'll stop the entry side the same way and keep the check-weighbridge announcement.
+
+Sensor 1 was still starting a transaction while the idle weight was above 0. That is now blocked.
+
+During Enter the Vehicle, if the digitizer weight is not 0 and the entry sensor cuts, the lane stays idle and announces check weighbridge (`error_start.wav`, then `Digitizer_error.wav`). The transaction starts only after the weight is back to 0.
+
+---
+
+**User**
+
+then, since its bi-directional so which sensors cut will start the transaction?
+
+---
+
+**Cursor**
+
+I'll check which sensor cuts are allowed to start a transaction on a bidirectional weighbridge, including when the idle weight is not zero.
+
+On a bidirectional weighbridge, either approach sensor can start the transaction, and only when the idle weight is 0.
+
+- **Sensor 1 (entry)** starts the transaction from side A.
+- **Sensor 3 (exit)** starts the transaction from side B.
+- **Sensor 2 (weighbridge)** never starts a transaction. It only continues one that is already in progress, once the truck is on that sensor alone.
+
+If the idle weight is not 0, neither sensor 1 nor sensor 3 starts a transaction. The lane stays in Enter the Vehicle and announces check weighbridge until the weight returns to 0.
+
+---
+
+**User**
+
+one more thing. if you remember the RFID are being configured to run on 2 ports for bi-direc, and 1 port for uni/checkpoint, to give us data. I think in Mines_Checkpoint and WB that ports aren't getting opened, due to which the rfid data we arent getting. What I want is irrespective of application port, the ports of RFID configured needs to be opened
+
+---
+
+**Cursor**
+
+The RFID data ports should open from the reader configuration, separate from the application port. I'll check how Mines-Checkpoint and Mines-WB start those listeners.
+
+The application only listens on its own port, so the RFID ports from configuration never open. I'll open each configured RFID port in Mines-Checkpoint and Mines-WB, separate from the application port.
+
+The RFID ports from configuration now open on their own, separate from the application port.
+
+Mines-Checkpoint and a unidirectional weighbridge open the single reader port. A bidirectional weighbridge opens both reader ports, one for each side. `/rfid_data` and `/rfid_management` are served on those ports for as long as the application is running. If a reader port is already the application port, it is not opened a second time.
+
+---
+
+**User**
+
+one more thing. currently irrespective of any side vehicle enters all the dual devices like RFIDs, TL, displays both are getting published
+
+---
+
+**Cursor**
+
+A vehicle from one side is still driving both sides' RFID readers, traffic lights, and displays. I'll trace where those dual devices are published and limit them to the side the truck entered.
+
+A bidirectional transaction now stays on the side the truck entered.
+
+- **Display:** transaction text goes only to that side (`data_info/a` or `data_info/b`). Idle text still goes to both boards, because either side can enter.
+- **Traffic lights:** only that side’s lights follow the transaction. The other side stays on its idle pattern.
+- **RFID:** only that side’s reader is started. A tag posted on the other reader’s port is ignored.
+
+---
+
+**User**
+
+can you list me out only the test case for the checkpoint-config, Mines-Checkpoint and Mines-WB that I will test on the site. I want in-depth test cases of both software and hardware. Make me excel
+Sl No, Test Case, Status
+
+---
+
+**Cursor**
+
+I'll build a site test workbook from the current checkpoint-config, Mines-Checkpoint, and Mines-WB behavior, with software and hardware cases and a Status column you can fill on site.
+
+The site workbook will have one sheet per application, with only serial number, the test, and a blank status for you to fill.
+
+The site workbook is at `docs/Site_Test_Cases.xlsx`.
+
+It has three sheets, each with **Sl No**, **Test Case**, and a blank **Status** column:
+
+| Sheet | Cases |
+|---|---|
+| checkpoint-config | 23 |
+| Mines-Checkpoint | 22 |
+| Mines-WB | 24 |
+
+Each case is written for the lane: what to do on the software, what the hardware should do, and what must not happen. Status is empty so you can mark the result on site.
+
+---
+
+**User**
+
+okay now a addition. Remember the reset button. In some cases while the status_check API is being called, then pressing the reset button doesn't stop the transaction. Please check and tell me why
+
+---
+
+**Cursor**
+
+I'll trace the reset button against the status_check loop to see why a reset during that call does not stop the trip.
+
+Reset does not cancel a `status_check` call that is already in progress. When that call returns, the trip continues from the response.
+
+The poll loop only looks at the stop flag at the start of each round, then it blocks inside `update_truck_number()` until the cloud answers. Reset runs on another thread and cannot interrupt that request. After the answer arrives, the loop does not look at the flag again before it acts:
+
+- **vehicleStatus 1** returns success and the trip goes on to the weight and exit path.
+- **vehicleStatus 0** waits and polls again.
+- **vehicleStatus 2** waits, then takes the abort/exit path.
+
+In Mines-WB this is worse. `force_reset` sets the stop flag and then clears it before it returns:
+
+```1262:1286:Mines-WB/core/workflow.py
+        self._manual_stop.set()
+        ...
+        self._manual_stop.clear()
+```
+
+The loop in `_manual_update_loop` is still inside the HTTP call at that moment. When the call returns, the flag is already clear, and that loop never checks whether the state is still `MANUAL_UPDATE`. So the same thread starts the rest of the trip again, on top of the idle state the button just set. The loop also clears the flag itself when it starts, at line 1906.
+
+Mines-Checkpoint keeps the flag set, and the next loop does stop if the state is no longer `MANUAL_UPDATE`. It still misses a reset that happens during the call when the answer is vehicleStatus 1, because `_do_grant_entry` runs before the next check.
+
+---
+
+**User**
+
+okay now lets work on Vadhghat WB integration. Below is the API documentation for the VG WB automation. Can you check the logic and let me know if you have any questions.
+
+Also I want you to check and implement this for all the checkpoints. When ANPR is 2 case (is. ANPR ON and response 2, and ANPR is turned off from webpage), then invalid-truck-number and status_check should be called in loop just like the flow that is implemented when ANPR id enables and response 0/2
+
+API FLow: RFID Validation -> ANPR Validation with ANPR applciatiom -> ANPR Validation -> Check status (the loop API when ANPR is 0/2 case) -> Weight captured from Digitizer -> *Then 2 cases are here
+Case 1 (If weight is within tolerance): Weight details (this API will be called only when the current weight from digitizer is within tolerance i.e. between 45000 and 45000-50, no plus, only minus is allowed) -> Boom Close API (This will be called only when the Weight details api is called i.e. the digitizer weight is within tolerance)
+
+Case 2 (If weight is outside tolerance): Weight Adjustment (this API will be called only when the current weight from digitizer is outside tolerance i.e. less than 45000 or more than 45000-50). After this API is response I want to announce the difference weight to load or unload. If weight is overweight (ex according to api DOCUMENTATION > 45000), then at first calculate the difference weight (i.e. current weight - 45000), then play the audio error_buzzer + /Users/osm/Desktop/new-IoT/Mines-WB/voice/error/g100.wav + difference weightin KG. Then only the difference weight will be announced continously till the vehicle have exited successfully after boom opens. Here dont announce Move forward
+if underweight (ex according to api DOCUMENTATION < (45000-50)), then at first calculate the difference weight (i.e. (45000 - 50) - current weight), then play the audio error_buzzer + /Users/osm/Desktop/new-IoT/Mines-WB/voice/error/g101.wav + difference weightin KG. Then only the difference weight will be announced continously till the vehicle have exited successfully after boom opens. Here dont announce Move forward
+
+Then boom open, vehicle exits and the cycle starts again from the beginning.
+
+
+---------------------------------------------------------------------------------------------------
+RFID Validation: https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/rfid_tag 
+Payload: {  "rfid": "34161fa820328ee847f17ca0",  "device_ip": "10.80.118.140"}
+Response: {  "status": 200,  "process": "VADHGHAT",  "response_type": 1,  "message": "vadhghat RFID validated successfully.",  "truck_details": "V|34161fa820328ee847f17ca0|GJ12CT8178|45000|1500|50|9582209263|10.80.118.140|GJ12CT8177",  "slip_no": "9582209263",  "do_id": 2045432,  "vehicle_id": 222,  "driver_id": 101}
+---------------------------------------------------------------------------------------------------
+ANPR Validation with ANPR applciatiom: Keep it same as per currently happening
+
+
+---------------------------------------------------------------------------------------------------
+ANPR Validation: https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number 
+Payload: {  "vehicleNo_web": "GJ12CT8178",  "vehicleNo_anpr": "GJ12CT8177",  "rfid": "34161fa820328ee847f17ca0",  "anpr_image": "",  "front_image": "",  "matching_score": "60%",  "anpr_status": "0",  "token": "9582209263",  "device_ip": "10.80.118.140"}
+
+
+Response: {  "status": 201,  "message": "Vehicle not manually updated"}
+
+
+---------------------------------------------------------------------------------------------------
+Check status (the loop API when ANPR is 0/2 case): https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/status_check
+
+Payload: {  "vehicleNo_web": "GJ12CT8178",  "vehicleNo_anpr": "GJ12OT8178",  "rfid": "34161fa820328ee847f17ca0",  "device_ip": "10.80.118.140"}
+Response: {  "statusCode": 201,  "vehicleStatus": 1,  "statusMessage": "Vehicle is updated manually"}
+
+
+
+---------------------------------------------------------------------------------------------------
+Weight details (this API will be called only when the current weight from digitizer is within tolerance i.e. between 45000 and 45000-50, no plus, only minus is allowed): https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_weight_details
+Payload: {  "current_weight": "1810",  "truck_details": "V|34161fa820328ee847f17ca0|GJ12CT8178|45000|2500|50|9582209263|10.10.180.12",  "front_image_name": "vadhghat_front_001.jpg",  "top_image_name": "vadhghat_top_001.jpg",  "anpr_image_name": "vadhghat_anpr_001.jpg"}
+
+Response: {  "status": 200,  "response_type": 1,  "message": "Vadhghat weight details submitted successfully.",  "movement_id": 1721,  "weighment_id": 1130}
+
+
+
+
+---------------------------------------------------------------------------------------------------
+Weight Adjustment (this API will be called only when the current weight from digitizer is outside tolerance i.e. less than 45000 or more than 45000-50): https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_weighbridge/vadhghat_weight_adjustment 
+Payload: {  "device_ip": "10.10.180.12",  "truck_details": "V|E28068940000503F548F04BA|OD14P7339|45000|24500|50|9580109261|10.10.180.12",  "weight": 44990,  "weight_type": "o/u"}
+Response: {  "status": 200,  "response_type": 1,  "message": "Vadhghat weight adjustment processed successfully. Current Vadhghat cycle has been reset. Please read the RFID card again.",  "device_ip": "10.10.180.12",  "truck_details": "V|E28068940000503F548F04BA|OD14P7339|45000|24500|50|9580109261|10.10.180.12",  "rfid_no": "E28068940000503F548F04BA",  "vehicle_no": "OD14P7339",  "token": "9580109261",  "weight": 44990,  "weight_type": "o/u",  "location_id": 163,  "location_name": "Vadhghat Weighbridge",  "reset_count": {    "entry_log": 4,    "movement": 1,    "weighment": 0,    "anpr": 1  }}
+
+
+
+
+---------------------------------------------------------------------------------------------------
+Boom Close API (This will be called only when the Weight details api is called i.e. the digitizer weight is within tolerance): https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/vadhghat_boom_close 
+Payload: {  "truck_details": "V|34161fa820328ee847f17ca0|GJ12CT8178|45000|2500|50|9582209263|10.10.180.12"}
+Response: {  "status": 200,  "message": "Vadhghat Boom Close completed successfully."} 
+
+---
+
+**Cursor**
+
+I'll compare this Vadhghat flow with the current ANPR and weight path in Mines-WB and the checkpoints, then implement the tolerance split and the ANPR 2 / ANPR-off loop.
+
+The ANPR status 2 and ANPR-off paths already follow the same invalid-truck then status_check loop as status 0. I’ll wire the Vadhghat in-band and out-of-band weight APIs, and the load/unload announcement that stays on until the truck exits.
+
+Vadhghat now uses its own weight APIs, and the ANPR status 2 / ANPR-off path already matches the status 0 loop on both weighbridge and checkpoint.
+
+**ANPR (Mines-WB and Mines-Checkpoint).** When ANPR is on and the detect result is 0 or 2, and when ANPR is switched off on the page, the app posts `invalid-truck-number` once (`anpr_status` 2 when ANPR is off), then polls `status_check` until `vehicleStatus` is 1. Status 1 still skips that poll and continues. I left that loop as it is.
+
+**Vadhghat weight (`V|…`).** The allowed band is target down to target minus tolerance, inclusive. For `45000` and `50`, that is 44950–45000 kg.
+
+- Inside the band: `vadhghat_weight_details`, then `vadhghat_boom_close`, then the boom opens and “Move forward” plays.
+- Outside the band: `vadhghat_weight_adjustment` only (`weight_type` `o` or `u`). The boom still opens. “Move forward” does not play.
+  - Over target: difference is current weight minus target. First clip is the buzzer, then `g100.wav`, then the difference in kg. After that, only the difference repeats until the truck has exited.
+  - Under the low end: difference is (target minus tolerance) minus current weight, with `g101.wav` in that first sequence.
+
+There is no `error_buzzer.wav` in `Mines-WB/voice/error/`. The first announcement uses `weight_ton/Siren.wav` until you add `voice/error/error_buzzer.wav`.
+
+Two choices from the sample payloads:
+
+- `weight_type` is sent as `o` or `u`. The sample shows the text `o/u`.
+- After a weight adjustment the API text says to read the RFID again. The lane still opens the boom and waits for the truck to leave, then the next cycle starts from RFID.
+
+---
+
+**User**
+
+instead of Siren.wav play this Mines-WB/voice/error/error_start.wav
+
+---
+
+**Cursor**
+
+I'll switch the Vadhghat difference announcement from `Siren.wav` to `Mines-WB/voice/error/error_start.wav`.
+
+The first overweight or underweight announcement now starts with `Mines-WB/voice/error/error_start.wav`, then `g100.wav` or `g101.wav`, then the difference in kilograms. Later repeats still play only the difference.
+
+---
+
+**User**
+
+okay in the vadhghat overweight/underweight to the display Publish
+Overweight@{Difference weight}Kg or if underweight Underweight@{Difference weight}Kg
+
+---
+
+**Cursor**
+
+I'll publish `Overweight@{difference}Kg` or `Underweight@{difference}Kg` on the display for the Vadhghat out-of-band path.
+
+When the Vadhghat weight is outside the band, the display now shows the difference until the truck leaves.
+
+- Over the target: `Overweight@1000Kg`
+- Under the low end: `Underweight@500Kg`
+
+The number is the same kilogram difference used for the voice announcement.
+
+---
+
+**User**
+
+Great now update the documentation with latest version 1.16
+
+---
+
+**Cursor**
+
+I'll find the current 1.15 documentation and bring it up to 1.16 with the latest weighbridge and checkpoint behavior.
+
+The product notes are still on 1.15. I'll add the 1.16 release for the bidirectional commissioning, digitizer stream, and Vadhghat weight path.
+
+Documentation is now **1.16** (2026-10-01).
+
+- `version.md` records bidirectional commissioning, Mines-WB stable weight, the idle zero-weight check, RFID listen ports, and the Vadhghat in-band and out-of-band weight path.
+- `README.md` and `digitizer-decoder/README.md` point at 1.16.
+- `Mines-Checkpoint/VERSION` and `Mines-WB/VERSION` are `1.16.0`.
+
+---
+
+**User**
+
+26-10-01 17:30:31 [INFO] gmdc_common.services.rfid_control: RFID cloud stop PUT https://10.80.118.60/cloud/stop (Bearer)
+2026-10-01 17:30:31 [INFO] gmdc_common.services.rfid_control: RFID cloud stop http=200 body=
+2026-10-01 17:30:31 [INFO] mines_wb.core.workflow: RFID cloud stop direction=entry_a ok=True
+2026-10-01 17:30:31 [INFO] gmdc_common.services.display: DISPLAY MQTT -> data_info/a: MOVE FORWARD
+2026-10-01 17:30:31 [INFO] mines_wb.core.workflow: Announce: MOVE FORWARD
+2026-10-01 17:30:31 [INFO] gmdc_common.services.voice: Voice: Move Forward
+2026-10-01 17:30:31 [INFO] mines_wb.core.workflow: VEHICLE_POSITIONING started direction=ENTRY_A rfid=entry_a
+2026-10-01 17:30:34 [INFO] gmdc_common.hardware.sensor: WB sensor TRUE (occupied) addr=1
+2026-10-01 17:30:34 [INFO] mines_wb.core.workflow: WB occupied - waiting until the vehicle is only on the weighbridge sensor
+2026-10-01 17:30:36 [INFO] gmdc_common.hardware.sensor: Entry sensor FALSE (cleared) addr=0 - falling edge
+2026-10-01 17:30:36 [INFO] mines_wb.core.workflow: WB occupied - waiting until the vehicle is only on the weighbridge sensor
+2026-10-01 17:30:36 [INFO] gmdc_common.services.voice: Voice: Move Forward
+2026-10-01 17:30:41 [INFO] gmdc_common.services.voice: Voice: Move Forward
+2026-10-01 17:30:41 [INFO] werkzeug: 10.80.118.60 - - [01/Oct/2026 17:30:41] "POST /rfid_management HTTP/1.1" 200 -
+2026-10-01 17:30:46 [INFO] gmdc_common.services.voice: Voice: Move Forward
+The truck is perfectly cut the sensor 2, but still applciation is announcing move forward and after some time reets due to positioning timewout
+
+---
+
+**Cursor**
+
+The weighbridge sensor is already cut and the entry sensor has cleared, but the app stays in positioning and keeps saying Move Forward. I'll trace that handoff.
+
+The entry sensor has already cleared, but its occupied latch is still set when that clear event runs, so the app keeps waiting for the truck to be only on the weighbridge sensor. I'll release that latch before the clear handler and treat the live sensor level as the position check.
+
+The weight-drop test never left idle because an unset digitizer mock reads as 1 kg. I'll set that starting weight to 0 so the positioning check is real.
+
+The truck was already only on the weighbridge sensor. The app still treated the entry sensor as occupied, so it kept saying Move Forward until the positioning timer reset the lane.
+
+When sensor 1 cleared, that clear event ran before the occupied flag was released. The position check saw the old flag and waited. Weighing now starts as soon as sensor 1 and sensor 3 are actually clear and sensor 2 is cut, and Move Forward stops at that point.
+
+---
+
+**User**
+
+great, update documentation to version 1.17
+
+---
+
+**Cursor**
+
+I'll add the 1.17 notes for the weighbridge positioning fix and bump the product version.
+
+Documentation is now **1.17** (2026-10-02).
+
+- `version.md` records that weighing starts once the truck is only on the weighbridge sensor, and Move Forward stops there.
+- `README.md` and `digitizer-decoder/README.md` point at 1.17.
+- `Mines-Checkpoint/VERSION` and `Mines-WB/VERSION` are `1.17.0`.
 
