@@ -1,4 +1,4 @@
-"""MQTT mode publishes changed digitizer values, including 0 kg."""
+"""MQTT mode publishes every weight, including repeats and 0 kg, every 200 ms."""
 
 import json
 import os
@@ -40,23 +40,31 @@ def _bridge(stream=True):
 
 
 class TestMqttWeightStream(unittest.TestCase):
-    def test_publishes_zero_once_then_resumes_when_weight_changes(self):
+    def test_publishes_every_sample_including_repeats_and_zero(self):
         bridge, _runtime, client = _bridge()
-        bridge.publish_weight_if_changed(0)
-        bridge.publish_weight_if_changed(0)
-        bridge.publish_weight_if_changed(12500)
-        bridge.publish_weight_if_changed(12500.0)
-        bridge.publish_weight_if_changed(0)
-        bridge.publish_weight_if_changed(0)
+        self.assertEqual(bridge.weight_publish_interval_sec, 0.2)
+        bridge.publish_weight(0)
+        bridge.publish_weight(0)
+        bridge.publish_weight(12500)
+        bridge.publish_weight(12500.0)
+        bridge.publish_weight(0)
+        bridge.publish_weight(0)
         weights = [body["weight"] for _topic, body in client.published]
-        self.assertEqual(weights, [0.0, 12500.0, 12500.0, 0.0])
+        self.assertEqual(weights, [0.0, 0.0, 12500.0, 12500.0, 0.0, 0.0])
         self.assertEqual(client.published[0][0], "gmdc/digitizer/weight")
 
-    def test_request_topic_publishes_current_value_even_when_zero_was_held(self):
+    def test_current_weight_is_republished_on_each_tick(self):
+        bridge, runtime, client = _bridge()
+        runtime.push_weight(43000, "43000", b"43000")
+        bridge.publish_current_weight()
+        bridge.publish_current_weight()
+        weights = [body["weight"] for _topic, body in client.published]
+        self.assertEqual(weights, [43000.0, 43000.0])
+
+    def test_request_topic_publishes_current_value_immediately(self):
         bridge, runtime, client = _bridge()
         runtime.push_weight(0, "0", b"0")
-        bridge.publish_weight_if_changed(0)
-        bridge.publish_weight_if_changed(0)
+        bridge.publish_weight(0)
         self.assertEqual(len(client.published), 1)
         bridge._on_message(None, None, _Message("gmdc/digitizer/request", b"{}"))
         self.assertEqual(len(client.published), 2)
@@ -68,7 +76,7 @@ class TestMqttWeightStream(unittest.TestCase):
 
     def test_api_mode_does_not_publish_weight(self):
         bridge, _runtime, client = _bridge(stream=False)
-        bridge.publish_weight_if_changed(10)
+        bridge.publish_weight(10)
         bridge._on_message(None, None, _Message("gmdc/digitizer/request"))
         self.assertEqual(client.published, [])
 

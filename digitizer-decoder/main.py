@@ -5,7 +5,7 @@ Replaces the PySide serial_ui desktop shell with a Flask dashboard that keeps
 the same serial indexing / stable-weight logic, and adds selectable transport:
 
   - API  → POST/GET /read_stable_weight (Mines-WB compatible)
-  - MQTT → publish live readings (zero once until it changes); request topic always publishes the current value
+  - MQTT → publish every weight, including zero and repeats, every 200 ms; request topic publishes the current value immediately
 
 Usage:
   cd digitizer-decoder

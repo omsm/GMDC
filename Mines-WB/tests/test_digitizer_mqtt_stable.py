@@ -48,6 +48,13 @@ class TestMqttStableWeight(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["weight"], 43000.0)
 
+    def test_single_reading_is_not_accepted_before_stable_count(self):
+        client = _client(stable_count=10, timeout=0.2)
+        _weight(client, 45120)
+        result = client.read_stable_weight()
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["weight"])
+
     def test_zero_never_counts_as_stable(self):
         client = _client(stable_count=2, timeout=0.3)
         _weight(client, 0)

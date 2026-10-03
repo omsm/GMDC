@@ -74,7 +74,7 @@ Standalone PySide6 serial reader. HTTP API: **http://0.0.0.0:8800/read_stable_we
 
 ### `digitizer-decoder`
 
-Web replacement for the PySide shell. Dashboard default **http://127.0.0.1:8800/**. **API** mode serves `/read_stable_weight`. **MQTT** mode publishes live weight (zero once until it changes); Mines-WB decides when that stream is stable. Live UI status over MQTT WebSocket (`gmdc/digitizer/status` on **:9001**). See [`digitizer-decoder/README.md`](digitizer-decoder/README.md).
+Web replacement for the PySide shell. Dashboard default **http://127.0.0.1:8800/**. **API** mode serves `/read_stable_weight`. **MQTT** mode publishes every weight, including zero and repeats, every 200 ms; Mines-WB decides when that stream is stable. Live UI status over MQTT WebSocket (`gmdc/digitizer/status` on **:9001**). See [`digitizer-decoder/README.md`](digitizer-decoder/README.md).
 
 ### `mqtt_broker_setup`
 

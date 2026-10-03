@@ -440,6 +440,15 @@ class DigitizerMqttClient:
                 break
             self._stable_wait.wait(timeout=min(remaining, 0.25))
 
+        with self._lock:
+            seen = self._stable_seen
+            live = self._current_weight
+        logger.warning(
+            "Digitizer weight not stable: %s/%s identical readings, live=%s",
+            seen,
+            self.stable_count,
+            live,
+        )
         short, title = operator_copy("digitizer", KIND_UNREACHABLE)
         return {
             "ok": False,
@@ -504,6 +513,17 @@ class DigitizerMqttClient:
                 self._last_heartbeat = now
             if topic == self.topic_weight and weight is not None:
                 changed = self._observe_weight(weight)
+                reached = (
+                    self._stable and self._stable_seen == self.stable_count
+                )
+                if changed or reached:
+                    logger.info(
+                        "Digitizer MQTT weight=%.1f stable=%s (%s/%s)",
+                        weight,
+                        self._stable,
+                        self._stable_seen,
+                        self.stable_count,
+                    )
             self._last_raw = parsed
 
         if changed or topic == self.topic_status:

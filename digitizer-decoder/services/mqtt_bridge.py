@@ -16,6 +16,7 @@ from services.weight_runtime import WeightRuntime
 logger = logging.getLogger("digitizer_decoder.mqtt")
 
 HEARTBEAT_INTERVAL_SEC = 2.0
+WEIGHT_PUBLISH_INTERVAL_SEC = 0.2
 
 
 def _unique_client_id(base: str) -> str:
@@ -28,9 +29,8 @@ def _unique_client_id(base: str) -> str:
 class MqttBridge:
     """
     In MQTT mode the decoder only reads the digitizer and publishes it.
-    Non-zero values are published continuously. Zero is published once
-    until the value changes. A message on the request topic always
-    publishes the current value on the weight topic.
+    Every weight, including zero and repeats, is published every 200 ms.
+    A message on the request topic publishes the current value immediately.
     """
 
     def __init__(
@@ -66,13 +66,15 @@ class MqttBridge:
         self.on_status = on_status
         self.heartbeat_interval_sec = max(1.0, float(heartbeat_interval_sec or 2.0))
         self.weight_stream = bool(weight_stream)
+        self.weight_publish_interval_sec = WEIGHT_PUBLISH_INTERVAL_SEC
         self._client: Optional[mqtt.Client] = None
         self._connected = False
         self._lock = threading.RLock()
         self._status_provider: Optional[Callable[[], Dict[str, Any]]] = None
-        self._last_published_weight: Optional[float] = None
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._weight_stop = threading.Event()
+        self._weight_thread: Optional[threading.Thread] = None
 
     @property
     def connected(self) -> bool:
@@ -110,6 +112,7 @@ class MqttBridge:
         self._client = client
         client.loop_start()
         self._start_heartbeat()
+        self._start_weight_publisher()
         logger.info(
             "MQTT starting broker=%s:%s client_id=%s sub=%s pub=%s status=%s",
             self.broker_host,
@@ -123,11 +126,11 @@ class MqttBridge:
 
     def stop(self) -> None:
         self._stop_heartbeat()
+        self._stop_weight_publisher()
         with self._lock:
             client = self._client
             self._client = None
             self._connected = False
-            self._last_published_weight = None
         if client:
             try:
                 client.loop_stop()
@@ -136,46 +139,26 @@ class MqttBridge:
                 pass
         self._set_status("MQTT stopped")
 
-    def publish_weight_if_changed(
+    def publish_weight(
         self,
         weight: Optional[float],
         *,
-        force: bool = False,
         source: str = "live",
     ) -> None:
-        """Publish live digitizer readings.
-
-        Non-zero values are published on every update. A zero reading is
-        published once and then held until the value changes. A request on
-        the subscribe topic always publishes the current value.
-        """
+        """Publish one weight sample, including zero and repeated values."""
         if not self.weight_stream:
             return
         client = self._client
         if not client or not self._connected:
             return
-        if weight is None and not force:
+        if weight is None:
             return
-        numeric: Optional[float] = None
-        if weight is not None:
-            try:
-                numeric = float(weight)
-            except (TypeError, ValueError):
-                return
-        with self._lock:
-            prev = self._last_published_weight
-            zero_already_sent = (
-                not force
-                and numeric == 0.0
-                and prev is not None
-                and float(prev) == 0.0
-            )
-            if zero_already_sent:
-                return
-            if numeric is not None:
-                self._last_published_weight = numeric
+        try:
+            numeric = float(weight)
+        except (TypeError, ValueError):
+            return
         payload = {
-            "statusCode": 200 if numeric is not None else 503,
+            "statusCode": 200,
             "current_weight": numeric,
             "weight": numeric,
             "ts": time.time(),
@@ -233,6 +216,37 @@ class MqttBridge:
         except Exception as exc:
             logger.warning("MQTT status publish failed: %s", exc)
 
+    def publish_current_weight(self, *, source: str = "live") -> None:
+        """Publish the latest digitizer reading, including zero."""
+        current = self.runtime.snapshot().get("current_weight")
+        self.publish_weight(current, source=source)
+
+    def _start_weight_publisher(self) -> None:
+        """Publish the current weight every 200 ms while MQTT mode is on."""
+        self._stop_weight_publisher()
+        if not self.weight_stream:
+            return
+        self._weight_stop.clear()
+
+        def _loop() -> None:
+            while not self._weight_stop.is_set():
+                if self._connected:
+                    self.publish_current_weight(source="live")
+                if self._weight_stop.wait(self.weight_publish_interval_sec):
+                    break
+
+        self._weight_thread = threading.Thread(
+            target=_loop, name="DigitizerMqttWeight", daemon=True
+        )
+        self._weight_thread.start()
+
+    def _stop_weight_publisher(self) -> None:
+        self._weight_stop.set()
+        thread = self._weight_thread
+        self._weight_thread = None
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+
     def _start_heartbeat(self) -> None:
         self._heartbeat_stop.clear()
 
@@ -269,11 +283,6 @@ class MqttBridge:
             else:
                 self._set_status("MQTT connected")
             self.publish_ui_status()
-            if self.weight_stream:
-                snap = self.runtime.snapshot()
-                current = snap.get("current_weight")
-                if current is not None:
-                    self.publish_weight_if_changed(current, force=True, source="live")
         else:
             self._set_status(f"MQTT connect rc={rc}")
 
@@ -289,8 +298,4 @@ class MqttBridge:
         raw = msg.payload.decode("utf-8", errors="replace") if msg.payload else ""
         logger.info("MQTT request topic=%s payload=%s", msg.topic, raw[:200])
         snap = self.runtime.snapshot()
-        self.publish_weight_if_changed(
-            snap.get("current_weight"),
-            force=True,
-            source="request",
-        )
+        self.publish_weight(snap.get("current_weight"), source="request")

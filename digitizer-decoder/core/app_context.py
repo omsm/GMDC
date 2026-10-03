@@ -99,9 +99,7 @@ class AppContext:
     def _on_runtime_update(self) -> None:
         if not (self.mqtt and self.mqtt.connected):
             return
-        snap = self.runtime.snapshot()
-        # MQTT mode publishes live readings. Zero is sent once until it changes.
-        self.mqtt.publish_weight_if_changed(snap.get("current_weight"))
+        # Weight MQTT is published every 200 ms by MqttBridge, not on each frame.
         # Throttle UI status publishes (~10 Hz) to avoid flooding Mosquitto
         now = time.monotonic()
         with self._status_publish_lock:
