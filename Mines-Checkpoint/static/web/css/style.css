@@ -324,12 +324,70 @@ body {
     flex-wrap: wrap;
 }
 
+.location-sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--neutral-0);
+    border: 1px solid var(--neutral-200);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.location-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    overflow: auto;
+}
+
+.location-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--neutral-200);
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    background: var(--neutral-50);
+    color: var(--neutral-900);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+}
+
+.location-item:hover {
+    border-color: var(--neutral-300);
+    background: var(--neutral-100);
+}
+
+.location-item.is-active {
+    border-color: var(--primary);
+    border-left-color: var(--primary);
+    background: var(--primary-light);
+}
+
+.location-name {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.location-state {
+    font-size: 12px;
+    color: var(--neutral-600);
+    font-weight: 500;
+}
+
 .flow-side-controls {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
     flex-shrink: 0;
-    margin-left: auto;
 }
 
 .flow-side-controls[hidden] {
@@ -1218,6 +1276,23 @@ body {
         overflow: visible;
         padding: var(--spacing-md);
         gap: var(--spacing-md);
+    }
+
+    .location-sidebar {
+        order: 0;
+        width: 100%;
+        overflow: visible;
+    }
+
+    .location-nav {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        overflow: visible;
+    }
+
+    .location-item {
+        min-width: 0;
+        width: 100%;
     }
 
     .right-panel {

@@ -33,6 +33,160 @@ let UPDATE_PROGRESS_TIMER = null;
 const UPDATE_STATUS_POLL_MS = 2 * 60 * 1000;
 
 let mqttClient = null;
+let LANE_ID = '';
+let KNOWN_LANES = [];
+let lanePollTimer = null;
+const DEFAULT_LANES = [
+    { lane_id: 'mines_entry', name: 'Mines Entry' },
+    { lane_id: 'traffic_in', name: 'Traffic IN' },
+    { lane_id: 'traffic_out', name: 'Traffic OUT' },
+    { lane_id: 'mines_exit', name: 'Mines Exit' }
+];
+
+function topicRoot() {
+    return LANE_ID ? ('wb_frontend/' + LANE_ID) : 'wb_frontend';
+}
+
+function laneTopic(name) {
+    return topicRoot() + '/' + name;
+}
+
+function laneUrl(path) {
+    if (!LANE_ID) return path;
+    const join = path.indexOf('?') >= 0 ? '&' : '?';
+    return path + join + 'lane=' + encodeURIComponent(LANE_ID);
+}
+
+function formatLaneState(state) {
+    const raw = String(state || '').trim();
+    if (!raw || raw === 'UNKNOWN') return 'Waiting';
+    return raw.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, function (ch) {
+        return ch.toUpperCase();
+    }).replace(/\bRfid\b/g, 'RFID').replace(/\bAnpr\b/g, 'ANPR');
+}
+
+function syncHeaderLocation() {
+    const active = KNOWN_LANES.find((lane) => lane.lane_id === LANE_ID) || KNOWN_LANES[0];
+    const titleEl = document.querySelector('.header-title h1');
+    const name = (active && (active.name || active.lane_id)) || 'Checkpoint';
+    if (titleEl) titleEl.textContent = name;
+    document.title = name + ' - Dashboard';
+}
+
+function renderLocationNav(lanes) {
+    const nav = document.getElementById('location-nav');
+    if (!nav) return;
+    const signature = lanes.map((lane) => lane.lane_id || '').join('|');
+    if (nav.dataset.signature === signature && nav.children.length) {
+        lanes.forEach((lane) => {
+            const button = nav.querySelector('[data-lane="' + lane.lane_id + '"]');
+            if (!button) return;
+            const selected = lane.lane_id === LANE_ID;
+            button.classList.toggle('is-active', selected);
+            if (selected) button.setAttribute('aria-current', 'page');
+            else button.removeAttribute('aria-current');
+            const stateEl = button.querySelector('.location-state');
+            if (stateEl) stateEl.textContent = formatLaneState(lane.state);
+        });
+        syncHeaderLocation();
+        return;
+    }
+    nav.dataset.signature = signature;
+    nav.innerHTML = '';
+    lanes.forEach((lane) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        const selected = lane.lane_id === LANE_ID;
+        button.className = 'location-item' + (selected ? ' is-active' : '');
+        button.dataset.lane = lane.lane_id || '';
+        if (selected) button.setAttribute('aria-current', 'page');
+        const name = document.createElement('span');
+        name.className = 'location-name';
+        name.textContent = lane.name || lane.lane_id || 'Location';
+        const state = document.createElement('span');
+        state.className = 'location-state';
+        state.textContent = formatLaneState(lane.state);
+        button.appendChild(name);
+        button.appendChild(state);
+        nav.appendChild(button);
+    });
+    bindLocationNav();
+    syncHeaderLocation();
+}
+
+function bindLocationNav() {
+    const nav = document.getElementById('location-nav');
+    if (!nav || nav.dataset.bound === '1') return;
+    nav.dataset.bound = '1';
+    nav.addEventListener('click', function (event) {
+        const button = event.target.closest('.location-item');
+        if (!button || !button.dataset.lane) return;
+        selectLane(button.dataset.lane);
+    });
+}
+
+function usableLanes(lanes) {
+    const named = (lanes || []).filter((lane) => lane && lane.lane_id);
+    return named.length ? named : DEFAULT_LANES.slice();
+}
+
+async function refreshLaneList() {
+    try {
+        const resp = await fetch('/api/lanes', { cache: 'no-store' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const lanes = usableLanes(Array.isArray(data.lanes) ? data.lanes : []);
+        if (!lanes.length) return;
+        KNOWN_LANES = lanes;
+        renderLocationNav(KNOWN_LANES);
+    } catch (error) {
+        console.warn('Lane list unavailable:', error);
+    }
+}
+
+async function loadLanes() {
+    const requested = new URLSearchParams(window.location.search).get('lane') || '';
+    KNOWN_LANES = DEFAULT_LANES.slice();
+    try {
+        const resp = await fetch('/api/lanes', { cache: 'no-store' });
+        if (resp.ok) {
+            const data = await resp.json();
+            const lanes = usableLanes(Array.isArray(data.lanes) ? data.lanes : []);
+            if (lanes.length) KNOWN_LANES = lanes;
+        }
+    } catch (error) {
+        console.warn('Lane list unavailable:', error);
+    }
+    const match = KNOWN_LANES.find((lane) => lane.lane_id === requested);
+    LANE_ID = match ? match.lane_id : ((KNOWN_LANES[0] && KNOWN_LANES[0].lane_id) || '');
+    bindLocationNav();
+    renderLocationNav(KNOWN_LANES);
+    if (!lanePollTimer) {
+        lanePollTimer = setInterval(refreshLaneList, 2000);
+    }
+}
+
+function selectLane(laneId) {
+    if (!laneId || laneId === LANE_ID) return;
+    const previous = topicRoot();
+    LANE_ID = laneId;
+    const url = new URL(window.location.href);
+    url.searchParams.set('lane', LANE_ID);
+    window.history.replaceState(null, '', url);
+    renderLocationNav(KNOWN_LANES);
+    if (mqttClient && mqttClient.isConnected && mqttClient.isConnected() && previous !== topicRoot()) {
+        try {
+            if (mqttClient.unsubscribe) mqttClient.unsubscribe(previous + '/#');
+            mqttClient.subscribe(topicRoot() + '/#');
+        } catch (error) {
+            console.warn('Lane MQTT resubscribe failed:', error);
+        }
+    }
+    applyIdleUi();
+    applySiteBranding();
+    refreshAnprToggle();
+    requestCurrentStatus();
+}
 const MQTT_BROKER_HOST = (typeof window !== 'undefined' && window.location && window.location.hostname)
     ? window.location.hostname
     : 'localhost';
@@ -279,7 +433,7 @@ function initApiAlertPopup() {
     if (btn) btn.addEventListener('click', hideApiAlert);
 }
 
-function init() {
+async function init() {
     console.log('Initializing Mines Checkpoint Dashboard...');
     AppState.steps.forEach(step => {
         step.element = document.getElementById(stepElementId(step.id));
@@ -289,6 +443,7 @@ function init() {
     });
     applyDefaultStepContents();
     loadAppVersion();
+    await loadLanes();
     applySiteBranding();
     initThemeToggle();
     initUpdaterUI();
@@ -335,15 +490,16 @@ function initThemeToggle() {
 
 async function applySiteBranding() {
     try {
-        const resp = await fetch('/api/status', { cache: 'no-store' });
+        const resp = await fetch(laneUrl('/api/status'), { cache: 'no-store' });
         if (!resp.ok) return;
         const data = await resp.json();
-        const name = data.display_name || data.service || 'Mines Checkpoint';
+        const selected = KNOWN_LANES.find((lane) => lane.lane_id === LANE_ID);
+        const name = data.display_name || (selected && selected.name) || data.service || 'Mines Checkpoint';
         const logo = data.logo_initials || 'MC';
         const logoEl = document.querySelector('.logo-icon');
         const titleEl = document.querySelector('.header-title h1');
         if (logoEl) logoEl.textContent = logo;
-        if (titleEl) titleEl.textContent = 'Checkpoint';
+        if (titleEl) titleEl.textContent = name;
         document.title = name + ' - Dashboard';
         if (typeof data.anpr_enabled === 'boolean') {
             setAnprToggleUi(data.anpr_enabled);
@@ -679,7 +835,7 @@ function setAnprToggleUi(enabled) {
 
 async function refreshAnprToggle() {
     try {
-        const resp = await fetch('/api/anpr-enabled', { cache: 'no-store' });
+        const resp = await fetch(laneUrl('/api/anpr-enabled'), { cache: 'no-store' });
         if (!resp.ok) return;
         const data = await resp.json();
         setAnprToggleUi(data.anpr_enabled !== false);
@@ -694,7 +850,7 @@ async function handleAnprToggle() {
     const next = !anprEnabled;
     if (btn) btn.disabled = true;
     try {
-        const resp = await fetch('/api/anpr-enabled', {
+        const resp = await fetch(laneUrl('/api/anpr-enabled'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ anpr_enabled: next }),
@@ -833,14 +989,14 @@ function executeReset() {
     let mqttSent = false;
     if (mqttClient && mqttClient.isConnected && mqttClient.isConnected()) {
         try {
-            mqttClient.publish('wb_frontend/reset_application', 'reset_application', 0);
+            mqttClient.publish(laneTopic('reset_application'), 'reset_application', 0);
             mqttSent = true;
         } catch (error) {
             console.warn('MQTT reset publish failed:', error);
         }
     }
 
-    fetch('/api/reset', { method: 'POST' })
+    fetch(laneUrl('/api/reset'), { method: 'POST' })
         .then((resp) => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             applyIdleUi();
@@ -911,14 +1067,14 @@ function executeFreePass() {
     let mqttSent = false;
     if (mqttClient && mqttClient.isConnected && mqttClient.isConnected()) {
         try {
-            mqttClient.publish('wb_frontend/free_pass', 'free_pass', 0);
+            mqttClient.publish(laneTopic('free_pass'), 'free_pass', 0);
             mqttSent = true;
         } catch (error) {
             console.warn('MQTT free pass publish failed:', error);
         }
     }
 
-    fetch('/api/free-pass', { method: 'POST' })
+    fetch(laneUrl('/api/free-pass'), { method: 'POST' })
         .then((resp) => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             applyFreePassUi();
@@ -1034,9 +1190,9 @@ function onConnect() {
     const config = MQTT_CONFIGS[currentConfigIndex];
     console.log(`MQTT connected to ws://${MQTT_BROKER_HOST}:${config.port}${config.path}`);
     currentConfigIndex = 0;
-    mqttClient.subscribe('wb_frontend/#', {
+    mqttClient.subscribe(topicRoot() + '/#', {
         onSuccess: () => {
-            console.log('Subscribed to wb_frontend/#');
+            console.log('Subscribed to ' + topicRoot() + '/#');
             requestCurrentStatus();
         },
         onFailure: (error) => {
@@ -1050,7 +1206,7 @@ function onConnect() {
 function requestCurrentStatus() {
     if (!mqttClient || !mqttClient.isConnected()) return;
     try {
-        mqttClient.publish('wb_frontend/request_status', 'request', 0);
+        mqttClient.publish(laneTopic('request_status'), 'request', 0);
     } catch (error) {
         console.error('Error requesting status:', error);
     }
@@ -1075,18 +1231,21 @@ function onConnectionLost(responseObject) {
 function onMessageArrived(message) {
     const topic = message.destinationName;
     const payload = message.payloadString;
+    const prefix = topicRoot() + '/';
+    if (topic.indexOf(prefix) !== 0) return;
+    const leaf = topic.slice(prefix.length);
     try {
-        if (topic === 'wb_frontend/position') {
+        if (leaf === 'position') {
             const position = parseInt(payload, 10);
             if (!isNaN(position)) handlePositionMessage(position);
-        } else if (topic === 'wb_frontend/display') {
+        } else if (leaf === 'display') {
             AppState.displayMessage = payload;
             updateSystemStatus(payload, true);
-        } else if (topic === 'wb_frontend/status') {
+        } else if (leaf === 'status') {
             handleStatusMessage(JSON.parse(payload));
-        } else if (topic === 'wb_frontend/device_status') {
+        } else if (leaf === 'device_status') {
             handleDeviceStatus(JSON.parse(payload));
-        } else if (topic === 'wb_frontend/rfid') {
+        } else if (leaf === 'rfid') {
             handleRfidData(JSON.parse(payload));
         }
     } catch (error) {

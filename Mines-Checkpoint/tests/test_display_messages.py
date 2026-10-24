@@ -39,6 +39,22 @@ class DisplayMessageTests(unittest.TestCase):
         ctx.display.send.assert_called_once_with("RFID ERR@ASK OPERATOR")
         ctx.frontend.publish_display.assert_called_once_with("RFID ERR@ASK OPERATOR")
 
+    def test_rfid_api_message_is_sent_to_the_display(self):
+        from services.oci_client import OCIResponse
+
+        ctx = MagicMock()
+        wf = CheckpointWorkflow(ctx)
+        shown = wf._rfid_api_display(
+            OCIResponse(ok=False, status=400, message="Tag not registered"),
+            MSG_RFID_ERR,
+        )
+        self.assertEqual(shown, "Tag not registered")
+        generic = wf._rfid_api_display(
+            OCIResponse(ok=True, status=200, message="ok"),
+            "RFID VALID@OD14P7339",
+        )
+        self.assertEqual(generic, "RFID VALID@OD14P7339")
+
     def test_idle_hardware_shows_idle_message(self):
         ctx = MagicMock()
         ctx.traffic_light = MagicMock()

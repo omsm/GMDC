@@ -6,7 +6,7 @@ Protocol (device identity = Display IP):
       Uni / checkpoint (1 IP): always site pcb_mode (usually a)
       Bi (2 IPs): first IP → a (Entry A), second IP → b (Entry B)
   - Transaction text:
-      Uni / checkpoint: publish data_info/a (or data_info/{pcb_mode})
+      One board: publish the configured topic (data_info/a, b, c, or d)
       Bi-directional idle: publish data_info/a AND data_info/b
       Bi-directional transaction: publish only the side the vehicle entered
 """
@@ -239,12 +239,16 @@ class MQTTDisplayService(DisplayService):
 
     def _publish_text(self, client, text: str, side: Optional[str] = None) -> bool:
         """Publish transaction text. ``side`` limits a bidirectional board."""
-        topics = data_info_topics_for_ips(
-            self.display_ips, pcb_mode=self.pcb_mode, side=side
-        )
-        self._tx_topics = topics
-        if topics:
-            self.topic_tx = topics[0]
+        if len(self.display_ips) >= 2:
+            topics = data_info_topics_for_ips(
+                self.display_ips, pcb_mode=self.pcb_mode, side=side
+            )
+            self._tx_topics = topics
+            if topics:
+                self.topic_tx = topics[0]
+        else:
+            # Checkpoint lanes each own one topic: data_info/a, b, c, or d.
+            topics = list(self._tx_topics) if self._tx_topics else [self.topic_tx]
         ok_any = False
         for topic in topics:
             try:
@@ -387,9 +391,12 @@ class MQTTDisplayService(DisplayService):
         return self.send("")
 
     def get_status(self) -> dict:
-        topics = data_info_topics_for_ips(
-            self.display_ips, pcb_mode=self.pcb_mode
-        )
+        if len(self.display_ips) >= 2:
+            topics = data_info_topics_for_ips(
+                self.display_ips, pcb_mode=self.pcb_mode
+            )
+        else:
+            topics = list(self._tx_topics) if self._tx_topics else [self.topic_tx]
         return {
             "type": "mqtt",
             "broker": self.broker,

@@ -120,6 +120,7 @@ html[data-theme="dark"] .header {
     background: transparent;
 }
 
+.location-sidebar,
 .left-panel,
 .right-panel,
 .device-item,
@@ -140,6 +141,7 @@ html[data-theme="dark"] .header {
     -webkit-backdrop-filter: blur(22px) saturate(1.6);
 }
 
+html[data-theme="dark"] .location-sidebar,
 html[data-theme="dark"] .left-panel,
 html[data-theme="dark"] .right-panel,
 html[data-theme="dark"] .device-item,
@@ -159,6 +161,7 @@ html[data-theme="dark"] .camera-icon-btn {
     color: #f5f5f7;
 }
 
+.location-sidebar,
 .left-panel,
 .right-panel,
 .modal-content {
@@ -167,7 +170,8 @@ html[data-theme="dark"] .camera-icon-btn {
 
 .device-item,
 .sensor-item,
-.live-weight-panel {
+.live-weight-panel,
+.location-item {
     border-radius: 16px;
 }
 

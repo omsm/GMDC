@@ -1,13 +1,42 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.17**
+**Current version: 1.18**
 
-Per-app `VERSION` files track each runtime build (e.g. Mines-Checkpoint / Mines-WB `1.17.0`). This document tracks the **monorepo / product** releases.
+Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.17 — 2026-10-02 (latest)
+## 1.18 — 2026-10-24 (latest)
+
+One Mines-Checkpoint process runs four locations. The RFID tag API message is shown on that location’s display. Bidirectional weighbridge outputs follow the boom-close side. The Zebra reader uses antennas 5 and 6.
+
+### Mines-Checkpoint — four lanes
+- One process reads `lanes` in `iot_configuration.json`: Mines Entry, Traffic IN, Traffic OUT, and Mines Exit
+- RFID listen ports are 8001, 8002, 8003, and 8004. A tag on one port uses only that lane’s reader, Modbus controller, API, and display
+- Display topics: Mines Entry `data_info/a`, Traffic IN `data_info/b`, Traffic OUT `data_info/c`, Mines Exit `data_info/d`
+- The dashboard sidebar selects the location. Reset, free pass, ANPR, and status follow the selected lane
+
+### RFID message on the display
+- Mines-Checkpoint and Mines-WB publish the RFID tag API `message` to the LED over MQTT
+- A response such as `No loading slip is available against the RFID.` is the board text
+- A generic `ok` or `success` keeps the existing success line: checkpoint `RFID VALID@{truck}`, weighbridge `{truck}@{weight} Kg`
+- On the weighbridge the text goes to the side the truck entered
+
+### Mines-WB bidirectional outputs
+- Idle: channels 0 and 1 normally closed, channels 2 and 3 normally open
+- Only sensor 2 cut: channels 2 and 3 normally closed. After a successful boom-close API they return to normally open
+- Entry A after boom close: only channel 1 normally open, then idle
+- Entry B after boom close: only channel 0 normally open, then idle
+- Reset returns to idle. Unidirectional idle outputs stay as they were
+
+### RFID mode
+- Default CUSTOM mode enables antennas **5** and **6**, transmit power **31** on each
+- `set_mode` sends one transmit-power array per enabled antenna, so the reader does not reject the call with HTTP 422
+
+---
+
+## 1.17 — 2026-10-02
 
 Weighing starts when the truck is only on the weighbridge sensor.
 
@@ -403,6 +432,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.18** | Four checkpoint lanes in one process; RFID API message on that lane’s display; bidirectional boom-close outputs; Zebra antennas 5 and 6 |
 | **1.17** | Weighing starts when only the weighbridge sensor is cut; the clear event no longer leaves the truck on Move Forward |
 | **1.16** | Bi-directional commissioning; Mines-WB stable weight; Vadhghat in-band details/boom-close and out-of-band adjustment with Overweight/Underweight |
 | **1.15** | Liquid glass on macOS (`OS_TYPE`); RFID online is an IP ping; Transaction Flow stays on top when the dashboard stacks |

@@ -16,6 +16,7 @@ from __future__ import annotations
 OS_TYPE = "auto"
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -24,8 +25,8 @@ from typing import Any, Dict, List, Optional
 
 from api.server import start_api_server, start_rfid_api_ports
 from config.constants import State
-from config.settings import load_settings
-from core.app_context import AppContext
+from config.settings import load_lane_settings, load_settings
+from core.app_context import AppContext, LaneTable
 from core.state_machine import StateMachine
 from core.transaction import TransactionStore
 from core.workflow import CheckpointWorkflow
@@ -170,13 +171,11 @@ def _build_hardware(ctx: AppContext) -> None:
     ctx.rfid_cloud = build_rfid_cloud_control(rfid_cfg, enabled=True)
 
 
-def bootstrap() -> AppContext:
-    setup_logging()
-    _ensure_local_mqtt_broker()
-    settings = load_settings()
-    AppContext.reset_instance()
-    ctx = AppContext.get_instance()
-    ctx.settings = settings
+def _activate_lane(ctx: AppContext) -> None:
+    """Start one location: its own trip, Modbus link, display, and RFID reader."""
+    settings = ctx.settings
+    assert settings
+    lane = settings.lane_id or "checkpoint"
     ctx.state_machine = StateMachine()
     ctx.transactions = TransactionStore()
 
@@ -214,7 +213,7 @@ def bootstrap() -> AppContext:
         pcb_mode=getattr(settings, "display_pcb_mode", None) or "a",
         is_bidirectional=False,
         demo_fallback=True,
-        client_id="mines_checkpoint_display",
+        client_id=f"mines_checkpoint_display-{lane}-{os.getpid()}",
     )
     # MQTT path publishes "Welcome" on first broker connect; console needs explicit send
     if ctx.display and getattr(ctx.display, "get_status", None):
@@ -242,7 +241,8 @@ def bootstrap() -> AppContext:
     ctx.frontend = FrontendMqtt(
         broker=fe_broker,
         port=fe_port,
-        client_id="mines_checkpoint_frontend",
+        client_id=f"mines_checkpoint_frontend-{lane}-{os.getpid()}",
+        instance_key=settings.lane_id,
         ctx=ctx,
     )
     ctx.frontend.display = MSG_IDLE
@@ -269,12 +269,86 @@ def bootstrap() -> AppContext:
         ctx.frontend.republish_snapshot()
 
     logger.info(
-        "Mines Checkpoint bootstrapped type=%s demo_mode=%s state=%s",
-        settings.checkpoint_type,
-        settings.demo_mode,
-        ctx.state_machine.current_state.name,
+        "Lane ready id=%s name=%s rfid_port=%s display=%s modbus=%s state=%s",
+        lane,
+        settings.display_name,
+        settings.rfid_listen_port or settings.api_port,
+        settings.mqtt_topic_tx,
+        (settings.io_config().get("connection") or {})
+        .get("ethernet", {})
+        .get("ip"),
+        ctx.state_machine.current_state.name if ctx.state_machine else "?",
     )
-    return ctx
+
+
+def _reader_ip(settings) -> str:
+    block = settings.rfid_config("entry_a") if settings else {}
+    if isinstance(block, dict):
+        return str(block.get("ip") or "").strip()
+    return ""
+
+
+def bootstrap() -> AppContext:
+    setup_logging()
+    _ensure_local_mqtt_broker()
+    first = load_settings()
+    lanes = (
+        load_lane_settings(Path(first.config_path))
+        if first.config_path
+        else [first]
+    )
+    AppContext.reset_instance()
+    host = AppContext.get_instance()
+    if len(lanes) <= 1 and not (lanes[0].lane_id if lanes else ""):
+        host.settings = lanes[0] if lanes else load_settings()
+        _activate_lane(host)
+        return host
+
+    table = LaneTable()
+    host.lane_table = table
+    host.lanes = []
+    seen_modbus: Dict[str, str] = {}
+    seen_display: Dict[str, str] = {}
+    for settings in lanes:
+        ctx = AppContext()
+        ctx.settings = settings
+        _activate_lane(ctx)
+        lane_id = settings.lane_id or settings.display_name
+        table.add(
+            lane_id,
+            ctx,
+            int(settings.rfid_listen_port or 0),
+            _reader_ip(settings),
+        )
+        host.lanes.append(ctx)
+        modbus_ip = str(
+            ((settings.io_config().get("connection") or {}).get("ethernet") or {}).get(
+                "ip"
+            )
+            or ""
+        )
+        if modbus_ip and modbus_ip in seen_modbus:
+            logger.warning(
+                "Lane %s and %s share Modbus %s",
+                seen_modbus[modbus_ip],
+                lane_id,
+                modbus_ip,
+            )
+        elif modbus_ip:
+            seen_modbus[modbus_ip] = lane_id
+        topic = settings.mqtt_topic_tx or ""
+        if topic and topic in seen_display:
+            logger.warning(
+                "Lane %s and %s share display topic %s",
+                seen_display[topic],
+                lane_id,
+                topic,
+            )
+        elif topic:
+            seen_display[topic] = lane_id
+    host.settings = lanes[0]
+    logger.info("Mines Checkpoint running %s lanes in one process", len(host.lanes))
+    return host
 
 
 def main() -> int:
@@ -283,21 +357,31 @@ def main() -> int:
     assert settings
 
     app = start_api_server(host=settings.api_host, port=settings.api_port, os_type=OS_TYPE)
-    rfid_ports = settings.rfid_api_listen_ports()
+    rfid_ports = list(settings.rfid_api_listen_ports())
+    lane_lines = []
+    for lane_ctx in getattr(ctx, "lanes", None) or []:
+        lane_settings = lane_ctx.settings
+        if not lane_settings:
+            continue
+        port = int(lane_settings.rfid_listen_port or 0)
+        if port and port != settings.api_port and port not in rfid_ports:
+            rfid_ports.append(port)
+        lane_lines.append(
+            f"  {lane_settings.display_name:<12} RFID :{port or settings.api_port}"
+            f"  reader { _reader_ip(lane_settings) or '-'}"
+            f"  display {lane_settings.mqtt_topic_tx}"
+        )
     start_rfid_api_ports(app, settings.api_host, rfid_ports)
     banner = (
         "\n"
         "============================================================\n"
         "  GMDC Mines Checkpoint running\n"
-        f"  Type       : {settings.checkpoint_type} ({settings.display_name})\n"
-        f"  DEMO_MODE  : {settings.demo_mode}\n"
+        f"  Locations  : {len(getattr(ctx, 'lanes', None) or [ctx])}\n"
         f"  Dashboard  : http://127.0.0.1:{settings.api_port}/\n"
-        f"  API        : http://127.0.0.1:{settings.api_port}/api/status\n"
-        f"  RFID ports : {', '.join(str(p) for p in rfid_ports) or 'application port'}\n"
-        f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
-        f"  MQTT WS    : ws://<this-pc-ip>:{settings.mqtt_ws_port}\n"
-        f"  State      : {ctx.state_machine.current_state.name if ctx.state_machine else '?'}\n"
-        "  Console idle here is normal - check the dashboard for live status.\n"
+        f"  API        : http://127.0.0.1:{settings.api_port}/api/lanes\n"
+        + ("\n".join(lane_lines) + "\n" if lane_lines else "")
+        + f"  MQTT TCP   : {settings.mqtt_broker}:{settings.mqtt_port}\n"
+        "  Point each RFID reader at its own port above.\n"
         "============================================================\n"
     )
     print(banner, flush=True)
@@ -323,19 +407,21 @@ def main() -> int:
             time.sleep(0.5)
     finally:
         logger.info("Shutting down...")
-        if ctx.sensor_poller:
-            ctx.sensor_poller.stop()
-        if ctx.rfid_reader:
-            ctx.rfid_reader.stop()
-        if ctx.frontend:
-            try:
-                ctx.frontend.disconnect()
-            except Exception:
-                pass
-        if ctx.display:
-            ctx.display.disconnect()
-        if ctx.io:
-            ctx.io.disconnect()
+        running = list(getattr(ctx, "lanes", None) or [ctx])
+        for lane_ctx in running:
+            if lane_ctx.sensor_poller:
+                lane_ctx.sensor_poller.stop()
+            if lane_ctx.rfid_reader:
+                lane_ctx.rfid_reader.stop()
+            if lane_ctx.frontend:
+                try:
+                    lane_ctx.frontend.disconnect()
+                except Exception:
+                    pass
+            if lane_ctx.display:
+                lane_ctx.display.disconnect()
+            if lane_ctx.io:
+                lane_ctx.io.disconnect()
     return 0
 
 

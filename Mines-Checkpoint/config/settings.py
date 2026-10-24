@@ -127,6 +127,10 @@ class Settings:
     device_ip: str = "192.168.10.223"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Set when this settings object is one location inside a multi-lane process.
+    lane_id: str = ""
+    lane_name: str = ""
+    rfid_listen_port: int = 0
 
     # Site profile: mines_entry | tracking_1 | tracking_2 | mines_exit
     checkpoint_type: str = "mines_entry"
@@ -273,18 +277,73 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     else:
         logger.warning("IoT config not found at %s - using defaults", path)
 
-    api_eps = raw.get("api_endpoints", {})
-    display = raw.get("display", {})
+    lanes = load_lane_settings(path, raw)
+    return lanes[0]
 
-    oci_base = (
-        os.getenv("OCI_BASE_URL")
-        or api_eps.get("oci_base_url")
-        or "https://gmuatociexp.gmdcltd.co.in"
+
+def load_lane_settings(
+    config_path: Optional[Path] = None,
+    raw: Optional[Dict[str, Any]] = None,
+) -> list:
+    """One settings object per location. A file with ``lanes`` runs them together."""
+    path = Path(config_path) if config_path else Path()
+    if raw is None:
+        raw = {}
+        if path.is_file():
+            with open(path, "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                raw = loaded
+    lanes = raw.get("lanes") if isinstance(raw, dict) else None
+    if isinstance(lanes, list) and lanes:
+        built = []
+        for lane in lanes:
+            if isinstance(lane, dict):
+                built.append(settings_from_raw(lane, path, prefer_file=True))
+        if built:
+            logger.info("Loaded %s checkpoint lanes from %s", len(built), path)
+            return built
+    return [settings_from_raw(raw if isinstance(raw, dict) else {}, path)]
+
+
+def _prefer(file_value: Any, env_name: str, default: Any, *, prefer_file: bool) -> Any:
+    """Lane files win over .env so four locations keep their own URLs."""
+    env_value = os.getenv(env_name)
+    file_set = file_value not in (None, "")
+    env_set = env_value not in (None, "")
+    if prefer_file and file_set:
+        return file_value
+    if env_set:
+        return env_value
+    if file_set:
+        return file_value
+    return default
+
+
+def settings_from_raw(
+    raw: Dict[str, Any],
+    config_path: Path,
+    *,
+    prefer_file: bool = False,
+) -> Settings:
+    """Build settings for one location. ``raw`` is that location's IoT object."""
+    if not isinstance(raw, dict):
+        raw = {}
+    path = Path(config_path) if config_path else Path()
+    api_eps = raw.get("api_endpoints", {}) or {}
+    display = raw.get("display", {}) or {}
+
+    oci_base = _prefer(
+        api_eps.get("oci_base_url"),
+        "OCI_BASE_URL",
+        "https://gmuatociexp.gmdcltd.co.in",
+        prefer_file=prefer_file,
     )
-    anpr_base = (
-        os.getenv("ANPR_BASE_URL")
-        or api_eps.get("anpr_base_url")
-        or "http://192.168.25.79:5001"
+    anpr_base = _prefer(
+        api_eps.get("anpr_base_url"),
+        "ANPR_BASE_URL",
+        "http://192.168.25.79:5001",
+        prefer_file=prefer_file,
     )
 
     oci_user = (
@@ -342,18 +401,28 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         ),
     }
 
-    anpr_path = api_eps.get("anpr_detect_url") or "/api/detect"
-    if os.getenv("ANPR_DETECT_URL"):
-        anpr_path = os.getenv("ANPR_DETECT_URL")
+    anpr_path = str(
+        _prefer(
+            api_eps.get("anpr_detect_url"),
+            "ANPR_DETECT_URL",
+            "/api/detect",
+            prefer_file=prefer_file,
+        )
+    )
 
     checkpoint_type = normalize_checkpoint_type(
-        os.getenv("CHECKPOINT_TYPE") or raw.get("checkpoint_type")
+        None
+        if prefer_file
+        else (os.getenv("CHECKPOINT_TYPE") or raw.get("checkpoint_type"))
     )
+    if prefer_file:
+        checkpoint_type = normalize_checkpoint_type(raw.get("checkpoint_type"))
     brand = get_brand(checkpoint_type)
+    site_label = str(raw.get("lane_name") or raw.get("wb_type") or "").strip() or brand.label
 
     # Prefer LAN IP written by checkpoint-config finish; .env DEVICE_IP is fallback only
     config_device_ip = str(raw.get("device_ip") or "").strip()
-    env_device_ip = str(os.getenv("DEVICE_IP") or "").strip()
+    env_device_ip = "" if prefer_file else str(os.getenv("DEVICE_IP") or "").strip()
     device_ip = config_device_ip or env_device_ip or "192.168.10.223"
     if config_device_ip:
         logger.info("device_ip from iot_configuration.json: %s", config_device_ip)
@@ -363,13 +432,39 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             env_device_ip,
         )
 
+    if prefer_file and "demo_mode" in raw:
+        demo_mode = bool(raw.get("demo_mode"))
+    else:
+        demo_mode = _env_bool("DEMO_MODE", raw.get("demo_mode", True))
+    if prefer_file and "anpr_enabled" in raw:
+        anpr_enabled = bool(raw.get("anpr_enabled", True))
+    else:
+        anpr_enabled = _env_bool("ANPR_ENABLED", bool(raw.get("anpr_enabled", True)))
+    if prefer_file:
+        anpr_retry = float(raw.get("truck_anpr_retry_timer") or 2)
+        crossing_timeout = float(raw.get("vehicle_crossing_timeout") or 10)
+    else:
+        anpr_retry = float(
+            os.getenv("TRUCK_ANPR_RETRY_TIMER")
+            or raw.get("truck_anpr_retry_timer")
+            or 2
+        )
+        crossing_timeout = float(
+            os.getenv("VEHICLE_CROSSING_TIMEOUT")
+            or raw.get("vehicle_crossing_timeout")
+            or 10
+        )
+
     settings = Settings(
-        demo_mode=_env_bool("DEMO_MODE", raw.get("demo_mode", True)),
+        demo_mode=demo_mode,
         device_ip=device_ip,
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
         checkpoint_type=checkpoint_type,
-        display_name=brand.label,
+        display_name=site_label,
+        lane_id=str(raw.get("lane_id") or ""),
+        lane_name=site_label,
+        rfid_listen_port=int(raw.get("rfid_listen_port") or 0),
         logo_initials=brand.logo,
         service_name=brand.service_name,
         boom_close_style=brand.boom_close_style,
@@ -405,11 +500,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         anpr_password=anpr_pass,
         endpoint_auth=endpoint_auth,
         reset_checkpoint_flag=_env_bool("RESET_CHECKPOINT_FLAG", False),
-        truck_anpr_retry_timer=float(
-            os.getenv("TRUCK_ANPR_RETRY_TIMER")
-            or raw.get("truck_anpr_retry_timer")
-            or 2
-        ),
+        truck_anpr_retry_timer=anpr_retry,
         operator_username=str(
             os.getenv("OPERATOR_USERNAME")
             or api_eps.get("operator_username")
@@ -420,15 +511,8 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             or api_eps.get("operator_password")
             or "gmdc@123"
         ),
-        vehicle_crossing_timeout=float(
-            os.getenv("VEHICLE_CROSSING_TIMEOUT")
-            or raw.get("vehicle_crossing_timeout")
-            or 10
-        ),
-        anpr_enabled=_env_bool(
-            "ANPR_ENABLED",
-            bool(raw.get("anpr_enabled", True)),
-        ),
+        vehicle_crossing_timeout=crossing_timeout,
+        anpr_enabled=anpr_enabled,
         api_debug=_env_bool("API_DEBUG", False) or _env_bool(
             "GMDC_API_DEBUG", False
         ),
@@ -475,7 +559,17 @@ def persist_anpr_enabled(settings: Settings, enabled: bool) -> bool:
             data = json.load(f)
         if not isinstance(data, dict):
             data = {}
-        data["anpr_enabled"] = bool(enabled)
+        lane_id = str(getattr(settings, "lane_id", "") or "")
+        lanes = data.get("lanes")
+        updated_lane = False
+        if lane_id and isinstance(lanes, list):
+            for lane in lanes:
+                if isinstance(lane, dict) and str(lane.get("lane_id") or "") == lane_id:
+                    lane["anpr_enabled"] = bool(enabled)
+                    updated_lane = True
+                    break
+        if not updated_lane:
+            data["anpr_enabled"] = bool(enabled)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
             f.write("\n")

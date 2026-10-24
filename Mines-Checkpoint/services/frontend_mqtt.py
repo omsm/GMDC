@@ -19,6 +19,17 @@ from services.mqtt_ws_broker import get_mqtt_ws_broker
 
 logger = logging.getLogger("mines_checkpoint.services.frontend_mqtt")
 
+_LANE_WS_HANDLERS = []
+
+
+def _dispatch_lane_ws(topic: str, payload: str) -> None:
+    """One WebSocket broker, one handler. Each lane filters its own topics."""
+    for handler in list(_LANE_WS_HANDLERS):
+        try:
+            handler(topic, payload)
+        except Exception:
+            logger.exception("Lane MQTT WS handler failed")
+
 MQTT_AVAILABLE = False
 MQTT_V2 = False
 CallbackAPIVersion = None
@@ -92,11 +103,14 @@ class FrontendMqtt:
         broker: str = "127.0.0.1",
         port: int = 1883,
         client_id: str = "mines_checkpoint_frontend",
+        instance_key: str = "",
         ctx: Any = None,
     ):
         self.broker = broker or "127.0.0.1"
         self.port = int(port or 1883)
         self.client_id = client_id
+        key = str(instance_key or "").strip()
+        self.topic_root = f"wb_frontend/{key}" if key else "wb_frontend"
         self.ctx = ctx
         self._client = None
         self._connected = False
@@ -122,7 +136,8 @@ class FrontendMqtt:
         self._on_free_pass: Optional[Callable[[], None]] = None
         self._on_status_request: Optional[Callable[[], None]] = None
         self._ws_broker = get_mqtt_ws_broker()
-        self._ws_broker.set_incoming_handler(self._on_ws_incoming)
+        _LANE_WS_HANDLERS.append(self._on_ws_incoming)
+        self._ws_broker.set_incoming_handler(_dispatch_lane_ws)
 
         if not MQTT_AVAILABLE:
             logger.warning("paho-mqtt not installed - optional MQTT TCP bridge disabled")
@@ -247,15 +262,25 @@ class FrontendMqtt:
     def register_status_request_handler(self, handler: Callable[[], None]) -> None:
         self._on_status_request = handler
 
+    def _topic(self, name: str) -> str:
+        """Dashboard topic for this lane, e.g. wb_frontend/mines_entry/status."""
+        return f"{self.topic_root}/{name}"
+
     def _on_connect(self, client, userdata, flags, rc):
         self._connected = rc == 0
         if rc != 0:
             logger.error("Frontend MQTT connect rc=%s", rc)
             return
-        logger.info("Frontend MQTT connected %s:%s", self.broker, self.port)
-        client.subscribe("wb_frontend/request_status")
-        client.subscribe("wb_frontend/reset_application")
-        client.subscribe("wb_frontend/free_pass")
+        logger.info(
+            "Frontend MQTT connected %s:%s client_id=%s topics=%s",
+            self.broker,
+            self.port,
+            self.client_id,
+            self.topic_root,
+        )
+        client.subscribe(self._topic("request_status"))
+        client.subscribe(self._topic("reset_application"))
+        client.subscribe(self._topic("free_pass"))
         self.republish_snapshot()
 
     def _on_disconnect(self, client, userdata, rc):
@@ -266,19 +291,19 @@ class FrontendMqtt:
     def _on_message(self, client, userdata, msg):
         topic = msg.topic
         payload = (msg.payload or b"").decode("utf-8", errors="replace")
-        if topic == "wb_frontend/request_status":
+        if topic == self._topic("request_status"):
             logger.info("Frontend requested status snapshot")
             handler = self._on_status_request or self.republish_snapshot
             handler()
             return
-        if topic == "wb_frontend/reset_application":
+        if topic == self._topic("reset_application"):
             logger.info("Frontend requested application reset payload=%s", payload)
             if self._on_reset:
                 threading.Thread(
                     target=self._on_reset, name="FrontendReset", daemon=True
                 ).start()
             return
-        if topic == "wb_frontend/free_pass":
+        if topic == self._topic("free_pass"):
             logger.info("Frontend requested free pass payload=%s", payload)
             if self._on_free_pass:
                 threading.Thread(
@@ -286,19 +311,19 @@ class FrontendMqtt:
                 ).start()
 
     def _on_ws_incoming(self, topic: str, payload: str) -> None:
-        if topic == "wb_frontend/request_status":
+        if topic == self._topic("request_status"):
             logger.info("MQTT WS status request from browser")
             handler = self._on_status_request or self.republish_snapshot
             handler()
             return
-        if topic == "wb_frontend/reset_application":
+        if topic == self._topic("reset_application"):
             logger.info("MQTT WS reset from browser")
             if self._on_reset:
                 threading.Thread(
                     target=self._on_reset, name="FrontendReset", daemon=True
                 ).start()
             return
-        if topic == "wb_frontend/free_pass":
+        if topic == self._topic("free_pass"):
             logger.info("MQTT WS free pass from browser")
             if self._on_free_pass:
                 threading.Thread(
@@ -332,13 +357,13 @@ class FrontendMqtt:
     def publish_position(self, position: int, *, force: bool = False) -> bool:
         self.position = int(position)
         return self._publish_changed(
-            "wb_frontend/position", str(self.position), qos=0, force=force
+            self._topic("position"), str(self.position), qos=0, force=force
         )
 
     def publish_display(self, message: str, *, force: bool = False) -> bool:
         self.display = str(message or "")
         return self._publish_changed(
-            "wb_frontend/display", self.display, qos=0, force=force
+            self._topic("display"), self.display, qos=0, force=force
         )
 
     def publish_rfid(
@@ -350,7 +375,7 @@ class FrontendMqtt:
             {"rfid": self.rfid, "truck_number": self.truck_number}
         )
         return self._publish_changed(
-            "wb_frontend/rfid", payload, qos=0, force=force
+            self._topic("rfid"), payload, qos=0, force=force
         )
 
     def publish_status(
@@ -372,7 +397,7 @@ class FrontendMqtt:
         }
         payload = json.dumps(self.last_status)
         return self._publish_changed(
-            "wb_frontend/status", payload, qos=0, force=force
+            self._topic("status"), payload, qos=0, force=force
         )
 
     def snapshot(self) -> Dict[str, Any]:
@@ -384,7 +409,7 @@ class FrontendMqtt:
         payload = devices if devices is not None else collect_device_status(self.ctx)
         message = json.dumps(payload, sort_keys=True, default=str)
         return self._publish_changed(
-            "wb_frontend/device_status", message, qos=0, force=force
+            self._topic("device_status"), message, qos=0, force=force
         )
 
     def republish_snapshot(self) -> None:

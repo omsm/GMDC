@@ -249,6 +249,16 @@ class CheckpointWorkflow:
         if fe:
             fe.publish_display(msg)
 
+    def _rfid_api_display(self, resp: Optional[OCIResponse], fallback: str) -> str:
+        """LED text from the RFID tag API message, or the fixed fallback."""
+        text = extract_api_message(resp) if resp is not None else ""
+        if not text and resp is not None:
+            text = str(getattr(resp, "operator_message", "") or "").strip()
+        text = " ".join(text.split())
+        if text.lower() in ("ok", "success", "successful", "true", "200", "valid"):
+            return fallback
+        return text or fallback
+
     def _schedule_boom_close(self) -> None:
         """Close the boom after the post-crossing delay."""
         if not self.ctx.boom_barrier:
@@ -651,7 +661,7 @@ class CheckpointWorkflow:
 
         if service_alert is not None:
             sm.trigger(Event.RFID_INVALID)
-            self._announce(MSG_RFID_ERR)
+            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
             self._ui_api_failure(
                 STEP_VALIDATING_RFID,
                 service_alert,
@@ -675,7 +685,7 @@ class CheckpointWorkflow:
                     or detail
                 )
             self._ui_status(STEP_VALIDATING_RFID, "error", detail)
-            self._announce(MSG_RFID_ERR)
+            self._announce(self._rfid_api_display(last_resp, MSG_RFID_ERR))
             logger.info("RFID ERR 1 - waiting %ss", TIMEOUTS.RFID_ERROR_DISPLAY_SEC)
             time.sleep(TIMEOUTS.RFID_ERROR_DISPLAY_SEC)
             sm.trigger(Event.RFID_ERROR_TIMEOUT)
@@ -690,7 +700,12 @@ class CheckpointWorkflow:
             f"Truck No: {txn.vehicle_no or txn.validated_rfid}",
         )
         self._ui_rfid(txn.validated_rfid, txn.vehicle_no or None)
-        self._announce(MSG_RFID_OK_FMT.format(truck=txn.vehicle_no or txn.validated_rfid))
+        self._announce(
+            self._rfid_api_display(
+                last_resp,
+                MSG_RFID_OK_FMT.format(truck=txn.vehicle_no or txn.validated_rfid),
+            )
+        )
 
         # Operator may disable ANPR: skip /api/detect; invalid-truck anpr_status=2.
         # After invalid-truck, anpr_status 0/2 always requires status_check (same as

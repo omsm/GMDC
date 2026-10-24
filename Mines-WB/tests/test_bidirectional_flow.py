@@ -96,7 +96,7 @@ class TestBidirectionalFlow(unittest.TestCase):
         self.assertEqual(kwargs.get("side"), "a")
         ctx.traffic_lights["entry_b"]["entry"].set_red.assert_not_called()
         ctx.traffic_lights["entry_b"]["exit"].set_green.assert_not_called()
-        ctx.exit_boom.close.assert_called()
+        ctx.exit_boom.close.assert_not_called()
         workflow.force_reset()
 
         ctx.display.send.reset_mock()
@@ -264,7 +264,8 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.exit_boom.close.assert_not_called()
         for direction in ("entry_a", "entry_b"):
             ctx.traffic_lights[direction]["entry"].set_green.assert_called()
-            ctx.traffic_lights[direction]["exit"].set_red.assert_called()
+            ctx.traffic_lights[direction]["exit"].set_green.assert_called()
+            ctx.traffic_lights[direction]["exit"].set_red.assert_not_called()
         self.assertIsNone(getattr(workflow, "_boom_close_timer"))
 
     def test_unidirectional_reset_closes_exit_boom_immediately(self):

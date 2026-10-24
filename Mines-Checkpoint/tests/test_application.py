@@ -595,7 +595,7 @@ class TestWorkflow(unittest.TestCase):
         )
         self.workflow.on_rfid_tags(["badtag"])
         self.assertTrue(_wait_state(self.ctx.state_machine, State.IDLE))
-        self.display.send.assert_any_call("RFID ERR@ASK OPERATOR")
+        self.display.send.assert_any_call("fail")
         self.ctx.rfid_cloud.stop.assert_called()
         self.oci.reset_checkpoint.assert_called()
         kwargs = self.oci.reset_checkpoint.call_args.kwargs

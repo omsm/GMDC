@@ -6,6 +6,7 @@ import unittest
 
 from gmdc_common.services.display_service import (
     ConsoleDisplayService,
+    MQTTDisplayService,
     create_display_service,
     data_info_topic,
     data_info_topics_for_ips,
@@ -68,6 +69,53 @@ class DisplayProtocolTests(unittest.TestCase):
         self.assertEqual(st["topic_tx"], "data_info/a")
         self.assertEqual(st["topic_tx_list"], ["data_info/a", "data_info/b"])
         self.assertEqual(st["display_ips"], ["10.0.0.1", "10.0.0.2"])
+
+    def test_single_board_keeps_configured_topic(self):
+        class _Client:
+            def __init__(self):
+                self.published = []
+
+            def publish(self, topic, payload, qos=1):
+                self.published.append((topic, payload, qos))
+
+        message = "No loading slip is available against the RFID."
+        for topic in ("data_info/a", "data_info/b", "data_info/c", "data_info/d"):
+            svc = MQTTDisplayService(
+                broker="127.0.0.1",
+                display_ips=["127.0.0.1"],
+                pcb_mode="a",
+                topic_tx=topic,
+            )
+            client = _Client()
+            self.assertTrue(svc._publish_text(client, message))
+            self.assertEqual(client.published, [(topic, message, 1)])
+            self.assertEqual(svc.get_status()["topic_tx"], topic)
+            client.published.clear()
+            self.assertTrue(svc._publish_text(client, message))
+            self.assertEqual(client.published[0][0], topic)
+
+    def test_bidirectional_side_still_selects_a_or_b(self):
+        class _Client:
+            def __init__(self):
+                self.published = []
+
+            def publish(self, topic, payload, qos=1):
+                self.published.append((topic, payload))
+
+        svc = MQTTDisplayService(
+            broker="127.0.0.1",
+            display_ips=["10.0.0.1", "10.0.0.2"],
+            pcb_mode="b",
+        )
+        client = _Client()
+        self.assertTrue(svc._publish_text(client, "idle"))
+        self.assertEqual(
+            [item[0] for item in client.published],
+            ["data_info/a", "data_info/b"],
+        )
+        client.published.clear()
+        self.assertTrue(svc._publish_text(client, "entry-b", side="b"))
+        self.assertEqual([item[0] for item in client.published], ["data_info/b"])
 
     def test_factory_no_ips_falls_back_console(self):
         svc = create_display_service(

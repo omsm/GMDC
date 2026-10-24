@@ -14,47 +14,91 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("gmdc_common.services.rfid_control")
 
-# Default CUSTOM mode payload (antennas 1-4, site-tuned transmit power)
+
+def align_transmit_power(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Give set_mode one transmitPower array for each enabled antenna.
+
+    Zebra rejects a flat list such as ``[30]`` when one antenna is enabled:
+    the outer array must contain exactly that many inner arrays.
+    """
+    body = dict(payload)
+    antennas = body.get("antennas")
+    power = body.get("transmitPower")
+    if not isinstance(antennas, list) or not antennas:
+        return body
+    if not isinstance(power, list) or not power:
+        return body
+    nested = all(isinstance(item, (list, tuple)) for item in power)
+    if nested and len(power) == len(antennas):
+        return body
+    numbers = []
+    if nested:
+        for item in power:
+            if item:
+                numbers.append(item[0])
+    elif all(
+        isinstance(item, (int, float)) and not isinstance(item, bool) for item in power
+    ):
+        numbers = list(power)
+    else:
+        return body
+    if not numbers:
+        return body
+    if len(numbers) == 1:
+        values = numbers * len(antennas)
+    elif len(numbers) == len(antennas):
+        values = numbers
+    else:
+        return body
+    body["transmitPower"] = 31, 31 # [[value] for value in values]
+    return body
+
+
+# Default CUSTOM mode payload. transmitPower is one inner array per antenna.
 DEFAULT_MODE_PAYLOAD: Dict[str, Any] = {
-  "type": "CUSTOM",
-  "antennaStopCondition": {
-    "type": "DURATION",
-    "value": 100
-  },
-  "antennas": [
-    5
-  ],
-  "query": {
-    "tagpopulation": 10,
-    "sel": "NOT_SL",
-    "session": "S1",
-    "target": "A"
-  },
-  "modeSpecificSettings": {
-    "interval": {
-      "unit": "seconds",
-      "value": 0
+    "type":"CUSTOM",
+    "antennaStopCondition":{
+       "type":"DURATION",
+       "value":150
+    },
+    "antennas":[
+       5,6
+    ],
+    "query":{
+       "tagpopulation":1,
+       "sel":"ALL",
+       "session":"S0",
+       "target":"AB"
+    },
+    "modeSpecificSettings":{
+       "interval":{
+          "unit":"seconds",
+          "value":0
+       }
+    },
+    "selects":[
+       {
+          "target":"S0",
+          "action":"INVB_NOTHING",
+          "membank":"TID",
+          "pointer":6,
+          "length":24,
+          "mask":"800600"
+       }
+    ],
+    "transmitPower":[
+       31,31
+    ],
+    "radioStartConditions":{
+       
+    },
+    "radioStopConditions":{
+       
+    },
+    "reportFilter":{
+       "duration":1,
+       "type":"PER_ANTENNA"
     }
-  },
-  "selects": [
-    {
-      "target": "S1",
-      "action": "INVB_NOTHING",
-      "membank": "TID",
-      "pointer": 6,
-      "length": 24,
-      "mask": "800600"
-    }
-  ],
-  "transmitPower": [
-    30
-  ],
-  "radioStartConditions": {},
-  "radioStopConditions": {},
-  "reportFilter": {
-    "duration": 1,
-    "type": "PER_ANTENNA"
-  }
 }
 
 
@@ -167,9 +211,15 @@ class RFIDCloudControl:
         if not self._bearer_token and not self.login():
             return False
         url = self._url("cloud/mode")
-        body = payload or self.mode_payload
-        logger.info("RFID cloud set mode PUT %s", url)
+        body = align_transmit_power(payload or self.mode_payload)
+        logger.info(
+            "RFID cloud set mode PUT %s antennas=%s transmitPower=%s",
+            url,
+            body.get("antennas"),
+            body.get("transmitPower"),
+        )
         try:
+            print(body)
             resp = self._session.put(
                 url,
                 json=body,

@@ -62,6 +62,25 @@ class DisplayMessageTests(unittest.TestCase):
         txn = MagicMock(vehicle_no="OD14P7339", rfid="RFID1", weight_kg=44750.0)
         self.assertEqual(wf._rfid_ok_display(parsed, txn), "OD14P7339@45000 Kg")
 
+    def test_rfid_api_message_is_sent_to_the_display(self):
+        from services.oci_client import OCIResponse
+
+        wf = MinesWbWorkflow.__new__(MinesWbWorkflow)
+        shown = wf._rfid_api_display(
+            OCIResponse(
+                ok=False,
+                status=403,
+                message="No loading slip is available against the RFID.",
+            ),
+            MSG_RFID_ERR,
+        )
+        self.assertEqual(shown, "No loading slip is available against the RFID.")
+        generic = wf._rfid_api_display(
+            OCIResponse(ok=True, status=200, message="ok"),
+            "OD14AE3900@15000 Kg",
+        )
+        self.assertEqual(generic, "OD14AE3900@15000 Kg")
+
     def test_announce_sends_led_and_frontend(self):
         ctx = MagicMock()
         ctx.display = MagicMock()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from core.app_context import AppContext
+from core.app_context import AppContext, active_context
 from hardware.rfid_reader import extract_id_hexes
 from services.frontend_mqtt import (
     idle_update_progress,
@@ -24,7 +24,7 @@ logger = logging.getLogger("mines_checkpoint.api.endpoints")
 
 def _accept_rfid_payload(payload: Any, source: str):
     """Parse RFID JSON, extract idHex tags, and feed the workflow."""
-    ctx = AppContext.get_instance()
+    ctx = active_context()
     id_hexes = extract_id_hexes(payload)
     logger.info("POST %s tags=%s", source, id_hexes)
 
@@ -100,9 +100,39 @@ def register_routes(app: Flask) -> None:
             501,
         )
 
+    @app.get("/api/lanes")
+    def lanes():
+        host = AppContext.get_instance()
+        running = list(getattr(host, "lanes", None) or [])
+        if not running:
+            running = [host]
+        return jsonify(
+            {
+                "status": 200,
+                "lanes": [
+                    {
+                        "lane_id": (lane.settings.lane_id if lane.settings else ""),
+                        "name": (lane.settings.display_name if lane.settings else ""),
+                        "rfid_listen_port": (
+                            lane.settings.rfid_listen_port if lane.settings else 0
+                        ),
+                        "state": lane.state_machine.current_state.name
+                        if lane.state_machine
+                        else "UNKNOWN",
+                        "anpr_enabled": bool(
+                            getattr(lane.settings, "anpr_enabled", True)
+                        )
+                        if lane.settings
+                        else True,
+                    }
+                    for lane in running
+                ],
+            }
+        )
+
     @app.get("/api/status")
     def status():
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         return jsonify(ctx.status_snapshot())
 
     # ------------------------------------------------------------------
@@ -132,6 +162,16 @@ def register_routes(app: Flask) -> None:
             # logger.info("rfid_data payload (raw): %s", payload)
 
         return _accept_rfid_payload(payload, "/rfid_data")
+
+    @app.post("/rfid_data/<lane_id>")
+    def rfid_data_for_lane(lane_id: str):
+        try:
+            payload: Any = request.get_json(force=True, silent=False)
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 400
+        if payload is None:
+            return jsonify({"status": "error", "message": "Empty body"}), 400
+        return _accept_rfid_payload(payload, f"/rfid_data/{lane_id}")
 
     @app.route("/rfid_management", methods=["GET", "POST"])
     def rfid_management():
@@ -170,7 +210,7 @@ def register_routes(app: Flask) -> None:
                 "POST /rfid_data_from_mobile_app rfid_data=%s", rfid_str
             )
 
-            ctx = AppContext.get_instance()
+            ctx = active_context()
             if not ctx.workflow:
                 raise RuntimeError("Workflow not ready")
 
@@ -213,7 +253,7 @@ def register_routes(app: Flask) -> None:
         data = request.get_json(silent=True) or {}
         username = str(data.get("username") or "").strip()
         password = str(data.get("password") or "")
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         expected_user = "admin"
         expected_pass = "gmdc@123"
         settings = getattr(ctx, "settings", None)
@@ -231,14 +271,14 @@ def register_routes(app: Flask) -> None:
 
     @app.post("/api/reset")
     def reset():
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         if ctx.workflow:
             ctx.workflow.force_reset()
         return jsonify({"status": 200, "message": "Application reset to IDLE"})
 
     @app.post("/api/free-pass")
     def free_pass():
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         if ctx.workflow:
             ctx.workflow.start_free_pass()
         return jsonify(
@@ -250,7 +290,7 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/anpr-enabled")
     def get_anpr_enabled():
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         enabled = True
         if ctx.settings is not None:
             enabled = bool(getattr(ctx.settings, "anpr_enabled", True))
@@ -270,7 +310,7 @@ def register_routes(app: Flask) -> None:
             enabled = raw.strip().lower() in ("1", "true", "yes", "on")
         else:
             enabled = bool(raw)
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         if not ctx.settings:
             return jsonify({"status": 503, "message": "Settings not ready"}), 503
         ok = persist_anpr_enabled(ctx.settings, enabled)
@@ -288,7 +328,7 @@ def register_routes(app: Flask) -> None:
     @app.post("/api/simulate-exit")
     def simulate_exit():
         """Demo helper: pulse exit sensor / trigger crossing complete."""
-        ctx = AppContext.get_instance()
+        ctx = active_context()
         if ctx.settings and ctx.settings.demo_mode and ctx.sensor_poller:
             ctx.sensor_poller.simulate_exit()
             return jsonify({"status": 200, "message": "Exit sensor simulated"})

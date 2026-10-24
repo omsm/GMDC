@@ -86,7 +86,9 @@ def _resolve_tl_pins(
 ) -> Tuple[Optional[int], Optional[int]]:
     """
     Resolve traffic-light DO addresses.
-    relay mode: single pin as red_pin (HIGH=red, LOW=green per relay_logic).
+    relay mode: single pin as red_pin.
+    on_state green: HIGH=green (NO), LOW=red (NC).
+    on_state red: HIGH=red, LOW=green.
     direct mode: red_pin + green_pin.
     Bidirectional pins live under entry_a / entry_b, each with entry and exit.
     """
@@ -158,6 +160,12 @@ def _build_hardware(ctx: AppContext) -> None:
         logger.error("I/O controller failed to connect (continuing)")
 
     do_start = int(io_cfg.get("digital_outputs", {}).get("start_address") or 0)
+    tl_section = io_cfg.get("traffic_lights") or {}
+    on_state = str(
+        (tl_section.get("relay_logic") or {}).get("on_state") or "green"
+    ).strip().lower()
+    # Site relays: coil OFF = NC = red, coil ON = NO = green.
+    relay_on_green = _io_mode(tl_section) == "relay" and on_state != "red"
 
     ctx.traffic_lights = {}
     if settings.is_bidirectional():
@@ -174,12 +182,14 @@ def _build_hardware(ctx: AppContext) -> None:
                     red_pin=entry_red,
                     green_pin=entry_green,
                     name=f"{direction}_entry",
+                    relay_on_green=relay_on_green,
                 ),
                 "exit": TrafficLight(
                     ctx.io,
                     red_pin=exit_red,
                     green_pin=exit_green,
                     name=f"{direction}_exit",
+                    relay_on_green=relay_on_green,
                 ),
             }
         ctx.entry_tl = ctx.traffic_lights["entry_a"]["entry"]
@@ -192,10 +202,18 @@ def _build_hardware(ctx: AppContext) -> None:
         entry_red, entry_green = _resolve_tl_pins(io_cfg, "entry", do_start)
         exit_red, exit_green = _resolve_tl_pins(io_cfg, "exit", do_start)
         ctx.entry_tl = TrafficLight(
-            ctx.io, red_pin=entry_red, green_pin=entry_green, name="entry"
+            ctx.io,
+            red_pin=entry_red,
+            green_pin=entry_green,
+            name="entry",
+            relay_on_green=relay_on_green,
         )
         ctx.exit_tl = TrafficLight(
-            ctx.io, red_pin=exit_red, green_pin=exit_green, name="exit"
+            ctx.io,
+            red_pin=exit_red,
+            green_pin=exit_green,
+            name="exit",
+            relay_on_green=relay_on_green,
         )
 
     e_open, e_close, e_en = _resolve_boom_pins(io_cfg, "entry", do_start)

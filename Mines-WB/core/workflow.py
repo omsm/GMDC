@@ -61,6 +61,10 @@ from services.frontend_mqtt import (
 
 logger = logging.getLogger("mines_wb.core.workflow")
 
+# A short MQTT gap must not play Digitizer_error. Announce only after this
+# many seconds of continuous silence past is_alive() going false.
+DIGITIZER_HANG_GRACE_SEC = 10.0
+
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 
 
@@ -88,6 +92,8 @@ class MinesWbWorkflow:
         self._timer_lock = threading.Lock()
         self._rfid_control_lock = threading.Lock()
         self._digitizer_hang_announced = False
+        self._digitizer_hang_since: Optional[float] = None
+        self._bidirectional_boom_close_ok = False
         self._awaiting_rfid = False
         self._forward_loop_active = False
         self._vadhghat_diff_active = False
@@ -178,15 +184,29 @@ class MinesWbWorkflow:
             else:
                 self.ctx.exit_boom.close()
 
+    def _set_light_contact(self, light, normally_open: bool) -> None:
+        """Drive one relay to NO (coil on) or NC (coil off)."""
+        if not light:
+            return
+        on_green = getattr(light, "relay_on_green", False)
+        if not isinstance(on_green, bool):
+            on_green = False
+        if normally_open == on_green:
+            light.set_green()
+        else:
+            light.set_red()
+
     def _set_idle_traffic_lights(self) -> None:
-        """Entry lights green, exit lights red. Both sides when bidirectional."""
+        """Unidirectional: entry green, exit red.
+
+        Bidirectional: channel 0 and channel 1 normally closed.
+        """
         if self._is_bidirectional() and getattr(self.ctx, "traffic_lights", None):
             for direction in ("entry_a", "entry_b"):
                 entry_tl, exit_tl, _boom = self._side(direction)
-                if entry_tl:
-                    entry_tl.set_green()
-                if exit_tl:
-                    exit_tl.set_red()
+                self._set_light_contact(exit_tl or entry_tl, normally_open=False)
+                if entry_tl and entry_tl is not exit_tl:
+                    self._set_light_contact(entry_tl, normally_open=False)
             return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_green()
@@ -206,7 +226,7 @@ class MinesWbWorkflow:
     def apply_idle_hardware(self, delay_exit_boom_close: bool = False) -> None:
         """
         Unidirectional: entry green + open; exit red + closed.
-        Bidirectional: both entry lights green, both exit lights red, both booms open.
+        Bidirectional: channels 0 and 1 normally closed, channels 2 and 3 normally open.
 
         ``delay_exit_boom_close`` holds the unidirectional exit boom up for
         ``TIMEOUTS.BOOM_CLOSE_DELAY_SEC`` so a truck that just cleared the exit
@@ -234,7 +254,7 @@ class MinesWbWorkflow:
             self._ui_devices()
         self._stop_rfid_reader()
         if self._is_bidirectional():
-            boom_note = "both booms open"
+            boom_note = "channels 0-1 closed, channels 2-3 open"
         elif delay_exit_boom_close:
             boom_note = f"exit boom closing in {TIMEOUTS.BOOM_CLOSE_DELAY_SEC}s"
         else:
@@ -260,17 +280,67 @@ class MinesWbWorkflow:
             "_boom_close_timer", TIMEOUTS.BOOM_CLOSE_DELAY_SEC, _close
         )
 
+    def _close_output_channel_2(self) -> None:
+        """Exit relay (channel 2) normally closed: coil off, NC = red.
+
+        Held closed whenever the platform sensor (sensor 2) is high.
+        """
+        if self._is_bidirectional():
+            _entry_tl, exit_tl, _boom = self._side(self._active_direction_key())
+        else:
+            exit_tl = self.ctx.exit_tl
+        if exit_tl:
+            exit_tl.set_red()
+            logger.info("Output channel 2 closed (platform sensor high)")
+        self._ui_devices()
+
+    def _close_both_booms(self) -> None:
+        """Channels 2 and 3 normally closed while the truck is only on sensor 2."""
+        if self.ctx.entry_boom:
+            self.ctx.entry_boom.close()
+        if self.ctx.exit_boom:
+            self.ctx.exit_boom.close()
+        logger.info("Output channels 2 and 3 closed (sensor 2 only)")
+        self._ui_devices()
+
+    def _open_both_booms(self) -> None:
+        """Channels 2 and 3 normally open after boom-close, and while idle."""
+        if self.ctx.entry_boom:
+            self.ctx.entry_boom.open()
+        if self.ctx.exit_boom:
+            self.ctx.exit_boom.open()
+        self._ui_devices()
+
+    def _only_sensor_2(self) -> bool:
+        """Sensor 2 is the only beam cut. Entry and exit sensors are clear."""
+        return self._platform_clear_except_wb()
+
+    def _apply_boom_close_side_outputs(self) -> None:
+        """After boom-close: both booms open, and one departure light normally open.
+
+        Entry A leaves toward B, so only channel 1 is normally open.
+        Entry B leaves toward A, so only channel 0 is normally open.
+        """
+        self._open_both_booms()
+        entry_b = self._active_direction_key() == "entry_b"
+        for direction, normally_open in (
+            ("entry_a", entry_b),
+            ("entry_b", not entry_b),
+        ):
+            entry_tl, exit_tl, _boom = self._side(direction)
+            self._set_light_contact(exit_tl or entry_tl, normally_open=normally_open)
+        side = "entry B" if entry_b else "entry A"
+        channel = 0 if entry_b else 1
+        logger.info(
+            "Boom-close outputs %s: channel %s normally open, booms open",
+            side,
+            channel,
+        )
+        self._ui_devices()
+
     def _set_entry_closed(self) -> None:
         if self._is_bidirectional():
-            approach = (
-                "entry_b" if self._active_direction_key() == "entry_b" else "entry_a"
-            )
-            entry_tl, _exit_tl, boom = self._side(approach)
-            if entry_tl:
-                entry_tl.set_red()
-            if boom:
-                boom.close()
-            self._ui_devices()
+            self._close_both_booms()
             return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_red()
@@ -281,6 +351,16 @@ class MinesWbWorkflow:
     def _grant_exit_hardware(self) -> None:
         # A pending post-crossing close must not drop the boom on this truck.
         self._cancel_timer("_boom_close_timer")
+        if self._is_bidirectional() and self._bidirectional_boom_close_ok:
+            self._bidirectional_boom_close_ok = False
+            self._apply_boom_close_side_outputs()
+            self._send_display(MSG_EXIT)
+            fe = self._frontend()
+            if fe:
+                fe.publish_display(MSG_EXIT)
+                fe.publish_device_status()
+            logger.info("Exit granted after boom-close")
+            return
         if self._is_bidirectional():
             depart_a = self._active_direction_key() == "entry_b"
             approach = "entry_b" if depart_a else "entry_a"
@@ -425,6 +505,16 @@ class MinesWbWorkflow:
         if fe:
             fe.publish_display(msg)
         logger.info("Announce: %s", msg)
+
+    def _rfid_api_display(self, resp: Any, fallback: str) -> str:
+        """LED text from the RFID tag API message, or the fixed fallback."""
+        text = extract_api_message(resp) if resp is not None else ""
+        if not text and resp is not None:
+            text = str(getattr(resp, "operator_message", "") or "").strip()
+        text = " ".join(text.split())
+        if text.lower() in ("ok", "success", "successful", "true", "200", "valid"):
+            return fallback
+        return text or fallback
 
     def _voice(self):
         return self.ctx.voice
@@ -828,6 +918,7 @@ class MinesWbWorkflow:
             return
         alive = bool(dig.is_alive())
         if alive:
+            self._digitizer_hang_since = None
             if self._digitizer_hang_announced:
                 self._digitizer_hang_announced = False
                 logger.info("Digitizer decoder heartbeat restored")
@@ -837,7 +928,13 @@ class MinesWbWorkflow:
                     "Digitizer decoder online.",
                 )
             return
+        now = time.monotonic()
+        if self._digitizer_hang_since is None:
+            self._digitizer_hang_since = now
+            return
         if self._digitizer_hang_announced:
+            return
+        if now - self._digitizer_hang_since < DIGITIZER_HANG_GRACE_SEC:
             return
         self._digitizer_hang_announced = True
         logger.warning("Digitizer decoder heartbeat lost — notifying operator")
@@ -1056,8 +1153,6 @@ class MinesWbWorkflow:
         self._positioning_zero_exit = False
         self._stop_idle_s2_s3_announcement()
         self._stop_idle_weight_announcement(stop_audio=True)
-        if self._is_bidirectional():
-            self._hold_opposite_side(direction)
         if self.ctx.transactions:
             self.ctx.transactions.begin()
             self.ctx.transactions.direction = direction
@@ -1126,21 +1221,15 @@ class MinesWbWorkflow:
         if sm.current_state == State.VEHICLE_POSITIONING and self._sensor_cut("wb"):
             self.on_wb_occupied()
 
-    def _hold_opposite_side(self, direction: str) -> None:
-        """Close the boom on the side the truck did not enter.
-
-        That side's traffic lights and display stay on the idle pattern.
-        """
-        other = "entry_a" if str(direction).upper() == "ENTRY_B" else "entry_b"
-        _entry_tl, _exit_tl, boom = self._side(other)
-        if boom:
-            boom.close()
-        self._ui_devices()
-
     def on_wb_occupied(self) -> None:
         sm = self.ctx.state_machine
         if not sm or sm.current_state == State.FREE_PASS:
             return
+        if self._is_bidirectional():
+            if self._only_sensor_2():
+                self._close_both_booms()
+        else:
+            self._close_output_channel_2()
         if sm.current_state == State.IDLE:
             self._maybe_announce_idle_s2_s3()
             return
@@ -1318,7 +1407,7 @@ class MinesWbWorkflow:
             try:
                 if resp.ok:
                     self._stop_rfid_reader()
-                    self._apply_valid_rfid(rfid, resp.truck_details)
+                    self._apply_valid_rfid(rfid, resp.truck_details, resp)
                     sm.trigger(Event.RFID_RECEIVED)
                     sm.trigger(Event.RFID_VALID)
                     self._after_rfid_valid()
@@ -1612,7 +1701,7 @@ class MinesWbWorkflow:
                 service_alert = resp
                 break
             if resp.ok:
-                self._apply_valid_rfid(tag, resp.truck_details)
+                self._apply_valid_rfid(tag, resp.truck_details, resp)
                 valid = True
                 break
 
@@ -1622,7 +1711,7 @@ class MinesWbWorkflow:
             if voice:
                 voice.rfid_api_error()
             self._stop_rfid_reader()
-            self._announce(MSG_RFID_ERR)
+            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
             self._ui_api_failure(
                 STEP_VALIDATING_RFID,
                 service_alert,
@@ -1647,13 +1736,16 @@ class MinesWbWorkflow:
                     or extract_api_message(last_resp)
                     or ""
                 )
-            self._enter_rfid_error(message=api_msg)
+            self._enter_rfid_error(
+                message=api_msg,
+                display_text=self._rfid_api_display(last_resp, MSG_RFID_ERR),
+            )
             return
 
         sm.trigger(Event.RFID_VALID)
         self._after_rfid_valid()
 
-    def _apply_valid_rfid(self, rfid: str, truck_details: str) -> None:
+    def _apply_valid_rfid(self, rfid: str, truck_details: str, resp: Any = None) -> None:
         txn = self.ctx.transactions
         if not txn:
             return
@@ -1674,7 +1766,9 @@ class MinesWbWorkflow:
             "success",
             f"RFID validated: {txn.vehicle_no or txn.rfid}",
         )
-        self._announce(self._rfid_ok_display(parsed, txn))
+        self._announce(
+            self._rfid_api_display(resp, self._rfid_ok_display(parsed, txn))
+        )
 
     def _rfid_ok_display(self, parsed: Dict[str, str], txn) -> str:
         """
@@ -1710,9 +1804,10 @@ class MinesWbWorkflow:
         message: str = "",
         *,
         step: str = STEP_VALIDATING_RFID,
+        display_text: str = "",
     ) -> None:
         self._stop_rfid_reader()
-        self._announce(MSG_RFID_ERR)
+        self._announce(str(display_text or "").strip() or MSG_RFID_ERR)
         detail = str(message or "").strip() or "RFID validation failed."
         self._ui_status(step, "error", detail)
         sm = self.ctx.state_machine
@@ -2258,6 +2353,7 @@ class MinesWbWorkflow:
                 close.ok,
                 close.status,
             )
+            self._bidirectional_boom_close_ok = close.status == 200
             if close.status != 200:
                 self._ui_api_failure(
                     STEP_EXIT_START,
@@ -2335,6 +2431,7 @@ class MinesWbWorkflow:
             close.ok,
             close.status,
         )
+        self._bidirectional_boom_close_ok = close.status == 200
         if close.status != 200:
             self._ui_api_failure(
                 STEP_EXIT_START,
