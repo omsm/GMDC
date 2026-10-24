@@ -26,10 +26,10 @@ I've analyzed the transcript and the live workspace. Full briefing is in [GMDC C
 GMDC mine-yard IoT: one PC per checkpoint, RFID → ANPR → Modbus (TL/boom/sensors) → Oracle OCI, plus weighbridge digitizer and an MQTT/WebSocket operator dashboard.
 
 **Pipeline:** Mines Entry → Tare WB → Tracking-1 → Vadaghat → Tracking-2 → Gross WB → Mines Exit
-
+ 
 ### What’s on disk now
 | Piece | Role |
-|--------|------|
+|--------|------|git
 | `gmdc_common/` | Shared hardware, RFID cloud, display, voice, `BaseStateMachine` |
 | `checkpoint-config/` | Commissioning UI → `iot_configuration.json` |
 | `digitizer-app/` | Serial weight reader, HTTP **:8800** |
