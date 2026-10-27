@@ -21,6 +21,7 @@ from config.constants import (
     MSG_RFID_ERR,
     MSG_RFID_OK_FMT,
     MSG_WEIGHT_DETAILS_FMT,
+    MSG_INVALID_WEIGHT,
     MSG_WEIGHING,
     MSG_WEIGHING_FMT,
     TIMEOUTS,
@@ -104,6 +105,7 @@ class MinesWbWorkflow:
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
         self._positioning_weight_seen = False
+        self._positioning_last_weight: Optional[float] = None
         self._positioning_zero_exit = False
         self._rfid_started_direction = ""
         self._pending_rfid_tags: Optional[tuple[List[str], List[dict]]] = None
@@ -839,27 +841,44 @@ class MinesWbWorkflow:
             return
         if weight > 0.0:
             self._positioning_weight_seen = True
+            self._positioning_last_weight = float(weight)
             return
         if not self._positioning_weight_seen:
             return
         if not self._worker_lock.acquire(blocking=False):
             return
         self._positioning_zero_exit = True
+        last_weight = float(self._positioning_last_weight or 0.0)
+        settings = self.ctx.settings
+        misc_min = float(
+            getattr(settings, "misc_min_weight_kg", None) or TIMEOUTS.MISC_MIN_WEIGHT
+        )
 
         def _run() -> None:
             try:
                 current = self.ctx.state_machine
                 if not current or current.current_state != State.VEHICLE_POSITIONING:
                     return
-                logger.warning(
-                    "Weight returned to 0 before the vehicle was only on the weighbridge"
-                )
                 self._cancel_timer("_pos_timer")
                 self._stop_move_forward_announcement(stop_audio=True)
                 self._stop_backward_announcement(stop_audio=False)
                 self._play_check_weighbridge_weight()
-                if current.current_state == State.VEHICLE_POSITIONING:
-                    self._enter_exit_granted(reason="weight_zero_error")
+                if current.current_state != State.VEHICLE_POSITIONING:
+                    return
+                if last_weight <= misc_min:
+                    logger.warning(
+                        "Weight returned to 0 after %.1f kg (<= misc min %.1f) - reset IDLE",
+                        last_weight,
+                        misc_min,
+                    )
+                    self.force_reset(stop_audio=False)
+                    return
+                logger.warning(
+                    "Weight returned to 0 after %.1f kg (> misc min %.1f) - grant exit",
+                    last_weight,
+                    misc_min,
+                )
+                self._enter_exit_granted(reason="weight_zero_error")
             finally:
                 self._worker_lock.release()
 
@@ -1118,6 +1137,7 @@ class MinesWbWorkflow:
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
         self._positioning_weight_seen = False
+        self._positioning_last_weight = None
         self._positioning_zero_exit = False
         for name in (
             "_pos_timer",
@@ -1150,6 +1170,7 @@ class MinesWbWorkflow:
         if not sm or not sm.trigger(Event.ENTRY_SENSOR):
             return
         self._positioning_weight_seen = False
+        self._positioning_last_weight = None
         self._positioning_zero_exit = False
         self._stop_idle_s2_s3_announcement()
         self._stop_idle_weight_announcement(stop_audio=True)
@@ -1605,30 +1626,82 @@ class MinesWbWorkflow:
         min_kg = settings.min_weight_kg or TIMEOUTS.MIN_WEIGHT_KG
         if self.ctx.transactions:
             self.ctx.transactions.weight_kg = float(weight)
-        # LED: Checking Weight@{current digitizer weight}
         try:
             weight_disp = int(round(float(weight)))
         except (TypeError, ValueError):
             weight_disp = weight
-        self._announce(MSG_WEIGHING_FMT.format(weight=weight_disp))
         fe = self._frontend()
         if fe:
             fe.publish_digitizer(weight)
 
         if float(weight) <= min_kg:
             logger.warning(
-                "Weight %.1f kg <= min %.1f - announce weight error then IDLE",
+                "Weight %.1f kg <= min %.1f - wait until weight is 0 before IDLE",
                 weight,
                 min_kg,
             )
-            if voice:
-                voice.weight_error()
+            self._announce(MSG_INVALID_WEIGHT)
+            self._ui_status(
+                STEP_READING_WEIGHT,
+                "error",
+                f"Invalid weight {weight_disp} kg - clear the platform.",
+            )
+            self._wait_for_zero_weight_after_low()
             sm.trigger(Event.WEIGHT_LOW)
-            self.force_reset(stop_audio=False)
+            self.force_reset(stop_audio=True)
             return
 
+        self._announce(MSG_WEIGHING_FMT.format(weight=weight_disp))
         sm.trigger(Event.WEIGHT_OK)
         self._enter_rfid_read()
+
+    def _poll_digitizer_weight(self) -> Optional[float]:
+        """Current digitizer weight for low-weight wait; prefers the live feed."""
+        live = self._live_digitizer_weight()
+        if live is not None:
+            return live
+        dig = getattr(self.ctx, "digitizer", None)
+        if dig and hasattr(dig, "get_current_weight"):
+            weight = dig.get_current_weight()
+            if weight is not None:
+                try:
+                    return float(weight)
+                except (TypeError, ValueError):
+                    return None
+        if dig and hasattr(dig, "read_stable_weight"):
+            result = dig.read_stable_weight() or {}
+            if result.get("ok") and result.get("weight") is not None:
+                try:
+                    return float(result.get("weight"))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _wait_for_zero_weight_after_low(self) -> None:
+        """
+        Stay in WEIGHT_CAPTURE after a below-min reading.
+
+        Loop the existing weight-error announcement and keep reading the
+        digitizer until the platform weight is 0 (or Reset stops the wait).
+        """
+        while not self._manual_stop.is_set():
+            sm = self.ctx.state_machine
+            if not sm or sm.current_state != State.WEIGHT_CAPTURE:
+                logger.info("Low-weight wait stopped - state changed")
+                break
+            weight = self._poll_digitizer_weight()
+            if weight is not None:
+                fe = self._frontend()
+                if fe:
+                    fe.publish_digitizer(weight)
+                if float(weight) <= 0.0:
+                    logger.info("Low-weight wait ended - platform weight is 0")
+                    break
+            voice = self._voice()
+            if voice:
+                voice.weight_error()
+            else:
+                time.sleep(TIMEOUTS.SENSOR_POLL_SEC)
 
     def _enter_rfid_read(self) -> None:
         sm = self.ctx.state_machine

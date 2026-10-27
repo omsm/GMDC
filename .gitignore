@@ -51,6 +51,7 @@ pip-delete-this-directory.txt
 **/captures/
 TareWb-App/images/
 Tracking-point-1/images/
+Mines-Checkpoint/images/
 *.tmp
 *.temp
 *.bak

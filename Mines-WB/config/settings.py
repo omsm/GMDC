@@ -184,6 +184,8 @@ class Settings:
     digitizer_topic_weight: str = "gmdc/digitizer/weight"
     digitizer_topic_request: str = "gmdc/digitizer/request"
     min_weight_kg: float = 5000.0
+    # Person / animal max weight during positioning (reset IDLE instead of exit)
+    misc_min_weight_kg: float = 200.0
 
     # POST reset_checkpoint only when RESET_CHECKPOINT_FLAG=true
     reset_checkpoint_flag: bool = False
@@ -640,6 +642,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             or "gmdc/digitizer/request"
         ),
         min_weight_kg=float(os.getenv("MIN_WEIGHT_KG") or 5000),
+        misc_min_weight_kg=float(os.getenv("MISC_MIN_WEIGHT") or 200),
         top_camera_rtsp_url=str(
             os.getenv("TOP_CAMERA_RTSP_URL")
             or top_cam.get("rtsp_url")

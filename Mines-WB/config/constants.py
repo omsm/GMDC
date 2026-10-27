@@ -74,6 +74,8 @@ class TIMEOUTS:
     DIGITIZER_TIMEOUT_SEC = 30.0
     SENSOR_POLL_SEC = 0.3
     MIN_WEIGHT_KG = 5000.0  # 5 ton gate before RFID
+    # Max weight treated as person/animal during positioning (kg)
+    MISC_MIN_WEIGHT = 200.0
     ANPR_ERR_2_DISPLAY_SEC = 5.0
     WEIGHT_ERROR_DISPLAY_SEC = 5.0
     WEIGHT_CONFIRM_POLL_SEC = 5.0
@@ -99,6 +101,7 @@ _TIMEOUT_ENV_ATTRS = (
     "DIGITIZER_TIMEOUT_SEC",
     "SENSOR_POLL_SEC",
     "MIN_WEIGHT_KG",
+    "MISC_MIN_WEIGHT",
     "ANPR_ERR_2_DISPLAY_SEC",
     "WEIGHT_ERROR_DISPLAY_SEC",
     "WEIGHT_CONFIRM_POLL_SEC",
@@ -119,17 +122,18 @@ def apply_timeouts_from_env() -> None:
             logger.warning("Ignoring invalid %s=%r", attr, raw)
     MOVE_FORWARD_INTERVAL_SEC = TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC
 
-MSG_IDLE = "   Enter@  Vehicle"
+MSG_IDLE = "Enter@Vehicle"
 MSG_MOVE_FORWARD = "    MOVE@  FORWARD"
 MSG_MOVE_BACKWARD = "  MOVE@  BACKWARD"
-MSG_WEIGHING_FMT = "Weight@{weight}"
+MSG_WEIGHING_FMT = "Tare Weight@{weight}"
 MSG_WEIGHING = " Checking@  Weight"
-MSG_RFID_ERR = "RFID ERR@ASK OPERATOR"
+MSG_INVALID_WEIGHT = "Invalid Weight"
+MSG_RFID_ERR = "RFID Invalid"
 # Tare (T): unladen; Vadaghat/Gross (V/G): laden — see Workflow._rfid_ok_display
 MSG_RFID_OK_FMT = "{truck}@{weight} Kg"
 MSG_ANPR_ERR = "ANPR ERROR@ERR-0"
 MSG_ANPR_ERR_2 = "ANPR ERROR@ERR-2"
-MSG_ANPR_API_ERR = "ANPR ERROR@ASK OPERATOR"
+MSG_ANPR_API_ERR = "ANPR Server@Unreachable"
 MSG_WEIGHT_DETAILS_FMT = "{truck} Weight@{weight} Kg"
 MSG_EXIT = "   EXIT@  GRANTED"
 MSG_FREE_PASS = "   FREE@  PASS"

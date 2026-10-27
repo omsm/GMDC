@@ -322,6 +322,7 @@ class TestBidirectionalFlow(unittest.TestCase):
         from config.constants import State
 
         workflow, ctx = self._make_workflow()
+        ctx.settings.misc_min_weight_kg = 200.0
         ctx.sensor_poller = MagicMock()
         ctx.sensor_poller.get_status.return_value = {
             "entry_active": True,
@@ -351,6 +352,45 @@ class TestBidirectionalFlow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
         ctx.voice.check_weighbridge_weight.assert_called()
         ctx.exit_boom.open.assert_called()
+        workflow.force_reset()
+
+    def test_misc_weight_drop_before_wb_only_resets_idle(self):
+        import time
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.misc_min_weight_kg = 200.0
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": False,
+            "exit_active": False,
+        }
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 0.0
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+
+        ctx.digitizer.get_current_weight.return_value = 150.0
+        workflow._on_digitizer_update()
+        ctx.digitizer.get_current_weight.return_value = 0.0
+        workflow._on_digitizer_update()
+
+        saw_exit = False
+        for _ in range(50):
+            if ctx.state_machine.current_state == State.EXIT_GRANTED:
+                saw_exit = True
+                break
+            if (
+                ctx.state_machine.current_state == State.IDLE
+                and ctx.voice.check_weighbridge_weight.called
+            ):
+                break
+            time.sleep(0.02)
+        self.assertFalse(saw_exit)
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.voice.check_weighbridge_weight.assert_called()
         workflow.force_reset()
 
     def test_entry_clear_while_wb_cut_starts_weight(self):

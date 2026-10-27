@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config.constants import (
@@ -23,6 +25,11 @@ from config.constants import (
 from core.app_context import AppContext
 from core.state_machine import StateMachine
 from core.transaction import TransactionStore
+from gmdc_common.hardware.camera import (
+    capture_rtsp_snapshot,
+    get_local_ip,
+    sanitize_filename_part,
+)
 from services.frontend_mqtt import (
     STEP_ENTRY_GRANTED,
     STEP_EXIT_COMPLETED,
@@ -51,6 +58,8 @@ from services.api_errors import (
 )
 
 logger = logging.getLogger("mines_checkpoint.core.workflow")
+
+IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 
 
 class CheckpointWorkflow:
@@ -728,6 +737,9 @@ class CheckpointWorkflow:
                 "device_ip": txn.device_ip or settings.device_ip,
                 "anpr_status": 2,
             }
+            photo = self._capture_front_photo()
+            if photo:
+                txn.anpr_raw["front_image"] = photo
             sm.trigger(Event.ANPR_MISMATCH)
             invalid_resp = oci.invalid_truck_number(
                 rfid=txn.validated_rfid,
@@ -845,6 +857,71 @@ class CheckpointWorkflow:
             )
         if anpr.status in (0, 2):
             self._manual_update_loop(sm, txn, oci, settings.device_ip)
+
+    def _lane_image_dir(self) -> Path:
+        """One folder per checkpoint location, for example images/traffic_in."""
+        settings = self.ctx.settings
+        lane = ""
+        if settings:
+            lane = str(
+                getattr(settings, "lane_id", "")
+                or getattr(settings, "lane_name", "")
+                or ""
+            )
+        return IMAGES_DIR / sanitize_filename_part(lane, "checkpoint")
+
+    def _front_rtsp_url(self) -> str:
+        """Front camera URL from this lane's iot_configuration camera.front.rtsp_url."""
+        settings = self.ctx.settings
+        raw = getattr(settings, "raw_config", None) if settings else None
+        camera = raw.get("camera") if isinstance(raw, dict) else None
+        url = ""
+        if isinstance(camera, dict):
+            front = camera.get("front")
+            if isinstance(front, dict):
+                url = str(front.get("rtsp_url") or "")
+            if not url:
+                url = str(camera.get("rtsp_url") or "")
+        return url.replace("'&'", "&").strip()
+
+    def _capture_front_photo(self) -> str:
+        """
+        Grab one JPEG from the lane front camera.
+
+        Saved as images/<lane_id>/{token}_{time}_{truck}_{ip}_FRONT.jpg.
+        Returns that path relative to the app folder, or "" when capture fails.
+        """
+        txn_store = self.ctx.transactions
+        txn = txn_store.current if txn_store else None
+        settings = self.ctx.settings
+        url = self._front_rtsp_url()
+        if not url:
+            logger.warning("Front camera RTSP URL not configured")
+            return ""
+        parsed = parse_truck_details((txn.truck_details if txn else "") or "")
+        token = sanitize_filename_part(
+            (parsed.get("token_no") if parsed else "")
+            or (txn.token_no if txn else "")
+            or "TOKEN",
+            "TOKEN",
+        )
+        truck = sanitize_filename_part(
+            (txn.vehicle_no if txn else "")
+            or (parsed.get("vehicle_no") if parsed else "")
+            or "UNKNOWN",
+            "UNKNOWN",
+        )
+        fallback_ip = settings.device_ip if settings else "0.0.0.0"
+        ip = sanitize_filename_part(get_local_ip(fallback=fallback_ip), "0.0.0.0")
+        stamp = datetime.now().strftime("%d-%m-%y-%H-%M-%S")
+        name = f"{token}_{stamp}_{truck}_{ip}_FRONT.jpg"
+        dest = self._lane_image_dir() / name
+        if not capture_rtsp_snapshot(url, dest):
+            logger.error("Front photo capture failed folder=%s", dest.parent.name)
+            return ""
+        relative = dest.relative_to(IMAGES_DIR.parent).as_posix()
+        logger.info("Front photo saved %s", relative)
+        return relative
 
     def _call_anpr_with_retry(
         self,

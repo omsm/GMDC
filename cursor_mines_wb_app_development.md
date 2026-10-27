@@ -1,5 +1,5 @@
 # Mines-WB app development
-_Exported on 24/10/2026 at 18:27:40 GMT+5:30 from Cursor (3.22.12)_
+_Exported on 27/10/2026 at 23:21:56 GMT+5:30 from Cursor (3.27.14)_
 
 ---
 
@@ -23,7 +23,7 @@ A truck moves through the yard in this order:
 
 **Mines entry → Tare weighbridge → Tracking 1 → Vadhghat → Tracking 2 → Gross weighbridge → Mines exit**
 
-Two apps cover that line. **Mines-Checkpoint** handles entry, tracking, and exit. **Mines-WB** handles the three weighbridges. The RFID string decides the trip: `T|` tare, `V|` Vadhghat, `G|` gross. Shared hardware, RFID, display, and voice live in `gmdc_common`. `checkpoint-config` writes `iot_configuration.json`. Live weight comes from `digitizer-decoder` over MQTT. Product version is **1.17**.
+Two apps cover that line. **Mines-Checkpoint** handles entry, tracking, and exit. **Mines-WB** handles the three weighbridges. The RFID string decides the trip: `T|` tare, `V|` Vadhghat, `G|` gross. Shared hardware, RFID, display, and voice live in `gmdc_common`. `checkpoint-config` writes `iot_configuration.json`. Live weight comes from `digitizer-decoder` over MQTT. Product version is **1.19**.
 
 ## Mines-WB trip
 
@@ -943,4 +943,404 @@ The changelog still stops at 1.17. I’ll add 1.18 for the four-lane checkpoint,
 `version.md` is now at **1.18**, dated 2026-10-24.
 
 The new section covers the four checkpoint lanes in one process, the RFID API message on each lane’s display, the bidirectional boom-close outputs, and Zebra antennas 5 and 6.
+
+---
+
+**User**
+
+what is publish to display if found error in rfid validate api responce.
+
+---
+
+**Cursor**
+
+The display text comes from the RFID validate error body. I’ll check both apps for the exact string that is published.
+
+The display receives the RFID validate API `message` text. For your 403 example, the MQTT payload is exactly:
+
+`No loading slip is available against the RFID.`
+
+That happens in both Mines-Checkpoint and Mines-WB. The code reads `message` from the response and publishes that string. A generic value such as `ok`, `success`, or `200` is not shown. If the response has no usable message, the board gets the fallback:
+
+`RFID ERR@ASK OPERATOR`
+
+On Mines-Checkpoint the topic is the lane that read the tag:
+
+| Location | Topic |
+|---|---|
+| Mines Entry | `data_info/a` |
+| Traffic IN | `data_info/b` |
+| Traffic OUT | `data_info/c` |
+| Mines Exit | `data_info/d` |
+
+On Mines-WB the same sentence goes to the side the truck entered: Entry A on `data_info/a`, Entry B on `data_info/b`. The text stays up for 10 seconds (`RFID_ERROR_DISPLAY_SEC`), then the idle message replaces it.
+
+---
+
+**User**
+
+whree is publish RFID service Error
+
+---
+
+**Cursor**
+
+I’ll find where the RFID service error text is published.
+
+The words **RFID SERVICE SERVER ERROR** are published to the dashboard, not to the LED board. That happens only when the RFID validate call itself fails: the host is unreachable, or the HTTP status is 401, 403, or 500 or higher.
+
+Mines-Checkpoint builds the popup in `Mines-Checkpoint/core/workflow.py` and sends it from `Mines-Checkpoint/services/frontend_mqtt.py`:
+
+```662:668:Mines-Checkpoint/core/workflow.py
+        if service_alert is not None:
+            sm.trigger(Event.RFID_INVALID)
+            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
+            self._ui_api_failure(
+                STEP_VALIDATING_RFID,
+                service_alert,
+                fallback="RFID service not reachable",
+            )
+```
+
+`_ui_api_failure` calls `publish_status`, which publishes JSON on `wb_frontend/{lane}/status`. The title comes from `Mines-Checkpoint/services/api_errors.py`:
+
+| Failure | Popup title |
+|---|---|
+| Reader or server down | `RFID SERVICE NOT REACHABLE` |
+| HTTP 401, 403, or 500+ | `RFID SERVICE SERVER ERROR` |
+
+The popup body is the API `message` when one is present. Otherwise it is `RFID service not reachable`.
+
+The LED gets a different publish from the same block, through `_announce` and `display.send`. That text is the API `message`, or `RFID ERR@ASK OPERATOR` when the response has no usable message.
+
+A JSON body of `{"status": 403, "message": "No loading slip is available against the RFID."}` with HTTP 200 is a rejected tag, not this service popup. The board still gets that sentence. The dashboard shows it as a red step, and the popup titled `RFID SERVICE SERVER ERROR` is not published.
+
+Mines-WB uses the same split in `Mines-WB/core/workflow.py` around the `service_alert` check, publishing the popup on `wb_frontend/status`.
+
+---
+
+**User**
+
+why  "RFID SERVICE SERVER ERROR" is publish to display
+
+---
+
+**Cursor**
+
+That title is meant for the dashboard popup. I’ll trace whether it is also sent to the LED display.
+
+**RFID SERVICE SERVER ERROR** is the dashboard popup heading. It is not the text sent to the LED board.
+
+It is published when the RFID validate HTTP call fails: the server is unreachable, or the HTTP status is 401, 403, or 500 or higher. `Mines-Checkpoint/services/api_errors.py` builds that title from the service name `RFID service`, and `publish_status` sends it on `wb_frontend/{lane}/status`. The page shows it with `showApiAlert`.
+
+The LED gets a different string from the same failure, in `Mines-Checkpoint/core/workflow.py`:
+
+```662:664:Mines-Checkpoint/core/workflow.py
+        if service_alert is not None:
+            sm.trigger(Event.RFID_INVALID)
+            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
+```
+
+`_rfid_api_display` uses the JSON `message` when one exists. When the failed response has no message, it uses `operator_message`, which is the generated sentence `RFID service server error`. That sentence is what `display.send` publishes. The fixed line `RFID ERR@ASK OPERATOR` is used only when both of those are empty.
+
+A body such as `{"status": 403, "message": "No loading slip is available against the RFID."}` returned with HTTP 200 does not create this popup. The board gets that `message` text.
+
+---
+
+**User**
+
+"Rfid service not reachable" where is publish
+
+---
+
+**Cursor**
+
+`RFID service not reachable` is published when the RFID validate host cannot be reached. The sentence is built in `Mines-Checkpoint/services/api_errors.py` from the service name `RFID service`, and the same fallback is passed in `Mines-Checkpoint/core/workflow.py` at the service-alert call.
+
+It goes to two places:
+
+- **Dashboard.** `_ui_api_failure` calls `publish_status`. The MQTT topic is `wb_frontend/{lane}/status`. The message is `RFID service not reachable`, and the popup title is `RFID SERVICE NOT REACHABLE`.
+- **LED board.** The same failure calls `_announce`, so `display.send` publishes `RFID service not reachable` on that lane’s topic (`data_info/a` through `data_info/d`). The dashboard copy of that board text is on `wb_frontend/{lane}/display`.
+
+Mines-WB does the same thing from `Mines-WB/core/workflow.py`. The dashboard topic there is `wb_frontend/status`, and the board text goes to the side the truck entered.
+
+---
+
+**User**
+
+how to change this string
+
+---
+
+**Cursor**
+
+Change the service name that builds the sentence. Editing only the fallback in the workflow does not change the text that is published, because the unreachable response already carries `operator_message`.
+
+In `Mines-Checkpoint/services/api_errors.py`, the name is here:
+
+```21:21:Mines-Checkpoint/services/api_errors.py
+    "rfid-validate": "RFID service",
+```
+
+`operator_copy` turns that name into the two published strings:
+
+```60:61:Mines-Checkpoint/services/api_errors.py
+    if kind == KIND_UNREACHABLE:
+        return (f"{name} not reachable", f"{name.upper()} NOT REACHABLE")
+```
+
+Set `"rfid-validate"` to the words you want in front of `not reachable`. For example, `"RFID reader"` publishes `RFID reader not reachable` on the dashboard and the LED, and the popup title becomes `RFID READER NOT REACHABLE`.
+
+Then set the same words in the fallback at `Mines-Checkpoint/core/workflow.py` line 668, so an empty response uses the same sentence. Mines-WB has its own copies: `Mines-WB/services/api_errors.py` line 21 and `Mines-WB/core/workflow.py` line 1717.
+
+Restart the app after the edit. I am in Ask mode, so I cannot change the files from here. Switch to Agent mode if you want this applied.
+
+---
+
+**User**
+
+now,what you do if ANPR is off in dashboard in mines-checkpoint
+
+---
+
+**Cursor**
+
+I’ll trace the Mines-Checkpoint path that runs when the dashboard ANPR switch is off.
+
+With ANPR off, Mines-Checkpoint still validates the RFID, then skips the camera and continues as an unreadable plate.
+
+After a valid tag, the app does not call `/api/detect`. The ANPR step on the dashboard turns green with `ANPR skipped (disabled by operator).` The trip is stored as `anpr_status` 2, with an empty ANPR vehicle number.
+
+It then posts `invalid-truck-number` with `anpr_status` 2 and polls status check:
+
+- A normal trip polls `status_check`. `vehicleStatus` 1 opens the boom. `vehicleStatus` 2 resets the lane to idle. `vehicleStatus` 0 keeps polling.
+- A `CE|` trip polls check-status until `statusCode` is 200, then opens the boom.
+
+The board does not show `ANPR ERROR@ERR-2`, because the camera was not used. The setting is saved on the selected lane in `iot_configuration.json`, so it stays off after a restart.
+
+---
+
+**User**
+
+now we development mines-chechpoint:
+1.if ANPR is off in dashboard,call skip anpr api.capture photo useing rtsp link which is avilable in iot_configuration.json.
+2.save it location wise folder
+3.if ANPR is ON ,skip capture photo and follow exist flow  
+
+---
+
+**Cursor**
+
+When ANPR is off, Mines-Checkpoint should skip the ANPR API, capture a photo from the lane’s RTSP camera, and save it in that location’s folder. When ANPR is on, the existing flow stays and no photo is taken. I’ll look at how the camera and the ANPR-off path are set up now.
+
+ANPR off already skips the camera API. I’ll add a front-camera snapshot from each lane’s RTSP URL and save it under that location’s folder. ANPR on will leave the current flow unchanged and will not take a photo.
+
+When ANPR is off, Mines-Checkpoint skips `/api/detect`, takes one photo from that lane’s `camera.front.rtsp_url`, and then continues the existing path: `invalid-truck` with `anpr_status` 2, then status check.
+
+Each location has its own folder:
+
+| Location | Folder |
+|---|---|
+| Mines Entry | `Mines-Checkpoint/images/mines_entry/` |
+| Traffic IN | `Mines-Checkpoint/images/traffic_in/` |
+| Traffic OUT | `Mines-Checkpoint/images/traffic_out/` |
+| Mines Exit | `Mines-Checkpoint/images/mines_exit/` |
+
+The file name looks like `TOKEN_25-10-26-16-40-00_TRUCK_10.80.118.10_FRONT.jpg`. That path is also sent as `front_image` on the invalid-truck and boom-close calls. If the camera URL is missing or the snapshot fails, the trip still continues.
+
+When ANPR is on, no photo is taken and the current ANPR flow is unchanged.
+
+Restart Mines-Checkpoint so this runs. The snapshot needs `opencv-python` on that machine.
+
+---
+
+**User**
+
+can you publish rfid validate api response massage to display in mines-wb app
+
+---
+
+**Cursor**
+
+Mines-WB already has a path for that display text. I’ll confirm it still publishes the RFID validate `message`.
+
+Mines-WB already publishes the RFID validate `message` to the display over MQTT.
+
+A rejected tag such as `No loading slip is available against the RFID.` is the text sent to the board. `_announce` in `Mines-WB/core/workflow.py` calls `display.send` with that sentence. On this bidirectional bridge it goes to the side the truck entered: Entry A on `data_info/a`, Entry B on `data_info/b`.
+
+A generic `ok` or `success` is not shown. A valid tag still shows the truck and weight line, for example `OD14AE3900@15000 Kg`. If the response has no usable message, the board shows `RFID ERR@ASK OPERATOR`.
+
+Restart Mines-WB if that process was started before this change. The new text is used only after the restart.
+
+---
+
+**User**
+
+why use MIN_WEIGHT_KG variable
+
+---
+
+**Cursor**
+
+I’ll look up where `MIN_WEIGHT_KG` is set and how the weighbridge uses it.
+
+`MIN_WEIGHT_KG` is the lightest platform weight Mines-WB will accept before it starts the RFID reader. The default is **5000 kg**.
+
+After the truck is only on the weighbridge sensor, the app reads a stable weight and compares it in `Mines-WB/core/workflow.py`:
+
+- **5000 kg or less:** it plays the weight-error voice and returns to idle. RFID login, mode, and start are not run.
+- **Above 5000 kg:** the weight is accepted and the RFID reader starts.
+
+This keeps an empty platform, a person, or a light vehicle from being treated as a truck. The site value is `MIN_WEIGHT_KG` in `Mines-WB/.env`. When that variable is missing, the code uses `5000` from `Mines-WB/config/constants.py`.
+
+---
+
+**User**
+
+now we develop Mines-WB app
+if MIN_WEIGHT_KG > vehicle weight:
+       publish to display "Invalied Weight"
+if MIN_WEIGHT_KG < vehicle weight:
+       publish to display current weight
+
+
+---
+
+**Cursor**
+
+A weight at or below `MIN_WEIGHT_KG` should show **Invalid Weight** on the display. A heavier reading should show the current weight. I’ll match that to the existing weighbridge capture step.
+
+Mines-WB now chooses the display text from the captured weight and `MIN_WEIGHT_KG`.
+
+- **Weight below the minimum**, including a weight equal to it, publishes `Invalid Weight`. The weight-error voice still plays, the lane returns to idle, and the RFID reader does not start.
+- **Weight above the minimum** publishes the current weight, for example `Weight@15000`, and the RFID reader starts as before.
+
+Restart Mines-WB so the running process uses this change.
+
+---
+
+**User**
+
+it will configure through .env file
+
+---
+
+**Cursor**
+
+The invalid-weight text is still fixed in code. I’ll read it from the Mines-WB `.env` file so you can change the display message without editing the program.
+
+The cutoff already comes from `MIN_WEIGHT_KG` in `.env`. I’ll also take the low-weight display text from `.env`, so that line can be changed without editing the program.
+
+The live Mines-WB `.env` already sets `MIN_WEIGHT_KG=40`. I’ll add the display line there so the board text can be changed in the same file.
+
+The low-weight display text now comes from the Mines-WB `.env` file.
+
+```
+MIN_WEIGHT_KG=40
+INVALID_WEIGHT_DISPLAY=Invalid Weight
+```
+
+`MIN_WEIGHT_KG` is still the cutoff. With the current value, a captured weight of 40 kg or less shows `Invalid Weight`. A heavier weight shows the current weight, such as `Weight@15000`.
+
+Change `INVALID_WEIGHT_DISPLAY` to the words you want on the board, then restart Mines-WB.
+
+---
+
+**User**
+
+INVALID_WEIGHT_DISPLAY=Invalid Weight this remove from .env. add in @Mines-Checkpoint/config/constants.py so that i change all massage in one place
+
+---
+
+**Cursor**
+
+The invalid-weight line should live with the other display messages, not in `.env`. I’ll check both constants files and move it there.
+
+`Invalid Weight` will come from the weighbridge display messages in code. I’ll take `INVALID_WEIGHT_DISPLAY` out of `.env` so that text is edited with the other board messages.
+
+`INVALID_WEIGHT_DISPLAY` is removed from `Mines-WB/.env` and `.env.example`. The board text is now the constant with the other weighbridge display lines:
+
+```127:127:Mines-WB/config/constants.py
+MSG_INVALID_WEIGHT = "Invalid Weight"
+```
+
+Change that string to change what the weighbridge shows for a low weight. `MIN_WEIGHT_KG` stays in `.env` because that value is the kilogram cutoff, not a display sentence.
+
+`Mines-Checkpoint/config/constants.py` is the checkpoint board (`Scan@RFID Card`, `RFID ERR@ASK OPERATOR`, and the rest). The weighbridge does not read that file, so the invalid-weight line is in `Mines-WB/config/constants.py` with `Weight@{weight}` and the other weighbridge messages. Restart Mines-WB after you edit it.
+
+---
+
+**User**
+
+EXIT_WAIT_SEC=120  why tis use
+
+---
+
+**Cursor**
+
+I’ll look up where `EXIT_WAIT_SEC` is used in Mines-WB and what that 120-second wait covers.
+
+`EXIT_WAIT_SEC=120` is how long Mines-WB waits for the truck to leave after exit is granted.
+
+When the trip reaches `EXIT_GRANTED`, the app opens the exit path, shows Move Forward, and starts a 120-second timer. If the exit sensor completes the crossing within that time, the lane returns to idle normally. If 120 seconds pass with no exit clear, `_on_exit_timeout` runs, logs `Exit wait timeout - reset IDLE`, and force-resets the lane.
+
+So the value is a safety timeout. It keeps the weighbridge from staying stuck in exit forever when a truck never clears the sensor. Change it in `Mines-WB/.env` if you need a longer or shorter wait.
+
+---
+
+**User**
+
+Now i want changes in Mines-WB code. Currently if the weight after reaching weighbridge sensor is less than MIN_WEIGHT_KG, then announcement and application goes to IDLE mode. Here i need change. if weight is less than MIN_WEIGHT_KG, then in the next steps instead of announcement and IDLE, the weight check will happen, and will go reset iDLE mode until weight is 0. TIll then continuous loop existing error announcement will be there. And in every idle case, display will be published “Enter@Vehicle”
+
+---
+
+**Cursor**
+
+A low weight should keep checking until the platform is empty, with the error announcement looping. Idle should always show `Enter@Vehicle` on the display. I’ll inspect the current low-weight and idle paths first.
+
+
+I'll change the low-weight path so it keeps checking until the platform is empty, with the weight-error announcement looping, and set idle display text to `Enter@Vehicle`.
+
+Mines-WB low-weight handling is updated.
+
+When the captured weight is at or below `MIN_WEIGHT_KG`:
+1. The board shows `Invalid Weight`
+2. The lane stays in weight capture and keeps reading the digitizer
+3. The existing weight-error announcement (`error_start` + `weight-error`) loops until the weight is 0
+4. Only then does the app reset to IDLE
+
+When weight is above the minimum, the current weight is still shown and RFID starts as before.
+
+Every idle reset publishes `Enter@Vehicle` on the display (`MSG_IDLE` in `Mines-WB/config/constants.py`).
+
+Restart Mines-WB so the running process picks this up.
+
+---
+
+**User**
+
+Great help, that worked. Now i want your help in another logic. After sensor 1 is cut, then our transaction starts. THen the weight is increasing and if sudden 0  is received, then application is announcing error and vehicle exit is happening. THis is correct, but need to add a small thing. In the .env add a variable named MISC_MIN_WEIGHT=200. This weight is the max weight of a person, cow, animals etc. What I want you to do is, if the last weight before 0 received is <= MISC_MIN_WEIGHT, then announce the existing error, then instead of exit process, reset the application
+
+---
+
+**Cursor**
+
+When weight rises then drops to 0 after sensor 1, a last reading at or below `MISC_MIN_WEIGHT` should reset to idle instead of exit. I’ll wire that from `.env` into the positioning zero-weight path.
+
+I'll store the last non-zero positioning weight, add `MISC_MIN_WEIGHT` from `.env`, and reset to idle when that last weight is at or below the misc limit.
+
+The exit boom was already opened at idle on this bidirectional setup. I’ll reset that mock after entry, then assert only the misc-weight reset path.
+
+After sensor 1 starts a trip, a sudden drop to 0 still plays the existing error. What happens next depends on the last weight before 0, using `MISC_MIN_WEIGHT` from `.env`:
+
+```
+MISC_MIN_WEIGHT=200
+```
+
+| Last weight before 0 | Result |
+|---|---|
+| ≤ 200 kg (person/animal) | Error announcement, then reset to IDLE |
+| > 200 kg (vehicle) | Error announcement, then the existing exit path |
+
+Change `MISC_MIN_WEIGHT` in `Mines-WB/.env` for the site limit. Restart Mines-WB so it picks up the new value.
 

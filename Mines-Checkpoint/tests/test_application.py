@@ -854,6 +854,63 @@ class TestWorkflow(unittest.TestCase):
         self.oci.update_truck_number.assert_called()
         self.boom.open.assert_called()
 
+    @patch("core.workflow.capture_rtsp_snapshot", return_value=True)
+    def test_anpr_off_saves_front_photo_in_the_lane_folder(self, capture):
+        self.ctx.settings.anpr_enabled = False
+        self.ctx.settings.lane_id = "traffic_in"
+        self.ctx.settings.raw_config = {
+            "camera": {
+                "front": {
+                    "rtsp_url": "rtsp://cam/video/live?channel=1'&'subtype=0"
+                }
+            }
+        }
+        self._rfid_ok()
+        self.oci.invalid_truck_number.return_value = OCIResponse(ok=True, status=200)
+        self.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=1, raw={"vehicleStatus": 1, "statusCode": 200}
+        )
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+
+        self.oci.anpr_detect.assert_not_called()
+        capture.assert_called_once()
+        self.assertEqual(
+            capture.call_args.args[0],
+            "rtsp://cam/video/live?channel=1&subtype=0",
+        )
+        dest = Path(capture.call_args.args[1])
+        self.assertEqual(dest.parent.name, "traffic_in")
+        self.assertTrue(dest.name.endswith("_FRONT.jpg"))
+        photo = self.oci.invalid_truck_number.call_args.kwargs["anpr_payload"][
+            "front_image"
+        ]
+        self.assertTrue(photo.startswith("images/traffic_in/"))
+        self.assertTrue(photo.endswith("_FRONT.jpg"))
+
+    @patch("core.workflow.capture_rtsp_snapshot", return_value=True)
+    def test_anpr_on_does_not_capture_a_photo(self, capture):
+        self.ctx.settings.anpr_enabled = True
+        self.ctx.settings.lane_id = "mines_entry"
+        self.ctx.settings.raw_config = {
+            "camera": {"front": {"rtsp_url": "rtsp://cam/live"}}
+        }
+        self._rfid_ok()
+        self.oci.anpr_detect.return_value = OCIResponse(
+            ok=True,
+            status=1,
+            raw={**ANPR_RAW, "anpr_status": 1, "matching_score": 100},
+        )
+        self.oci.invalid_truck_number.return_value = OCIResponse(ok=True, status=200)
+        self.oci.boom_close.return_value = OCIResponse(ok=True, status=200)
+
+        self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
+        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+        self.oci.anpr_detect.assert_called_once()
+        capture.assert_not_called()
+
     def test_ce_anpr_match_polls_check_status_until_status_code_200(self):
         """CE| truck_details: after invalid-truck, poll until statusCode 200 even on ANPR match."""
         self._rfid_ok(CE_TRUCK_DETAILS)

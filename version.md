@@ -1,13 +1,34 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.18**
+**Current version: 1.19**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.18 — 2026-10-24 (latest)
+## 1.19 — 2026-10-27 (latest)
+
+Checkpoint ANPR-off captures a front photo per location. Mines-WB holds a low weight until the platform is empty, and a light positioning drop resets to idle.
+
+### Mines-Checkpoint — ANPR off photo
+- With ANPR off on the dashboard, skip `/api/detect`, take one JPEG from that lane’s `camera.front.rtsp_url`, then continue with `invalid-truck` (`anpr_status` 2) and status check
+- Photos are saved under `Mines-Checkpoint/images/<lane_id>/` (for example `mines_entry`, `traffic_in`)
+- With ANPR on, no RTSP photo is taken; the existing detect flow is unchanged
+
+### Mines-WB — low weight and idle display
+- Captured weight at or below `MIN_WEIGHT_KG`: show `Invalid Weight`, loop the weight-error announcement, and keep reading the digitizer until weight is 0, then reset IDLE
+- Captured weight above `MIN_WEIGHT_KG`: show the current weight and start RFID as before
+- Idle board text is `Enter@Vehicle` (`MSG_IDLE` in `Mines-WB/config/constants.py`)
+
+### Mines-WB — positioning drop (`MISC_MIN_WEIGHT`)
+- After sensor 1 starts a trip, if weight rises and then returns to 0 before the truck is only on the weighbridge sensor, the existing error announcement still plays
+- Last weight at or below `MISC_MIN_WEIGHT` (default **200** kg in `.env`): reset IDLE (person / animal)
+- Last weight above `MISC_MIN_WEIGHT`: grant exit as before (vehicle)
+
+---
+
+## 1.18 — 2026-10-24
 
 One Mines-Checkpoint process runs four locations. The RFID tag API message is shown on that location’s display. Bidirectional weighbridge outputs follow the boom-close side. The Zebra reader uses antennas 5 and 6.
 
@@ -432,6 +453,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.19** | Checkpoint ANPR-off RTSP photo per lane; Mines-WB low-weight wait until 0; `MISC_MIN_WEIGHT` reset vs exit on positioning drop |
 | **1.18** | Four checkpoint lanes in one process; RFID API message on that lane’s display; bidirectional boom-close outputs; Zebra antennas 5 and 6 |
 | **1.17** | Weighing starts when only the weighbridge sensor is cut; the clear event no longer leaves the truck on Move Forward |
 | **1.16** | Bi-directional commissioning; Mines-WB stable weight; Vadhghat in-band details/boom-close and out-of-band adjustment with Overweight/Underweight |
