@@ -62,6 +62,10 @@ class TestLaneRouting(unittest.TestCase):
         self.assertEqual(by_id["traffic_in"].mqtt_topic_tx, "data_info/b")
         self.assertEqual(by_id["traffic_out"].mqtt_topic_tx, "data_info/c")
         self.assertEqual(by_id["mines_exit"].mqtt_topic_tx, "data_info/d")
+        self.assertEqual(by_id["mines_entry"].display_pcb_mode, "a")
+        self.assertEqual(by_id["traffic_in"].display_pcb_mode, "b")
+        self.assertEqual(by_id["traffic_out"].display_pcb_mode, "c")
+        self.assertEqual(by_id["mines_exit"].display_pcb_mode, "d")
         self.assertIn("10.80.118.10:8001", by_id["mines_exit"].oci_base_url)
         self.assertIn("checkpoint/rfid-tag", by_id["traffic_in"].rfid_validate_url)
         self.assertIn("mines_exit_boom_close", by_id["mines_exit"].boom_close_url)
@@ -82,6 +86,26 @@ class TestLaneRouting(unittest.TestCase):
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].lane_id, "")
         self.assertEqual(loaded[0].display_name, "Solo")
+
+    def test_display_ip_preferred_for_handshake(self):
+        raw = {
+            "lane_id": "traffic_out",
+            "wb_type": "Traffic OUT",
+            "display": {
+                "type": "mqtt",
+                "ip": "127.0.0.1",
+                "display_ip": "10.80.118.99",
+                "mqtt_topic_tx": "data_info/c",
+                "mqtt_topic_rx": "display_info",
+            },
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "iot_configuration.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            loaded = load_lane_settings(path)[0]
+        self.assertEqual(loaded.display_ips, ["10.80.118.99"])
+        self.assertEqual(loaded.display_pcb_mode, "c")
+        self.assertEqual(loaded.mqtt_topic_tx, "data_info/c")
 
 
 if __name__ == "__main__":

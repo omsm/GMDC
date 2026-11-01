@@ -49,11 +49,14 @@
         "type": "mqtt",
         "ip": "",
         "port": "8000",
-        "mqtt_topic_tx": "iot_display/application_to_display",
-        "mqtt_topic_rx": "iot_display/display_to_application",
+        "mqtt_topic_tx": "data_info/a",
+        "mqtt_topic_rx": "display_info",
         "validated": true,
         "make": "hgdfkklfl",
-        "model": "jmskleld"
+        "model": "jmskleld",
+        "display_ip": "",
+        "pcb_mode": "a",
+        "broker": "127.0.0.1"
     },
     "digitizer": {
         "mode": "api",

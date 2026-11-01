@@ -40,8 +40,11 @@
                 "ip": "127.0.0.1",
                 "port": "1883",
                 "mqtt_topic_tx": "data_info/a",
-                "mqtt_topic_rx": "a",
-                "validated": true
+                "mqtt_topic_rx": "display_info",
+                "validated": true,
+                "display_ip": "10.80.118.67",
+                "pcb_mode": "a",
+                "broker": "127.0.0.1"
             },
             "digitizer": {
                 "port": "COM6",
@@ -287,8 +290,11 @@
                 "ip": "127.0.0.1",
                 "port": "1883",
                 "mqtt_topic_tx": "data_info/b",
-                "mqtt_topic_rx": "a",
-                "validated": true
+                "mqtt_topic_rx": "display_info",
+                "validated": true,
+                "display_ip": "10.80.118.69",
+                "pcb_mode": "b",
+                "broker": "127.0.0.1"
             },
             "digitizer": {
                 "port": "COM6",
@@ -534,8 +540,11 @@
                 "ip": "127.0.0.1",
                 "port": "1883",
                 "mqtt_topic_tx": "data_info/c",
-                "mqtt_topic_rx": "a",
-                "validated": true
+                "mqtt_topic_rx": "display_info",
+                "validated": true,
+                "display_ip": "10.80.118.71",
+                "pcb_mode": "c",
+                "broker": "127.0.0.1"
             },
             "digitizer": {
                 "port": "COM6",
@@ -781,8 +790,11 @@
                 "ip": "127.0.0.1",
                 "port": "1883",
                 "mqtt_topic_tx": "data_info/d",
-                "mqtt_topic_rx": "a",
-                "validated": true
+                "mqtt_topic_rx": "display_info",
+                "validated": true,
+                "display_ip": "10.80.118.75",
+                "pcb_mode": "d",
+                "broker": "127.0.0.1"
             },
             "digitizer": {
                 "port": "COM6",

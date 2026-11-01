@@ -433,6 +433,16 @@ class MinesWbWorkflow:
         else:
             boom_note = "exit boom closed"
         logger.info("Hardware reset to IDLE (%s)", boom_note)
+        self._schedule_idle_ftp_upload()
+
+    def _schedule_idle_ftp_upload(self) -> None:
+        """Background FTP app: upload images/ when lane is IDLE."""
+        try:
+            from services.ftp_image_upload import start_idle_ftp_upload
+
+            start_idle_ftp_upload(getattr(self.ctx, "settings", None))
+        except Exception as exc:
+            logger.warning("IDLE FTP upload schedule failed: %s", exc)
 
     def _schedule_exit_boom_close(self) -> None:
         """Close the exit boom after the post-crossing delay."""

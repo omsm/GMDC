@@ -24,8 +24,32 @@ class DisplayProtocolTests(unittest.TestCase):
         self.assertEqual(resolve_pcb_mode(is_bidirectional=True), "b")
         self.assertEqual(data_info_topic("a"), "data_info/a")
         self.assertEqual(data_info_topic("b"), "data_info/b")
+        self.assertEqual(data_info_topic("c"), "data_info/c")
+        self.assertEqual(data_info_topic("d"), "data_info/d")
         self.assertEqual(display_info_topic("192.168.1.70"), "display_info/192.168.1.70")
         self.assertEqual(pcb_id_topic("192.168.1.70"), "pcb_id/192.168.1.70")
+
+    def test_checkpoint_lane_letters_on_pcb_id(self):
+        from gmdc_common.services.display_service import pcb_letter_from_topic
+
+        self.assertEqual(pcb_letter_from_topic("data_info/a"), "a")
+        self.assertEqual(pcb_letter_from_topic("data_info/c"), "c")
+        self.assertEqual(
+            pcb_letter_for_display_ip(
+                "10.0.0.9", ["10.0.0.9"], pcb_mode="c"
+            ),
+            "c",
+        )
+        self.assertEqual(
+            pcb_letter_for_display_ip(
+                "10.0.0.9", ["10.0.0.9"], pcb_mode="d"
+            ),
+            "d",
+        )
+        self.assertEqual(
+            data_info_topics_for_ips(["10.0.0.9"], pcb_mode="c"),
+            ["data_info/c"],
+        )
 
     def test_bi_transaction_topic_is_one_side(self):
         ips = ["10.0.0.1", "10.0.0.2"]

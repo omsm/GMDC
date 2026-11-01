@@ -1,6 +1,6 @@
 # Mines-WB
 
-**Version:** 1.20.0 (product **1.20** — see [`../version.md`](../version.md))
+**Version:** 1.21.0 (product **1.21** — see [`../version.md`](../version.md))
 
 Single weighbridge runtime for GMDC yard sites (uni-directional or bi-directional).
 
@@ -22,7 +22,7 @@ python main.py
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-wb.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.20)
+## Behaviour notes (1.21)
 
 ### Bidirectional traffic lights / booms
 - Config: traffic-light `on_state=green` (coil ON = green).
@@ -39,6 +39,20 @@ On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](
 |------|----------------|------------|
 | `T\|` | `weight_details_url_tare` (fallback: `weight_details_url`) | `boom_close_url_tare` (fallback: `boom_close_url`) |
 | `G\|` | `weight_details_url` | `boom_close_url` |
+
+### Idle FTP photo upload
+On every IDLE (app start or after a trip), Mines-WB launches a background FTP uploader that sends everything under `images/` to:
+
+- Host `10.80.118.100` (override `FTP_HOST`)
+- User `ftpclient` / password from `FTP_PASSWORD`
+- Remote folder `/Mines-WB` (`FTP_REMOTE_DIR`)
+
+Successful uploads are deleted locally so the next IDLE only sends new files. Disable with `FTP_ENABLED=false`.
+
+### Display MQTT (`display_ip`)
+- Set `display.display_ip` in `iot_configuration.json` (bi: also `display_ip_b`).
+- App always subscribes to `display_info/{display_ip}` and immediately publishes the board letter on `pcb_id/{display_ip}` (`a` uni / Entry A, `b` Entry B on bi).
+- Transaction text uses `data_info/a` (and `data_info/b` on bi).
 
 ### Other
 - OCI transport failure → LED `internet@ down`.

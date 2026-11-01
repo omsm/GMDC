@@ -88,7 +88,9 @@
         "mqtt_topic_rx": "display_info",
         "make": "demo",
         "model": "demo",
-        "validated": true
+        "validated": true,
+        "display_ip": "10.80.118.73",
+        "display_ip_b": "10.80.118.72"
     },
     "digitizer": {
         "mode": "mqtt",

@@ -1,13 +1,38 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.20**
+**Current version: 1.21**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.20 — 2026-11-02 (latest)
+## 1.21 — 2026-11-02 (latest)
+
+Site-wide MQTT display handshake via `display_ip` (pcb letters a–d), idle background FTP photo upload, and Checkpoint crossing timeout from `.env`.
+
+### Display MQTT — `display_ip` + pcb letters a/b/c/d
+- Config field `display.display_ip` (bi WB also `display_ip_b`) in `iot_configuration.json`; empty placeholders added where missing
+- On `display_info/{display_ip}` → immediately publish letter on `pcb_id/{display_ip}`
+- Letters: Mines Entry `a`, Traffic IN `b`, Traffic OUT `c`, Mines Exit `d`; uni WB `a`; bi WB Entry A `a` / Entry B `b`
+- Transaction text uses matching `data_info/a|b|c|d`
+- `gmdc_common` display protocol accepts letters beyond a/b; Checkpoint `display_pcb_mode` follows `mqtt_topic_tx`
+
+### Idle FTP photo upload (Mines-WB + Mines-Checkpoint)
+- On every IDLE (app start or after a trip), a background FTP uploader process sends all files under `images/` (including lane subfolders)
+- Server defaults: `10.80.118.100` / `ftpclient` (override with `FTP_*` in `.env`)
+- Remote folders: `/Mines-WB` and `/Mines-Checkpoint`
+- Successful uploads are deleted locally; uses stdlib `ftplib` (no extra pip package)
+- Module: `gmdc_common.services.ftp_image_upload` (also runnable as `python -m …`)
+
+### Mines-Checkpoint — crossing timer from `.env`
+- After grant (boom open / TL green), auto IDLE if the truck never clears the sensor
+- Primary knob: `VEHICLE_CROSSING_TIMEOUT_SEC` in `.env` (overrides per-lane JSON `vehicle_crossing_timeout`)
+- Related but separate: `BOOM_CLOSE_DELAY_SEC` (boom hold after sensor clear)
+
+---
+
+## 1.20 — 2026-11-02
 
 Mac Mini launchd services, bidirectional weighbridge traffic-light polarity and idle rules, tare `weight_status=2` → `reset_checkpoint`, bi-dir tare/gross API URL split, Checkpoint RFID keepalive re-login, and LED `internet@ down` on OCI unreachable.
 
@@ -490,6 +515,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.21** | display_ip pcb a–d handshake; idle FTP photo upload; Checkpoint `VEHICLE_CROSSING_TIMEOUT_SEC` from `.env` |
 | **1.20** | Mac Mini launchd services; bi-dir TL polarity/idle/exit; tare reset_checkpoint on weight_status=2; tare/gross URL split; RFID keepalive; internet@ down |
 | **1.19** | Checkpoint ANPR-off RTSP photo per lane; Mines-WB low-weight wait until 0; `MISC_MIN_WEIGHT` reset vs exit on positioning drop |
 | **1.18** | Four checkpoint lanes in one process; RFID API message on that lane’s display; bidirectional boom-close outputs; Zebra antennas 5 and 6 |

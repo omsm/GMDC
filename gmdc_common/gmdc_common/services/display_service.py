@@ -2,13 +2,17 @@
 
 Protocol (device identity = Display IP):
   - Always subscribe:  display_info/{display_ip}
-  - On any message:    publish pcb_id/{display_ip}  payload \"a\" or \"b\"
-      Uni / checkpoint (1 IP): always site pcb_mode (usually a)
+  - On any message:    publish pcb_id/{display_ip}  payload letter immediately
+      One board: site letter a|b|c|d… (from pcb_mode / mqtt_topic_tx)
       Bi (2 IPs): first IP → a (Entry A), second IP → b (Entry B)
   - Transaction text:
       One board: publish the configured topic (data_info/a, b, c, or d)
       Bi-directional idle: publish data_info/a AND data_info/b
       Bi-directional transaction: publish only the side the vehicle entered
+
+Site letter defaults (when mqtt_topic_tx / pcb_mode unset):
+  Mines Entry a · Traffic IN b · Traffic OUT c · Mines Exit d
+  Tare / Vadhghat / Gross WB a (bi WB still uses a+b for the two boards)
 """
 
 from __future__ import annotations
@@ -40,6 +44,9 @@ TOPIC_DISPLAY_INFO_PREFIX = "display_info"
 TOPIC_PCB_ID_PREFIX = "pcb_id"
 TOPIC_DATA_INFO_PREFIX = "data_info"
 
+# Single-letter PCB / data_info suffixes used across yard sites.
+_PCB_LETTERS = frozenset("abcdefghijklmnopqrstuvwxyz")
+
 
 def normalize_display_ips(ips: Optional[Union[str, Sequence[str]]]) -> List[str]:
     """Return unique non-empty display IP strings (order preserved)."""
@@ -60,8 +67,27 @@ def normalize_display_ips(ips: Optional[Union[str, Sequence[str]]]) -> List[str]
     return out
 
 
+def normalize_pcb_letter(value: Optional[str], *, default: str = "a") -> str:
+    """Return one lowercase letter a–z (default ``a``)."""
+    letter = str(value or "").strip().lower()[:1]
+    if letter in _PCB_LETTERS:
+        return letter
+    fallback = str(default or "a").strip().lower()[:1]
+    return fallback if fallback in _PCB_LETTERS else "a"
+
+
+def pcb_letter_from_topic(topic: Optional[str], *, default: str = "a") -> str:
+    """Extract letter from ``data_info/c`` (or bare ``c``)."""
+    text = str(topic or "").strip().lower()
+    if not text:
+        return normalize_pcb_letter(default)
+    if "/" in text:
+        text = text.rsplit("/", 1)[-1]
+    return normalize_pcb_letter(text, default=default)
+
+
 def resolve_pcb_mode(*, is_bidirectional: bool = False) -> str:
-    """PCB / data_info mode letter: a = uni/checkpoint, b = bi-directional WB."""
+    """Default PCB letter: a = uni/checkpoint board, b flag for bi-directional WB."""
     return "b" if is_bidirectional else "a"
 
 
@@ -74,10 +100,7 @@ def pcb_id_topic(display_ip: str) -> str:
 
 
 def data_info_topic(pcb_mode: str) -> str:
-    mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-    if mode not in ("a", "b"):
-        mode = "a"
-    return f"{TOPIC_DATA_INFO_PREFIX}/{mode}"
+    return f"{TOPIC_DATA_INFO_PREFIX}/{normalize_pcb_letter(pcb_mode)}"
 
 
 def data_info_topics_for_ips(
@@ -86,7 +109,7 @@ def data_info_topics_for_ips(
     """
     TX topics for configured displays.
 
-    Uni / checkpoint (1 IP, mode a): data_info/a
+    One board: data_info/{pcb_mode} (a, b, c, or d…)
     Bi-directional (2 IPs): data_info/a and data_info/b (Entry A + Entry B)
 
     ``side`` "a" or "b" keeps only that topic when both exist.
@@ -95,12 +118,9 @@ def data_info_topics_for_ips(
     if len(ips) >= 2:
         topics = [data_info_topic("a"), data_info_topic("b")]
     else:
-        mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-        if mode not in ("a", "b"):
-            mode = "a"
-        topics = [data_info_topic(mode)]
+        topics = [data_info_topic(pcb_mode)]
     letter = str(side or "").strip().lower()[:1]
-    if letter in ("a", "b") and data_info_topic(letter) in topics:
+    if letter in _PCB_LETTERS and data_info_topic(letter) in topics:
         return [data_info_topic(letter)]
     return topics
 
@@ -109,9 +129,9 @@ def pcb_letter_for_display_ip(
     display_ip: str, display_ips: Sequence[str], *, pcb_mode: str = "a"
 ) -> str:
     """
-    PCB reply letter for a Display IP.
+    PCB reply letter for a Display IP (published on pcb_id/{ip}).
 
-    Uni: always site pcb_mode (usually a).
+    One board: site pcb_mode (a/b/c/d…).
     Bi with 2 IPs: first IP → a (Entry A), second IP → b (Entry B).
     """
     ips = normalize_display_ips(display_ips)
@@ -121,8 +141,7 @@ def pcb_letter_for_display_ip(
             if configured.lower() == ip.lower():
                 return "a" if idx == 0 else "b"
         return "b"
-    mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-    return mode if mode in ("a", "b") else "a"
+    return normalize_pcb_letter(pcb_mode)
 
 
 class DisplayService(ABC):
@@ -151,8 +170,7 @@ class ConsoleDisplayService(DisplayService):
 
     def __init__(self, pcb_mode: str = "a", display_ips: Optional[Sequence[str]] = None):
         self._last = ""
-        mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-        self.pcb_mode = mode if mode in ("a", "b") else "a"
+        self.pcb_mode = normalize_pcb_letter(pcb_mode)
         self.display_ips = normalize_display_ips(display_ips)
 
     def connect(self) -> bool:
@@ -216,8 +234,11 @@ class MQTTDisplayService(DisplayService):
         self.broker = broker or "127.0.0.1"
         self.port = int(port or 1883)
         self.display_ips = normalize_display_ips(display_ips)
-        mode = str(pcb_mode or "a").strip().lower()[:1] or "a"
-        self.pcb_mode = mode if mode in ("a", "b") else "a"
+        # Prefer letter from explicit topic_tx (data_info/c) when one board.
+        if topic_tx and str(topic_tx).startswith(TOPIC_DATA_INFO_PREFIX):
+            self.pcb_mode = pcb_letter_from_topic(topic_tx, default=pcb_mode)
+        else:
+            self.pcb_mode = normalize_pcb_letter(pcb_mode)
         self._tx_topics = data_info_topics_for_ips(
             self.display_ips, pcb_mode=self.pcb_mode
         )
@@ -229,6 +250,7 @@ class MQTTDisplayService(DisplayService):
             if len(self.display_ips) < 2:
                 self.topic_tx = str(topic_tx)
                 self._tx_topics = [self.topic_tx]
+                self.pcb_mode = pcb_letter_from_topic(topic_tx, default=self.pcb_mode)
         self.client_id = client_id
         self._client = None
         self._connected = False
@@ -431,8 +453,13 @@ def create_display_service(
     """
     dtype = (display_type or "mqtt").lower()
     mode = str(pcb_mode or "").strip().lower()[:1]
-    if mode not in ("a", "b"):
+    if mode not in _PCB_LETTERS:
         mode = resolve_pcb_mode(is_bidirectional=is_bidirectional)
+    # One-board topic_tx letter wins (checkpoint lanes use data_info/a|b|c|d).
+    if topic_tx and str(topic_tx).startswith(TOPIC_DATA_INFO_PREFIX):
+        ips_preview = normalize_display_ips(display_ips)
+        if len(ips_preview) < 2:
+            mode = pcb_letter_from_topic(topic_tx, default=mode)
     ips = normalize_display_ips(display_ips)
 
     if dtype == "mqtt" and MQTT_AVAILABLE:

@@ -20,3 +20,7 @@ checkpoint:  tail -f /Users/csm-gmdc/GMDC_IOT/logs/mines-checkpoint-service.err.
 
 
 Please check if this is the correct process for a user or techinical person to start the service
+
+ftp server manual upload:
+-------------------------
+python -m gmdc_common.services.ftp_image_upload --images-dir Mines-WB/images --remote-dir /Mines-WB

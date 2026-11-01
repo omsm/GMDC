@@ -8,8 +8,15 @@ from gmdc_common.services.display_service import (
     data_info_topic,
     display_info_topic,
     normalize_display_ips,
+    normalize_pcb_letter,
     pcb_id_topic,
+    pcb_letter_from_topic,
     resolve_pcb_mode,
+)
+from gmdc_common.services.ftp_image_upload import (
+    FtpUploadConfig,
+    schedule_idle_image_upload,
+    upload_images,
 )
 from gmdc_common.services.http_client import BasicAuthHttpClient, HttpResponse
 from gmdc_common.services.rfid_control import (
@@ -31,8 +38,13 @@ __all__ = [
     "data_info_topic",
     "display_info_topic",
     "normalize_display_ips",
+    "normalize_pcb_letter",
     "pcb_id_topic",
+    "pcb_letter_from_topic",
     "resolve_pcb_mode",
+    "FtpUploadConfig",
+    "schedule_idle_image_upload",
+    "upload_images",
     "BasicAuthHttpClient",
     "HttpResponse",
     "DEFAULT_MODE_PAYLOAD",

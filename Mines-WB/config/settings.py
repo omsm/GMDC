@@ -66,13 +66,16 @@ def _resolve_mqtt_ws_port(raw: Any) -> int:
 def _display_ips_from_config(
     display: Dict[str, Any], *, bidirectional: bool = False
 ) -> list:
-    """Collect Display device IP(s). Uni: ip. Bi: ip + ip_b."""
+    """Collect Display device IP(s). Prefers display_ip / display_ip_b; falls back to ip / ip_b."""
     ips = []
-    primary = str(display.get("ip") or "").strip()
+    primary = str(
+        display.get("display_ip") or display.get("ip") or ""
+    ).strip()
     if primary:
         ips.append(primary)
     secondary = str(
-        display.get("ip_b")
+        display.get("display_ip_b")
+        or display.get("ip_b")
         or display.get("ip_entry_b")
         or display.get("secondary_ip")
         or ""
@@ -84,12 +87,29 @@ def _display_ips_from_config(
         for item in nested:
             if not isinstance(item, dict):
                 continue
-            ip = str(item.get("ip") or "").strip()
+            ip = str(item.get("display_ip") or item.get("ip") or "").strip()
             if not ip or ip in ips:
                 continue
             if bidirectional or not ips:
                 ips.append(ip)
     return ips
+
+
+def _pcb_mode_from_display(
+    display: Dict[str, Any], *, bidirectional: bool = False
+) -> str:
+    """Letter for pcb_id/{display_ip}. Bi WB uses a+b by IP index; mode flag is b."""
+    if bidirectional:
+        return "b"
+    explicit = str(display.get("pcb_mode") or "").strip().lower()[:1]
+    if explicit and explicit.isalpha():
+        return explicit
+    topic = str(display.get("mqtt_topic_tx") or "").strip()
+    if topic.startswith("data_info/"):
+        letter = topic.rsplit("/", 1)[-1].strip().lower()[:1]
+        if letter and letter.isalpha():
+            return letter
+    return "a"
 
 
 def _rfid_listen_ports(blocks, *, application_port: int) -> list[int]:
@@ -211,6 +231,16 @@ class Settings:
     voice_directory: str = "voice"
     voice_error_prefix: bool = True
     voice_path: str = ""  # resolved absolute directory
+
+    # Idle photo FTP (background uploader app)
+    ftp_enabled: bool = True
+    ftp_host: str = "10.80.118.100"
+    ftp_port: int = 21
+    ftp_user: str = "ftpclient"
+    ftp_password: str = "GmDC@$2k26"
+    ftp_remote_dir: str = "/Mines-WB"
+    ftp_timeout_sec: float = 30.0
+    ftp_delete_after_upload: bool = True
 
     # When False, skip /api/detect; invalid-truck uses anpr_status=0
     anpr_enabled: bool = True
@@ -679,9 +709,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         mqtt_ws_port=_resolve_mqtt_ws_port(os.getenv("MQTT_WS_PORT") or "9001"),
         mqtt_topic_tx=display.get("mqtt_topic_tx")
         or (
-            "data_info/b"
-            if str(raw.get("wb_type") or "").strip().lower() == "bidirectional"
-            else "data_info/a"
+            f"data_info/{_pcb_mode_from_display(display, bidirectional=str(raw.get('wb_type') or '').strip().lower() == 'bidirectional')}"
         ),
         mqtt_topic_rx=display.get("mqtt_topic_rx") or "display_info",
         # Empty IP list → console
@@ -699,10 +727,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             bidirectional=str(raw.get("wb_type") or "").strip().lower()
             == "bidirectional",
         ),
-        display_pcb_mode=(
-            "b"
-            if str(raw.get("wb_type") or "").strip().lower() == "bidirectional"
-            else "a"
+        display_pcb_mode=_pcb_mode_from_display(
+            display,
+            bidirectional=str(raw.get("wb_type") or "").strip().lower()
+            == "bidirectional",
         ),
         voice_enabled=_env_bool(
             "VOICE_ENABLED",
@@ -717,6 +745,19 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "ANPR_ENABLED",
             bool(raw.get("anpr_enabled", True)),
         ),
+        ftp_enabled=_env_bool("FTP_ENABLED", True),
+        ftp_host=str(os.getenv("FTP_HOST") or "10.80.118.100").strip(),
+        ftp_port=int(os.getenv("FTP_PORT") or 21),
+        ftp_user=str(os.getenv("FTP_USER") or "ftpclient").strip(),
+        ftp_password=str(
+            os.getenv("FTP_PASSWORD")
+            if os.getenv("FTP_PASSWORD") is not None
+            else "GmDC@$2k26"
+        ),
+        ftp_remote_dir=str(os.getenv("FTP_REMOTE_DIR") or "/Mines-WB").strip()
+        or "/Mines-WB",
+        ftp_timeout_sec=float(os.getenv("FTP_TIMEOUT_SEC") or 30),
+        ftp_delete_after_upload=_env_bool("FTP_DELETE_AFTER_UPLOAD", True),
         config_path=str(path),
         raw_config=raw,
     )

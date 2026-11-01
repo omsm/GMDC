@@ -4,7 +4,7 @@ Python runtimes for Gujarat Mineral Development Corporation (GMDC) mine-yard che
 
 This workspace is one site install. Shared packages (`gmdc_common`, `checkpoint-config`, `digitizer-app`) live next to two family runtimes so every PC can commission hardware, share drivers, and run the matching site flow via `checkpoint_type`.
 
-**Current product version:** see [`version.md`](version.md) (**1.20**).
+**Current product version:** see [`version.md`](version.md) (**1.21**).
 
 ## Site flow
 
@@ -179,6 +179,10 @@ python -m unittest discover -s Mines-WB/tests -v
 | Digitizer HTTP | **8800** |
 | Modbus TCP | 502 |
 | Optional Mosquitto | 1883 |
+
+## Idle photo FTP (1.21)
+
+On IDLE, Mines-WB and Mines-Checkpoint launch a background uploader for `images/` (stdlib FTP). Configure in each app’s `.env`: `FTP_HOST`, `FTP_USER`, `FTP_PASSWORD`, `FTP_REMOTE_DIR`. See [`version.md`](version.md).
 
 ## Mac Mini deploy (production)
 

@@ -2,7 +2,7 @@
 
 Run **Mines-WB** or **Mines-Checkpoint** on a Mac Mini as a durable LaunchAgent (KeepAlive). Only **one** app per Mac.
 
-**Product version:** 1.20 (see [`../version.md`](../version.md))
+**Product version:** 1.21 (see [`../version.md`](../version.md))
 
 ---
 

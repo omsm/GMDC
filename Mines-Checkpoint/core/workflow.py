@@ -197,6 +197,16 @@ class CheckpointWorkflow:
             ),
         )
         self._ui_devices()
+        self._schedule_idle_ftp_upload()
+
+    def _schedule_idle_ftp_upload(self) -> None:
+        """Background FTP app: upload images/ (all lanes) when location is IDLE."""
+        try:
+            from services.ftp_image_upload import start_idle_ftp_upload
+
+            start_idle_ftp_upload(getattr(self.ctx, "settings", None))
+        except Exception as exc:
+            logger.warning("IDLE FTP upload schedule failed: %s", exc)
 
     def _frontend(self):
         return getattr(self.ctx, "frontend", None)

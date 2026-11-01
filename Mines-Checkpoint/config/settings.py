@@ -59,41 +59,107 @@ def _resolve_mqtt_ws_port(raw: Any) -> int:
     return port if port > 0 else 9001
 
 
+def _vehicle_crossing_timeout_sec(raw: Dict[str, Any]) -> float:
+    """
+    Seconds after entry grant before auto-IDLE if the truck never clears.
+
+    Priority:
+      1. .env ``VEHICLE_CROSSING_TIMEOUT_SEC`` (or ``VEHICLE_CROSSING_TIMEOUT``)
+      2. ``vehicle_crossing_timeout`` in the lane IoT JSON
+      3. default 60
+    """
+    for key in ("VEHICLE_CROSSING_TIMEOUT_SEC", "VEHICLE_CROSSING_TIMEOUT"):
+        env_raw = os.getenv(key)
+        if env_raw is None or str(env_raw).strip() == "":
+            continue
+        try:
+            sec = float(env_raw)
+            if sec > 0:
+                return sec
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s=%r", key, env_raw)
+    file_raw = raw.get("vehicle_crossing_timeout") if isinstance(raw, dict) else None
+    if file_raw not in (None, ""):
+        try:
+            sec = float(file_raw)
+            if sec > 0:
+                return sec
+        except (TypeError, ValueError):
+            logger.warning(
+                "Ignoring invalid vehicle_crossing_timeout=%r", file_raw
+            )
+    return 60.0
+
+
+# PCB letter when mqtt_topic_tx / pcb_mode omitted (matches multi-lane yard map).
+_PCB_LETTER_BY_LANE = {
+    "mines_entry": "a",
+    "traffic_in": "b",
+    "tracking_1": "b",
+    "traffic_out": "c",
+    "tracking_2": "c",
+    "mines_exit": "d",
+}
+
+
 def _display_ips_from_config(
     display: Dict[str, Any], *, bidirectional: bool = False
 ) -> list:
     """
     Collect Display device IP(s) from iot_configuration display section.
 
-    Uni / checkpoint: ``ip`` (primary).
-    Bi-directional WB: ``ip`` (Entry A) + ``ip_b`` (Entry B).
+    Prefers ``display_ip`` / ``display_ip_b`` (fill these in JSON).
+    Falls back to ``ip`` / ``ip_b`` for older configs.
     """
     ips = []
-    primary = str(display.get("ip") or "").strip()
+    primary = str(
+        display.get("display_ip") or display.get("ip") or ""
+    ).strip()
     if primary:
         ips.append(primary)
     secondary = str(
-        display.get("ip_b")
+        display.get("display_ip_b")
+        or display.get("ip_b")
         or display.get("ip_entry_b")
         or display.get("secondary_ip")
         or ""
     ).strip()
     if bidirectional and secondary and secondary not in ips:
         ips.append(secondary)
-    # Nested list form: display.displays[{ip, role}]
+    # Nested list form: display.displays[{ip|display_ip, role}]
     nested = display.get("displays")
     if isinstance(nested, list):
         for item in nested:
             if not isinstance(item, dict):
                 continue
-            ip = str(item.get("ip") or "").strip()
+            ip = str(item.get("display_ip") or item.get("ip") or "").strip()
             if ip and ip not in ips:
-                # For uni only take first; for bi take all
                 if bidirectional or not ips:
                     ips.append(ip)
                 elif not bidirectional and len(ips) == 0:
                     ips.append(ip)
     return ips
+
+
+def _pcb_mode_from_display(
+    display: Dict[str, Any],
+    *,
+    lane_id: str = "",
+    default: str = "a",
+) -> str:
+    """Letter for pcb_id/{display_ip} and data_info/{letter}."""
+    explicit = str(display.get("pcb_mode") or "").strip().lower()[:1]
+    if explicit and explicit.isalpha():
+        return explicit
+    topic = str(display.get("mqtt_topic_tx") or "").strip()
+    if topic:
+        letter = topic.rsplit("/", 1)[-1].strip().lower()[:1]
+        if letter and letter.isalpha():
+            return letter
+    lane = str(lane_id or "").strip().lower()
+    if lane in _PCB_LETTER_BY_LANE:
+        return _PCB_LETTER_BY_LANE[lane]
+    return str(default or "a").strip().lower()[:1] or "a"
 
 
 def _rfid_listen_ports(blocks, *, application_port: int) -> list[int]:
@@ -162,8 +228,9 @@ class Settings:
     truck_anpr_retry_timer: float = 2.0
     operator_username: str = "admin"
     operator_password: str = "gmdc@123"
-    # Seconds to wait for exit sensor after entry granted before auto-IDLE
-    vehicle_crossing_timeout: float = 10.0
+    # Seconds after boom open / TL green before auto-IDLE if truck never clears
+    # (.env VEHICLE_CROSSING_TIMEOUT_SEC; optional per-lane JSON override)
+    vehicle_crossing_timeout: float = 60.0
 
     # When False, skip /api/detect; invalid-truck uses anpr_status=0
     anpr_enabled: bool = True
@@ -184,6 +251,16 @@ class Settings:
     # Device IP(s) for display_info/{ip} / pcb_id/{ip}; pcb_mode a|b
     display_ips: list = field(default_factory=list)
     display_pcb_mode: str = "a"
+
+    # Idle photo FTP (background uploader app)
+    ftp_enabled: bool = True
+    ftp_host: str = "10.80.118.100"
+    ftp_port: int = 21
+    ftp_user: str = "ftpclient"
+    ftp_password: str = "GmDC@$2k26"
+    ftp_remote_dir: str = "/Mines-Checkpoint"
+    ftp_timeout_sec: float = 30.0
+    ftp_delete_after_upload: bool = True
 
     config_path: str = ""
     raw_config: Dict[str, Any] = field(default_factory=dict)
@@ -442,18 +519,15 @@ def settings_from_raw(
         anpr_enabled = _env_bool("ANPR_ENABLED", bool(raw.get("anpr_enabled", True)))
     if prefer_file:
         anpr_retry = float(raw.get("truck_anpr_retry_timer") or 2)
-        crossing_timeout = float(raw.get("vehicle_crossing_timeout") or 10)
     else:
         anpr_retry = float(
             os.getenv("TRUCK_ANPR_RETRY_TIMER")
             or raw.get("truck_anpr_retry_timer")
             or 2
         )
-        crossing_timeout = float(
-            os.getenv("VEHICLE_CROSSING_TIMEOUT")
-            or raw.get("vehicle_crossing_timeout")
-            or 10
-        )
+    # After grant (boom open / TL green): auto IDLE if sensor never clears.
+    # .env wins so one site timer is easy to change without editing each lane JSON.
+    crossing_timeout = _vehicle_crossing_timeout_sec(raw)
 
     settings = Settings(
         demo_mode=demo_mode,
@@ -526,11 +600,31 @@ def settings_from_raw(
             os.getenv("MQTT_PORT") or display.get("port") or "1883"
         ),
         mqtt_ws_port=_resolve_mqtt_ws_port(os.getenv("MQTT_WS_PORT") or "9001"),
-        mqtt_topic_tx=display.get("mqtt_topic_tx") or "data_info/a",
+        mqtt_topic_tx=display.get("mqtt_topic_tx")
+        or f"data_info/{_pcb_mode_from_display(display, lane_id=str(raw.get('lane_id') or ''), default='a')}",
         mqtt_topic_rx=display.get("mqtt_topic_rx") or "display_info",
         display_type=(display.get("type") or "mqtt").lower(),
         display_ips=_display_ips_from_config(display, bidirectional=False),
-        display_pcb_mode="a",
+        display_pcb_mode=_pcb_mode_from_display(
+            display,
+            lane_id=str(raw.get("lane_id") or ""),
+            default="a",
+        ),
+        ftp_enabled=_env_bool("FTP_ENABLED", True),
+        ftp_host=str(os.getenv("FTP_HOST") or "10.80.118.100").strip(),
+        ftp_port=int(os.getenv("FTP_PORT") or 21),
+        ftp_user=str(os.getenv("FTP_USER") or "ftpclient").strip(),
+        ftp_password=str(
+            os.getenv("FTP_PASSWORD")
+            if os.getenv("FTP_PASSWORD") is not None
+            else "GmDC@$2k26"
+        ),
+        ftp_remote_dir=str(
+            os.getenv("FTP_REMOTE_DIR") or "/Mines-Checkpoint"
+        ).strip()
+        or "/Mines-Checkpoint",
+        ftp_timeout_sec=float(os.getenv("FTP_TIMEOUT_SEC") or 30),
+        ftp_delete_after_upload=_env_bool("FTP_DELETE_AFTER_UPLOAD", True),
         config_path=str(path),
         raw_config=raw,
     )

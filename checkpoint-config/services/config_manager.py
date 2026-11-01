@@ -900,8 +900,11 @@ def _invalidate_layout_dependent_sections(config: dict) -> None:
         ).strip().lower()
         display["pcb_mode"] = "b" if wb == "bidirectional" else "a"
         display["mqtt_topic_tx"] = f"data_info/{display['pcb_mode']}"
+        display.setdefault("display_ip", str(display.get("ip") or ""))
+        display.setdefault("display_ip_b", str(display.get("ip_b") or ""))
         if wb != "bidirectional":
             display["ip_b"] = ""
+            display["display_ip_b"] = ""
 
     io = config.get("io_controller")
     if isinstance(io, dict):
@@ -1011,6 +1014,8 @@ DEFAULT_CONFIG = {
     },
     "display": {
         "type": "mqtt",
+        "display_ip": "",
+        "display_ip_b": "",
         "ip": "",
         "ip_b": "",
         "port": "1883",
@@ -1511,21 +1516,43 @@ class ConfigManager:
             disp["pcb_mode"] = mode
             disp["mqtt_topic_tx"] = f"data_info/{mode}"
             disp["mqtt_topic_rx"] = "display_info"
-            ip = str(disp.get("ip") or "").strip()
-            ip_b = str(disp.get("ip_b") or "").strip()
+            # Prefer display_ip; keep legacy ip in sync for older runtimes.
+            display_ip = str(
+                disp.get("display_ip") or disp.get("ip") or ""
+            ).strip()
+            display_ip_b = str(
+                disp.get("display_ip_b") or disp.get("ip_b") or ""
+            ).strip()
+            disp["display_ip"] = display_ip
+            disp["ip"] = display_ip or str(disp.get("ip") or "").strip()
+            ip = str(disp.get("display_ip") or disp.get("ip") or "").strip()
+            ip_b = display_ip_b
+            if wb == "bidirectional":
+                disp["display_ip_b"] = display_ip_b
+                disp["ip_b"] = display_ip_b or str(disp.get("ip_b") or "").strip()
+                ip_b = str(disp.get("display_ip_b") or disp.get("ip_b") or "").strip()
+            else:
+                disp["display_ip_b"] = ""
+                disp["ip_b"] = ""
+                ip_b = ""
             if disp.get("validated"):
                 if not ip:
-                    logger.warning("display validated but ip missing")
+                    logger.warning("display validated but display_ip missing")
                     return False
                 if wb == "bidirectional":
                     if not ip_b:
-                        logger.warning("bi-directional display requires ip_b")
+                        logger.warning(
+                            "bi-directional display requires display_ip_b"
+                        )
                         return False
                     if ip_b == ip:
-                        logger.warning("display ip and ip_b must differ")
+                        logger.warning(
+                            "display_ip and display_ip_b must differ"
+                        )
                         return False
                 else:
                     disp["ip_b"] = ""
+                    disp["display_ip_b"] = ""
         if section == "rfids" and self.get_wb_type() == "bidirectional":
             err = self.validate_bidirectional_rfids(self.config.get("rfids") or {})
             if err:
