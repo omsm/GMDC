@@ -1,13 +1,50 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.19**
+**Current version: 1.20**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.19 — 2026-10-27 (latest)
+## 1.20 — 2026-11-02 (latest)
+
+Mac Mini launchd services, bidirectional weighbridge traffic-light polarity and idle rules, tare `weight_status=2` → `reset_checkpoint`, bi-dir tare/gross API URL split, Checkpoint RFID keepalive re-login, and LED `internet@ down` on OCI unreachable.
+
+### macos-services — durable LaunchAgent (Mac Mini)
+- Production path: `/Users/csm-gmdc/GMDC_IOT` (**not** under `~/Downloads`; LaunchAgents get `Operation not permitted` / exit `126` there)
+- Per-app `pyenv` under `Mines-WB/` or `Mines-Checkpoint/`; service runs `pyenv/bin/python3 main.py` after LAN wait
+- systemctl-style scripts: `enable` / `disable` / `start` / `stop` for WB and Checkpoint (only one per Mac)
+- KeepAlive LaunchAgent; logs under `GMDC_IOT/logs/`; Terminal debug via `debug-*.command` after stop
+- Docs: [`macos-services/README.md`](macos-services/README.md)
+
+### Mines-WB — bidirectional traffic lights / booms
+- Relay polarity `on_state=green` (coil ON = green, same as boom open)
+- IDLE / Reset: entry green both sides, exit red both sides, both booms open
+- Free Pass: all lights green, both booms open
+- Direction set: other side all red; depart boom closed; approach entry stays green
+- On WB: approach boom closes (uni-like); exit grant greens **only** the depart exit light
+
+### Mines-WB — tare weight-confirm reject
+- `weight_status=2` → POST `reset_checkpoint` with `device_ip` / `rfid_no` / `truck_details` from RFID validate, then exit (skip weight-details / boom-close)
+
+### Mines-WB — bi-dir tare vs gross OCI URLs
+- Trip `T|`: `weight_details_url_tare` + `boom_close_url_tare` when set
+- Trip `G|`: `weight_details_url` + `boom_close_url`
+- Empty tare URLs fall back to the default endpoints
+
+### Mines-Checkpoint — RFID management keepalive
+- While IDLE, every `/rfid_management` queues RFID cloud `login → mode → start` (`prepare_idle`) in the background; HTTP still returns 200 immediately
+
+### Display — OCI unreachable
+- Transport failure on OCI/GMDC APIs publishes LED `internet@ down` (ANPR/digitizer stay on their own messages)
+
+### Dashboard Reset (Mines-WB)
+- Reset keeps `_manual_stop` until a new trip begins so status_check / weight-confirm / gross-tolerance loops exit cleanly
+
+---
+
+## 1.19 — 2026-10-27
 
 Checkpoint ANPR-off captures a front photo per location. Mines-WB holds a low weight until the platform is empty, and a light positioning drop resets to idle.
 
@@ -453,6 +490,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.20** | Mac Mini launchd services; bi-dir TL polarity/idle/exit; tare reset_checkpoint on weight_status=2; tare/gross URL split; RFID keepalive; internet@ down |
 | **1.19** | Checkpoint ANPR-off RTSP photo per lane; Mines-WB low-weight wait until 0; `MISC_MIN_WEIGHT` reset vs exit on positioning drop |
 | **1.18** | Four checkpoint lanes in one process; RFID API message on that lane’s display; bidirectional boom-close outputs; Zebra antennas 5 and 6 |
 | **1.17** | Weighing starts when only the weighbridge sensor is cut; the clear event no longer leaves the truck on Move Forward |
@@ -478,4 +516,4 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 ## Notes for the next release
 
-Open items tracked outside this file (e.g. `to-do.md.md`): align PySide `digitizer-app` MQTT publish-on-change with decoder, bidirectional ENTRY_B hardware swap, retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.
+Open items tracked outside this file (e.g. `to-do.md.md`): align PySide `digitizer-app` MQTT publish-on-change with decoder; retire legacy `Mine-entry` / `Tracking-point-1` / `TareWb-App` folders when ready.

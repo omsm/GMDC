@@ -1,3 +1,3 @@
-from .logging_setup import setup_logging
+from .logging_setup import lane_log_scope, setup_logging, slug_lane_name
 
-__all__ = ["setup_logging"]
+__all__ = ["lane_log_scope", "setup_logging", "slug_lane_name"]

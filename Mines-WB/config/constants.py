@@ -78,6 +78,8 @@ class TIMEOUTS:
     MISC_MIN_WEIGHT = 200.0
     ANPR_ERR_2_DISPLAY_SEC = 5.0
     WEIGHT_ERROR_DISPLAY_SEC = 5.0
+    # Bidirectional: hold Tare/Gross LED text after RFID OK before ANPR
+    TRIP_TYPE_DISPLAY_SEC = 5.0
     WEIGHT_CONFIRM_POLL_SEC = 5.0
     MOVE_FORWARD_INTERVAL_SEC = 5.0
 
@@ -104,6 +106,7 @@ _TIMEOUT_ENV_ATTRS = (
     "MISC_MIN_WEIGHT",
     "ANPR_ERR_2_DISPLAY_SEC",
     "WEIGHT_ERROR_DISPLAY_SEC",
+    "TRIP_TYPE_DISPLAY_SEC",
     "WEIGHT_CONFIRM_POLL_SEC",
     "MOVE_FORWARD_INTERVAL_SEC",
 )
@@ -127,16 +130,18 @@ MSG_MOVE_FORWARD = "    MOVE@  FORWARD"
 MSG_MOVE_BACKWARD = "  MOVE@  BACKWARD"
 MSG_WEIGHING_FMT = "Tare Weight@{weight}"
 MSG_WEIGHING = " Checking@  Weight"
-MSG_INVALID_WEIGHT = "Invalid Weight"
-MSG_RFID_ERR = "RFID Invalid"
-# Tare (T): unladen; Vadaghat/Gross (V/G): laden — see Workflow._rfid_ok_display
+MSG_INVALID_WEIGHT = "Invalid@ Weight"
+MSG_RFID_ERR = "RFID@ Invalid"
 MSG_RFID_OK_FMT = "{truck}@{weight} Kg"
 MSG_ANPR_ERR = "ANPR ERROR@ERR-0"
 MSG_ANPR_ERR_2 = "ANPR ERROR@ERR-2"
 MSG_ANPR_API_ERR = "ANPR Server@Unreachable"
+MSG_INTERNET_DOWN = "internet@ down"
 MSG_WEIGHT_DETAILS_FMT = "{truck} Weight@{weight} Kg"
 MSG_EXIT = "   EXIT@  GRANTED"
 MSG_FREE_PASS = "   FREE@  PASS"
-MSG_TARE_WT_ERR = "TARE WT@  ERR"
-MSG_VADAGHAT_WT_ERR = "VADAGHAT WT@  ERR"
-MSG_GROSS_WT_ERR = "GROSS WT@  ERR"
+MSG_UNDER_WEIGHT = "Under @ {diff}Kg"
+MSG_OVER_WEIGHT = "Over @ {diff}Kg"
+# Bidirectional RFID trip-type hold (LED)
+MSG_TYPE_TARE = "      Tare"
+MSG_TYPE_GROSS = "     Gross"

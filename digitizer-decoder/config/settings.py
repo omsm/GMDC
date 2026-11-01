@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import sys
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -54,21 +56,59 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
-def app_dir() -> str:
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def install_dir() -> str:
+    """Writable folder: beside the .exe when frozen, else package root."""
+    if is_frozen():
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def resource_dir() -> str:
+    """Read-only bundled assets (static UI, seed config, VERSION)."""
+    if is_frozen():
+        return getattr(sys, "_MEIPASS", install_dir())
+    return install_dir()
+
+
+def app_dir() -> str:
+    """Backward-compatible alias for the writable install folder."""
+    return install_dir()
+
+
 def config_path() -> str:
-    return os.path.join(app_dir(), "config.json")
+    return os.path.join(install_dir(), "config.json")
+
+
+def ensure_runtime_config() -> None:
+    """Copy bundled config.json beside the .exe on first run."""
+    dest = config_path()
+    if os.path.isfile(dest):
+        return
+    seed = os.path.join(resource_dir(), "config.json")
+    if not os.path.isfile(seed):
+        return
+    try:
+        shutil.copy2(seed, dest)
+        logger.info("Created runtime config at %s", dest)
+    except OSError as exc:
+        logger.warning("Could not copy seed config.json: %s", exc)
 
 
 def version_string() -> str:
-    path = os.path.join(app_dir(), "VERSION")
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return fh.read().strip() or "0.0.0"
-    except OSError:
-        return "0.0.0"
+    for base in (install_dir(), resource_dir()):
+        path = os.path.join(base, "VERSION")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read().strip()
+            if text:
+                return text
+        except OSError:
+            continue
+    return "0.0.0"
 
 
 @dataclass
@@ -186,6 +226,8 @@ def _normalize(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_settings(path: Optional[str] = None) -> Settings:
+    if path is None:
+        ensure_runtime_config()
     cfg_path = path or config_path()
     if not os.path.exists(cfg_path):
         data = deepcopy(DEFAULT_CONFIG)

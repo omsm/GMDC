@@ -94,15 +94,20 @@ class TestBidirectionalFlow(unittest.TestCase):
 
         _args, kwargs = ctx.display.send.call_args
         self.assertEqual(kwargs.get("side"), "a")
-        ctx.traffic_lights["entry_b"]["entry"].set_red.assert_not_called()
-        ctx.traffic_lights["entry_b"]["exit"].set_green.assert_not_called()
-        ctx.exit_boom.close.assert_not_called()
+        # Opposite side all red; depart (B) boom closed
+        ctx.traffic_lights["entry_b"]["entry"].set_red.assert_called()
+        ctx.traffic_lights["entry_b"]["exit"].set_red.assert_called()
+        ctx.traffic_lights["entry_a"]["entry"].set_green.assert_called()
+        ctx.exit_boom.close.assert_called()
         workflow.force_reset()
 
         ctx.display.send.reset_mock()
         workflow.on_exit_occupied()
         _args, kwargs = ctx.display.send.call_args
         self.assertEqual(kwargs.get("side"), "b")
+        ctx.traffic_lights["entry_a"]["entry"].set_red.assert_called()
+        ctx.traffic_lights["entry_a"]["exit"].set_red.assert_called()
+        ctx.entry_boom.close.assert_called()
         workflow.force_reset()
 
     def test_idle_s2_and_s3_cut_plays_weighbridge_0(self):
@@ -224,26 +229,52 @@ class TestBidirectionalFlow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.IDLE)
         ctx.rfid_clouds["entry_b"].prepare_idle.assert_not_called()
 
-    def test_exit_crossing_waits_for_uncut_then_defers_boom_close(self):
+    def test_exit_crossing_waits_for_weight_zero_before_boom_close(self):
         from config.constants import State
 
         workflow, ctx = self._make_workflow()
         ctx.settings.wb_type = "unidirectional"
         ctx.state_machine.force_state(State.EXIT_GRANTED)
         ctx.exit_boom.close.reset_mock()
+        ctx.exit_boom.open.reset_mock()
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 12000.0
 
         workflow.on_exit_occupied()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        ctx.exit_boom.open.assert_called()
         ctx.exit_boom.close.assert_not_called()
 
         workflow.on_exit_cleared()
-        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        self.assertTrue(workflow._exit_pending_idle)
         ctx.exit_boom.close.assert_not_called()
-        timer = getattr(workflow, "_boom_close_timer")
-        self.assertIsNotNone(timer)
-        timer.function()
-        ctx.exit_boom.close.assert_called_once()
-        workflow.force_reset()
+
+        ctx.digitizer.get_current_weight.return_value = 0.0
+        workflow._on_digitizer_update()
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.exit_boom.close.assert_called()
+        self.assertIsNone(getattr(workflow, "_boom_close_timer"))
+
+    def test_exit_crossing_with_zero_weight_closes_boom_immediately(self):
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.state_machine.force_state(State.EXIT_GRANTED)
+        ctx.exit_boom.close.reset_mock()
+        ctx.digitizer = MagicMock()
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.digitizer.get_current_weight.return_value = 0.0
+
+        workflow.on_exit_occupied()
+        ctx.exit_boom.open.assert_called()
+        workflow.on_exit_cleared()
+
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        ctx.exit_boom.close.assert_called()
+        self.assertIsNone(getattr(workflow, "_boom_close_timer"))
 
     def test_bidirectional_idle_opens_both_booms_and_entry_lights(self):
         workflow, ctx = self._make_workflow()
@@ -264,8 +295,8 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.exit_boom.close.assert_not_called()
         for direction in ("entry_a", "entry_b"):
             ctx.traffic_lights[direction]["entry"].set_green.assert_called()
-            ctx.traffic_lights[direction]["exit"].set_green.assert_called()
-            ctx.traffic_lights[direction]["exit"].set_red.assert_not_called()
+            ctx.traffic_lights[direction]["exit"].set_red.assert_called()
+            ctx.traffic_lights[direction]["exit"].set_green.assert_not_called()
         self.assertIsNone(getattr(workflow, "_boom_close_timer"))
 
     def test_unidirectional_reset_closes_exit_boom_immediately(self):
@@ -418,6 +449,141 @@ class TestBidirectionalFlow(unittest.TestCase):
                 break
             time.sleep(0.02)
         ctx.digitizer.read_stable_weight.assert_called()
+        workflow.force_reset()
+
+    def test_entry_a_far_side_cut_before_wb_plays_check_weighbridge(self):
+        """ENTRY_A: exit cut while WB clear → buzzer + weighbridge_0 (bi only)."""
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": False,
+            "exit_active": True,
+        }
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+        self.assertEqual(ctx.transactions.direction, "ENTRY_A")
+        ctx.voice.move_forward.reset_mock()
+
+        workflow.on_exit_occupied()
+
+        ctx.voice.check_weighbridge.assert_called()
+        ctx.voice.move_backward.assert_not_called()
+        workflow.force_reset()
+
+    def test_entry_b_far_side_cut_before_wb_plays_check_weighbridge(self):
+        """ENTRY_B: entry cut while WB clear → buzzer + weighbridge_0 (bi only)."""
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": False,
+            "exit_active": True,
+        }
+        workflow.on_exit_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+        self.assertEqual(ctx.transactions.direction, "ENTRY_B")
+
+        workflow.on_entry_occupied()
+
+        ctx.voice.check_weighbridge.assert_called()
+        ctx.voice.move_backward.assert_not_called()
+        workflow.force_reset()
+
+    def test_uni_exit_cut_during_positioning_still_move_backward(self):
+        """Unidirectional keeps move-backward when exit cuts during positioning."""
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": False,
+            "exit_active": True,
+        }
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+
+        workflow.on_exit_occupied()
+
+        ctx.voice.move_backward.assert_called()
+        ctx.voice.check_weighbridge.assert_not_called()
+        workflow.force_reset()
+
+    def test_bidirectional_tare_hold_before_anpr(self):
+        """After RFID OK with trip T, show Tare for 5s before ANPR continues."""
+        import time
+        from config.constants import MSG_TYPE_TARE, State, TIMEOUTS
+        from unittest.mock import patch
+
+        workflow, ctx = self._make_workflow()
+        ctx.state_machine.force_state(State.RFID_VALIDATE)
+        ctx.transactions.begin()
+        ctx.transactions.direction = "ENTRY_A"
+        ctx.transactions.rfid = "AABB"
+        ctx.transactions.truck_details = (
+            "T|D2030DBE|OD05CA3273|3000|1000|0|958|IP|OD05CA3273"
+        )
+        ctx.transactions.vehicle_no = "OD05CA3273"
+        ctx.oci = MagicMock()
+        ctx.oci.anpr_detect.return_value = MagicMock(
+            status=1, raw={"anpr_status": 1}, ok=True
+        )
+        ctx.oci.invalid_truck_number.return_value = MagicMock(ok=True)
+        ctx.settings.anpr_enabled = False
+        ctx.display = MagicMock()
+
+        with patch.object(TIMEOUTS, "TRIP_TYPE_DISPLAY_SEC", 0.05):
+            held = workflow._maybe_hold_trip_type_before_anpr()
+            self.assertTrue(held)
+            ctx.display.send.assert_called()
+            shown = ctx.display.send.call_args[0][0]
+            self.assertEqual(shown, MSG_TYPE_TARE)
+            ctx.state_machine.force_state(State.ANPR_VALIDATE)
+            with patch.object(workflow, "_after_rfid_valid") as cont:
+                for _ in range(40):
+                    if cont.called:
+                        break
+                    time.sleep(0.02)
+                cont.assert_called()
+        workflow.force_reset()
+
+    def test_bidirectional_gross_hold_before_anpr(self):
+        from config.constants import MSG_TYPE_GROSS, State
+
+        workflow, ctx = self._make_workflow()
+        ctx.state_machine.force_state(State.RFID_VALIDATE)
+        ctx.transactions.begin()
+        ctx.transactions.truck_details = (
+            "G|D2030DBE|OD05CA3273|30000|25000|0|958|IP|OD05CA3273"
+        )
+        ctx.display = MagicMock()
+
+        held = workflow._maybe_hold_trip_type_before_anpr()
+        self.assertTrue(held)
+        shown = ctx.display.send.call_args[0][0]
+        self.assertEqual(shown, MSG_TYPE_GROSS)
+        workflow.force_reset()
+
+    def test_unidirectional_skips_trip_type_hold(self):
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.state_machine.force_state(State.RFID_VALIDATE)
+        ctx.transactions.begin()
+        ctx.transactions.truck_details = (
+            "T|D2030DBE|OD05CA3273|3000|1000|0|958|IP|OD05CA3273"
+        )
+        ctx.display = MagicMock()
+
+        self.assertFalse(workflow._maybe_hold_trip_type_before_anpr())
+        ctx.display.send.assert_not_called()
         workflow.force_reset()
 
 

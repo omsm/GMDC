@@ -10,6 +10,7 @@ from config.constants import (
     MSG_ANPR_ERR,
     MSG_ANPR_ERR_2,
     MSG_IDLE,
+    MSG_INTERNET_DOWN,
     MSG_INVALID_WEIGHT,
     MSG_RFID_ERR,
     MSG_RFID_OK_FMT,
@@ -24,13 +25,32 @@ from core.workflow import MinesWbWorkflow
 class DisplayMessageTests(unittest.TestCase):
     def test_message_constants(self):
         self.assertEqual(MSG_IDLE, "Enter@Vehicle")
-        self.assertEqual(MSG_INVALID_WEIGHT, "Invalid Weight")
+        self.assertEqual(MSG_INVALID_WEIGHT, "Invalid@ Weight")
+        self.assertEqual(MSG_INTERNET_DOWN, "internet@ down")
         self.assertEqual(MSG_RFID_OK_FMT.format(truck="OD14AE3900", weight=15000), "OD14AE3900@15000 Kg")
         self.assertEqual(MSG_WEIGHING_FMT.format(weight=15250), "Tare Weight@15250")
         self.assertEqual(
             MSG_WEIGHT_DETAILS_FMT.format(truck="OD14AE3900", weight=15250),
             "OD14AE3900 Weight@15250 Kg",
         )
+
+    def test_ui_api_failure_publishes_internet_down_for_oci(self):
+        from services.api_errors import annotate_response
+        from services.oci_client import OCIResponse
+
+        ctx = MagicMock()
+        ctx.display = MagicMock()
+        ctx.frontend = MagicMock()
+        ctx.settings = MagicMock(wb_type="unidirectional")
+        ctx.transactions = MagicMock(direction="")
+        wf = MinesWbWorkflow.__new__(MinesWbWorkflow)
+        wf.ctx = ctx
+        resp = OCIResponse(ok=False, status=0, message="timeout", raw={}, http_status=0)
+        annotate_response(resp, "rfid-validate")
+        wf._ui_api_failure("validating_rfid", resp, fallback="RFID service not reachable")
+        ctx.display.send.assert_called()
+        self.assertEqual(ctx.display.send.call_args.args[0], MSG_INTERNET_DOWN)
+        ctx.frontend.publish_display.assert_called_with(MSG_INTERNET_DOWN)
 
     def test_rfid_ok_tare_uses_unladen_rto_tare(self):
         from services.oci_client import parse_truck_details

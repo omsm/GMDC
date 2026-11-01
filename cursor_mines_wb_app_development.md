@@ -1,56 +1,94 @@
-# Mines-WB app development
-_Exported on 27/10/2026 at 23:21:56 GMT+5:30 from Cursor (3.27.14)_
+# GMDC weighbridge app development
+_Exported on 11/2/2026 at 01:04:41 GMT+5:30 from Cursor (3.27.22)_
 
 ---
 
 **User**
 
-Learn this application yourself then we devlop Mines-WB app
+this the gmdc weight bridge app. deeply self learn this app so that you can help me forther development
 
 ---
 
 **Cursor**
 
-I'll start by learning how this application is structured, with a focus on Mines-WB, so we can develop it from the same design.
+I'll study the GMDC weighbridge app end to end so later changes sit on how it actually works. Starting with the project layout and the development notes you have open.
 
-The repo is a GMDC yard IoT system. Mines-WB is the weighbridge runtime. I’ll read the trip flow and Vadhghat path so we share the same picture before changing it.
+The notes cover the yard flow and recent weighbridge changes. Next I’ll read the runtime itself—lane logic, APIs, hardware, and config—so the picture matches the code.
 
-Mines-WB is the weighbridge runtime in this GMDC yard system. I have the trip flow, the three weight paths, and the current Vadhghat behavior. We can change it from here.
+The GMDC weighbridge app is loaded. Product version is **1.19**. The running site in `Mines-WB/iot_configuration.json` is a **bidirectional** bridge (`device_ip` `10.80.118.140`, digitizer over MQTT). I can change it from this picture.
 
-## What the site does
+## What the yard does
 
-A truck moves through the yard in this order:
+A truck moves through the site in this order:
 
 **Mines entry → Tare weighbridge → Tracking 1 → Vadhghat → Tracking 2 → Gross weighbridge → Mines exit**
 
-Two apps cover that line. **Mines-Checkpoint** handles entry, tracking, and exit. **Mines-WB** handles the three weighbridges. The RFID string decides the trip: `T|` tare, `V|` Vadhghat, `G|` gross. Shared hardware, RFID, display, and voice live in `gmdc_common`. `checkpoint-config` writes `iot_configuration.json`. Live weight comes from `digitizer-decoder` over MQTT. Product version is **1.19**.
+Two runtimes cover that line. **Mines-Checkpoint** handles entry, tracking, and exit. **Mines-WB** handles all three weighbridges. Shared hardware, RFID, display, and voice live in `gmdc_common`. `checkpoint-config` writes `iot_configuration.json`. Live weight comes from `digitizer-decoder`.
 
-## Mines-WB trip
+The RFID string decides the trip, not the site folder:
 
-On a unidirectional bridge the lane is:
+`T|rfid|vehicle|gross|tare|tolerance|token|…|device_ip`
 
-1. Entry sensor starts positioning. Move Forward plays until only the weighbridge sensor is cut.
-2. Weight must be above the minimum (about 5 t). A zero or rising-then-zero reading before the truck is only on the bridge sends it out.
-3. RFID is read and sent to OCI `validate_truck`.
-4. ANPR runs. A match continues. Status `0` or `2`, and ANPR switched off on the page, post `invalid-truck-number` once and then poll `status_check` until the vehicle is updated.
-5. A stable digitizer reading is taken (same non-zero value for `digitizer_stable_count` samples, default 10).
-6. The prefix picks the OCI path, then the exit boom opens and the lane returns to idle.
+| Prefix | Path |
+|--------|------|
+| `T\|` | Tare |
+| `V\|` | Vadhghat |
+| `G\|` | Gross |
 
-The operator dashboard is the Flow Details strip: RFID, ANPR, Weight Read, Weight Validation, then exit.
+## One truck on the bridge
 
-## Vadhghat (`V|`) — already in the code
+The lane is driven by `Mines-WB/core/workflow.py` and the state table in `core/state_machine.py`.
 
-`Mines-WB/core/VG-Flow.md` matches what `workflow.py` does today. Allowed weight is the target down to target minus tolerance, inclusive. For `45000` and `50`, that is **44950–45000 kg**.
+1. **Idle.** The platform weight must be 0. A non-zero idle weight plays the digitizer error and does not start a trip. Sensor 1 starts side A. On a bidirectional bridge, sensor 3 starts side B. Sensor 2 never starts a trip.
+2. **Positioning.** Move Forward plays until only the weighbridge sensor is cut. If the weight rises and then returns to 0 before that, a last weight at or below `MISC_MIN_WEIGHT` (200 kg) resets to idle. A heavier drop grants exit.
+3. **Weight capture.** The same non-zero MQTT reading must repeat for `digitizer_stable_count` samples (default 10). At or below `MIN_WEIGHT_KG` (5 t) the board shows `Invalid Weight`, the weight-error clip loops, and the lane waits until the weight is 0, then returns to idle. Above 5 t, RFID starts.
+4. **RFID.** The tag turns the RFID Read icon green immediately. OCI `validate_truck` turns RFID Validation green only on success. The API `message` is what the LED shows.
+5. **ANPR.** A match (`anpr_status` 1) continues. Status `0` or `2`, and ANPR switched off on the page, post `invalid-truck-number` once and then poll `status_check` until the vehicle is updated (`vehicleStatus` 1) or aborted (`2`).
+6. **Final weight.** A second stable reading is taken, then the prefix picks the OCI path.
+7. **Exit.** The departure boom opens. After the truck clears the far sensor, the lane returns to idle. The unidirectional exit boom stays up for 10 seconds, then closes.
+
+Operator controls are Free Pass (every light green, every boom open) and Reset. `reset_checkpoint` is posted only when `RESET_CHECKPOINT_FLAG` is true.
+
+## The three weight paths
+
+**Tare (`T|`).** The band is tare ± tolerance. Outside the band, `weight-confirm` loops until the weight is inside or status 2 aborts. Inside the band, `weight_details` then `boom_close`, then Move Forward.
+
+**Vadhghat (`V|`).** The band is target down to target minus tolerance, inclusive. For `45000` and `50`, that is **44950–45000 kg**.
 
 | Weight | What happens |
 |--------|----------------|
-| Inside the band | `vadhghat_weight_details`, then `vadhghat_boom_close`, then exit with Move forward |
-| Over the target | `vadhghat_weight_adjustment` only. Display `Overweight@{difference}Kg`. Voice is `error_start.wav`, then `g100.wav`, then the difference. After that, only the difference repeats until the truck has exited. Move forward is not played |
-| Under the low end | Same adjustment API. Display `Underweight@{difference}Kg`. First voice uses `g101.wav`, then only the difference until exit |
+| Inside the band | `vadhghat_weight_details`, then `vadhghat_boom_close`, then exit with Move Forward |
+| Over the target | `vadhghat_weight_adjustment` only. Display `Overweight by:@{difference}Kg`. Voice is the error start, then `g100.wav`, then the difference. After that, only the difference repeats. Move Forward is not played |
+| Under the low end | Same adjustment API. Display `Underweight by:@{difference}Kg`. First voice uses `g101.wav`, then only the difference |
 
-Tare uses the shared `weight_details` and `boom_close` APIs, plus a confirm loop if the weight is outside the band. Gross uses those same APIs, with a tolerance-confirm step when OCI returns status 201.
+**Gross (`G|`).** Same minus-only band as Vadhghat, but it uses the shared `weight_details` and `boom_close` APIs. If weight-details returns status 201, `gross-tolerance-confirm` loops until the weight fits the updated tolerance, or status 2 waives it and still closes the boom.
 
-The config currently loaded in `Mines-WB/iot_configuration.json` is a unidirectional **Gross** site (`device_ip` `10.80.118.141`, digitizer MQTT). Sample configs for tare, Vadhghat, and gross are in `Mines-WB/samples/`.
+## Hardware on the loaded site
+
+Relay mode, Modbus coils, function code 5, start address 0. Coil off is the normally closed contact.
+
+| Output | Pin | Idle (bidirectional) |
+|--------|-----|----------------------|
+| Exit light, side A | 0 | Normally closed |
+| Exit light, side B | 1 | Normally closed |
+| Entry boom | 2 | Normally open |
+| Exit boom | 3 | Normally open |
+
+Entry traffic-light pins are empty, so those coils are not written. Sensors are entry 0, platform 1, exit 2.
+
+While only sensor 2 is cut, both booms close. After a successful boom-close API, both booms open again and only the departure-side light goes normally open (channel 1 for a truck that entered on A, channel 0 for a truck that entered on B).
+
+## Where the code lives
+
+| Piece | File |
+|-------|------|
+| Lane and OCI sequence | `Mines-WB/core/workflow.py` |
+| States | `Mines-WB/core/state_machine.py` |
+| Truck string, bands, Vadhghat difference | `Mines-WB/services/oci_client.py` |
+| Stable weight | `Mines-WB/services/digitizer_client.py` |
+| Startup, pin wiring | `Mines-WB/main.py` |
+| Operator page | `Mines-WB/static/web/` |
+| Timeouts and board text | `Mines-WB/config/constants.py` |
 
 Tell me what you want to change on Mines-WB and we can start.
 
@@ -58,1289 +96,2774 @@ Tell me what you want to change on Mines-WB and we can start.
 
 **User**
 
-in Mines-WB,when traffic light on and off
+how many api use in this app
 
 ---
 
 **Cursor**
 
-I’ll trace the Mines-WB lane code to see exactly when each traffic light turns on and off.
+I’ll count the APIs Mines-WB actually calls, from the OCI client and the other outbound requests, so the number matches the code.
 
-In Mines-WB the traffic lights switch between green and red. They are never turned fully off during a trip. `set_off()` exists on the driver, but the weighbridge flow does not call it.
+Mines-WB calls **12 outbound HTTP APIs** during a trip. A normal truck does not hit all 12. The prefix (`T|`, `V|`, or `G|`) and the weight decide which ones run.
 
-On a relay board, red energizes the coil (ON) and green drops it (OFF). Direct mode uses a separate red pin and green pin.
+| # | API | When it runs |
+|---|-----|----------------|
+| 1 | `validate_truck/rfid_tag` | Every trip, after a tag is read |
+| 2 | ANPR `/api/detect` | ANPR is on |
+| 3 | `invalid-truck-number` | Every trip, after ANPR (or with status `2` when ANPR is off) |
+| 4 | `status_check` | ANPR status `0` or `2`, and when ANPR is off. Polled until the vehicle is updated or aborted |
+| 5 | `weight-details` | Tare and gross, after the final weight |
+| 6 | `weight-confirm` | Tare only, when the weight is outside the band |
+| 7 | `boom_close` | Tare and gross, after weight details |
+| 8 | `gross-tolerance-confirm` | Gross only, when weight-details returns status `201` |
+| 9 | `vadhghat_weight_details` | Vadhghat, weight inside the band |
+| 10 | `vadhghat_boom_close` | Vadhghat, after in-band weight details |
+| 11 | `vadhghat_weight_adjustment` | Vadhghat, weight outside the band |
+| 12 | `reset_checkpoint` | Only when `RESET_CHECKPOINT_FLAG` is true |
 
-## Unidirectional bridge
+OCI calls 1 and 3–12 go to `https://gmuatociexp.gmdcltd.co.in`. ANPR is a separate server (`/api/detect`).
 
-| Moment | Entry light | Exit light |
-|--------|-------------|------------|
-| Boot, idle, and Reset | Green | Red |
-| Truck cuts the entry sensor and is told to move forward | Stays green | Stays red |
-| Truck is only on the weighbridge sensor and weighing starts | **Red** (entry boom closes) | Stays red |
-| RFID, ANPR, and weight APIs | Stays red | Stays red |
-| Exit is granted | Stays red | **Green** (exit boom opens) |
-| Truck clears the exit sensor | **Green** | **Red** |
+Two other services sit beside those 12 and are not part of that count:
 
-Weighing starts in `_weight_capture_cycle`, which calls `_set_entry_closed()`. Exit is granted in `_enter_exit_granted`, which calls `_grant_exit_hardware()`. After the truck has crossed, `_complete_lane_exit` restores the idle pattern. The exit boom stays up for 10 seconds, then closes. The exit light goes red immediately.
+- **Digitizer.** MQTT topics `gmdc/digitizer/weight`, `request`, and `status` on this site. API mode would POST `/read_stable_weight` instead.
+- **Zebra reader.** Four calls on the reader itself: login, set mode, start, stop.
 
-The same return to idle happens on Reset, a positioning timeout, a digitizer failure, or a weight at or below the minimum.
-
-## Bidirectional bridge
-
-Idle is both entry lights green, both exit lights red, and both booms open.
-
-Only the side the truck entered changes:
-
-- When weighing starts, that side’s entry light goes red and that boom closes. The other side’s lights stay green and red. Its boom closes so nothing can enter from behind.
-- When exit is granted, the departure-side exit light goes green and that boom opens. The approach entry light stays red.
-- After the truck clears the far sensor, both sides return to idle.
-
-## Free pass
-
-The operator Free Pass button turns every light green and opens every boom. After the exit sensor goes uncut, then cut, then uncut, the lane returns to the idle pattern.
+The app also serves its own dashboard routes (`/api/status`, `/api/login`, `/api/reset`, `/api/free-pass`, `/rfid_data`, and others). Those are local endpoints, not the GMDC trip APIs.
 
 ---
 
 **User**
 
-which channel use for traffic light
+if sensor one trigger and weight  vary then sudden weight is 0,then what happen
 
 ---
 
 **Cursor**
 
-I’ll look up the traffic-light pin mapping in the Mines-WB I/O config and how those pins become Modbus channels.
+Sensor 1 starting a trip, then the weight dropping back to 0, is a specific path in the lane. I’ll trace that code so the outcome matches what the app does now.
 
-The running Mines-WB config drives the traffic lights on two relay output channels. Both are Modbus coils, written with function code 5. The digital-output start address is 0, so the pin number is the coil address.
+Sensor 1 starts positioning, the live weight rises, and then it falls back to 0 before the truck is sitting only on the weighbridge sensor. That is treated as the truck leaving the approach, and the lane does not continue to RFID.
 
-| Light | Config pin | Modbus coil | Relay |
-|-------|------------|-------------|-------|
-| Entry | `traffic_lights.relay.entry.pin` = **0** | **0** | Relay 1 |
-| Exit | `traffic_lights.relay.exit.pin` = **1** | **1** | Relay 2 |
+This runs only while the state is still **Vehicle Positioning**. It uses the live MQTT weight. If the digitizer is in API mode, there is no live feed, so this path does not run.
 
-Mode is `relay`, so each light uses one coil. The coil ON (HIGH) is red. The coil OFF (LOW) is green. There is no separate green channel in this mode.
+## What the app does
 
-The block under `digital_outputs.mapping` that lists entry red on 0, entry green on 1, exit red on 2, and exit green on 3 is the direct-mode template. Those addresses are empty in `traffic_lights.direct`, and the app does not write them while mode is relay.
+1. Sensor 1 cuts while the weight is already 0. Positioning starts and **Move Forward** plays.
+2. Each reading above 0 is remembered. The last non-zero value is what matters, not how much the weight bounced.
+3. The weight returns to 0, and sensor 1 or sensor 3 is still involved (the truck is not only on sensor 2). Move Forward stops.
+4. The voice plays `error_start.wav`, then `Digitizer_error.wav`.
+5. The last non-zero weight is compared with `MISC_MIN_WEIGHT` (default **200 kg**):
+
+| Last weight before it hit 0 | Result |
+|------------------------------|--------|
+| **200 kg or less** | Reset to **idle**. Treated as a person or animal. The exit boom does not open. |
+| **Above 200 kg** | **Exit is granted.** The exit light goes green, the exit boom opens, and Move Forward plays again. The dashboard shows “Exit after failure — clear the lane.” RFID and the weight APIs are not called. |
+
+If the truck is already only on the weighbridge sensor when the weight hits 0, this path is skipped. Weighing continues from the normal capture instead.
 
 ---
 
 **User**
 
-which channel use for boom barrier
+when annoucse vehicle move backword
+
+during vehicle exit process, currently after exit sensor is cut then uncut, immediately exit bom barrier closes. What I want is during exit process, until the current WEIGHT isn't 0, dont close the BB. After weight is 0, then check 3rd sensor. If cut, then boom barrier will be opened. Once weight is 0 , boom barrier is closed and exit sensor is un-cut then only close the boom barrier and application will go to IDLE MODE OR RESET MODE
 
 ---
 
 **Cursor**
 
-The boom channels come from the same I/O config. I’ll confirm which pins the running site actually writes.
+I'll change exit so the boom stays open until weight is 0 and the exit sensor is clear, then close and return to idle. First I'm tracing the current exit and boom-close path.
 
-The loaded Mines-WB site uses relay mode for the boom barriers. Each barrier is one Modbus coil, written with function code 5. The digital-output start address is 0, so the pin number is the coil address.
+I'll gate exit completion on weight returning to 0 and the exit sensor clearing, and keep the boom open until then.
 
-| Barrier | Config pin | Enabled | Modbus coil |
-|---------|------------|---------|-------------|
-| Entry | empty | **false** | not written |
-| Exit | `boom_barriers.relay.exit.pin` = **3** | **true** | **3** |
+Implementing the weight-gated exit completion in the workflow.
 
-The coil ON (HIGH) opens the exit boom. The coil OFF (LOW) closes it. The entry boom is disabled, so the app logs the open and close commands and does not drive a coil for it.
+The entry path already calls the new helpers — I'll add those helpers and finish the exit-sensor wiring.
 
-`digital_outputs.mapping` still lists entry barrier on address 4 and exit barrier on address 5. Those are the direct-mode template. The app does not write them while mode is relay.
+Updating the exit boom tests next, then running them.
+
+Trusting the exit-sensor clear event so we don't re-read a stale latch and block boom close.
+
+Canceling pending exit only on a real sensor-cut event, not on a poller re-read.
+
+Exit boom close is now gated on **weight = 0** and the exit sensor being clear.
+
+## New exit behaviour
+
+| Step | What happens |
+|------|----------------|
+| Exit granted | Boom opens as before |
+| Exit sensor (3) cut | Boom stays / is held **open**. If weight is already 0, boom stays open |
+| Exit sensor uncut, weight still **> 0** | Boom stays **open**. App stays in EXIT — does **not** go IDLE |
+| Exit sensor uncut **and** weight **= 0** | Boom **closes**, lane returns to **IDLE** |
+| Weight hits 0 while exit sensor still cut | Boom is opened / kept open; wait until sensor clears |
+
+The old 10-second delayed close after sensor clear is removed for this path. Boom closes only when both conditions are met.
+
+Manual Reset still closes the boom immediately. Sites without a live MQTT digitizer still finish on exit-sensor clear (same as before).
+
+**Move backward** (from your earlier question): announced only during **Vehicle Positioning**, when the exit sensor (sensor 3) is cut — truck is overshooting the platform and must reverse.
 
 ---
 
 **User**
 
-in idel condition of Mine-WB app,
-1.channel 2 Normally close
-2.channel 3 Normally open
-3. channel 4 Normal close
-4.if 2nd sensor high then channel 2 of output is close
+MSG_TARE_WT_ERR
+why above variable use
+
+learn your self all functionality of GMDC_NEW.after that you can help me development
 
 ---
 
 **Cursor**
 
-I’ll match those idle states to the Mines-WB output channels and the second sensor, then wire the lane so idle and that sensor follow them.
+I'll study the full GMDC_NEW workspace—checkpoints, weighbridge, config, digitizer, and shared hardware—so later work matches how the site actually runs.
 
-Idle is driving the relays the wrong way for this board. Channel 2 should sit normally closed, channel 3 normally open, and channel 4 normally closed, and a high platform sensor should close channel 2. I’ll match the coil outputs to that.
+The full **GMDC_NEW** site is loaded. Product version is **1.19**. New work belongs in `Mines-Checkpoint` and `Mines-WB`, not the old `Mine-entry` / `TareWb-App` folders.
 
-Idle now drives the four relay channels the way you described. Coil off is the normally closed contact. Coil on is the normally open contact.
+## What the yard does
 
-| Output | Idle | Coil |
-|--------|------|------|
-| Channel 2, exit light | Normally closed (red) | Off |
-| Channel 3, entry boom | Normally open | On |
-| Channel 4, exit boom | Normally closed | Off |
+A truck moves through the mine in this order:
 
-The entry light on channel 1 stays green in idle, so that coil is on.
+**Mines entry → Tare weighbridge → Tracking 1 → Vadhghat → Tracking 2 → Gross weighbridge → Mines exit**
 
-When the platform sensor (sensor 2) goes high, output channel 2 is forced closed again. That holds the exit light on red even if that relay had been turned on.
+Two runtimes cover that line. The RFID string decides the trip, not the folder name.
 
-Channel 3 was not wired before. The entry boom is now relay pin 2 and enabled, so idle can open it.
+| Stage | App | Prefix |
+|--------|-----|--------|
+| Entry, tracking, exit | `Mines-Checkpoint` | `T\|` / `CE\|` / `X\|` |
+| Tare, Vadhghat, gross | `Mines-WB` | `T\|` / `V\|` / `G\|` |
+
+`checkpoint-config` writes `iot_configuration.json`. Shared hardware (Modbus, RFID, display, voice) lives in `gmdc_common`. Live weight comes from `digitizer-decoder` over MQTT (or HTTP). Mosquitto runs on **1883** (MQTT) and **9001** (dashboard WebSocket).
+
+---
+
+## Mines-Checkpoint
+
+One process can run four locations from `lanes` in config: Mines Entry, Traffic IN, Traffic OUT, Mines Exit. Each lane has its own RFID port (8001–8004), Modbus, OCI, and LED topic (`data_info/a` … `d`).
+
+**Flow:** RFID → OCI validate → ANPR → invalid-truck → (status-check if needed) → boom-close → sensor clear → IDLE.
+
+| Prefix | Extra rule |
+|--------|------------|
+| `T\|` | Normal entry |
+| `CE\|` | After invalid-truck, poll check-status until `statusCode == 200` (all ANPR cases) |
+| `X\|` | Mines Exit: poll `download/docs` until `documentDownloaded` is true, then boom-close |
+
+ANPR off skips `/api/detect`, takes a front RTSP photo, posts invalid-truck with `anpr_status` 2, then polls status-check. Free Pass and Reset sit on the dashboard. `reset_checkpoint` is posted only when `RESET_CHECKPOINT_FLAG` is true.
+
+---
+
+## Mines-WB
+
+**Flow:** Sensor 1 (or sensor 3 on bi side B) → positioning → only sensor 2 cut → stable weight > 5 t → RFID → ANPR → final weight → prefix APIs → exit.
+
+Idle weight must be 0 before a trip starts. Positioning drop to 0: last weight ≤ 200 kg resets idle; heavier grants exit. Low capture weight (≤ 5 t) waits until weight is 0, then idle.
+
+**Tare (`T|`):** band is tare ± tolerance. Outside: `weight-confirm` loop. Inside: `weight_details` then `boom_close`.
+
+**Vadhghat (`V|`):** band is target down to target minus tolerance (e.g. 44950–45000). Inside: `vadhghat_weight_details` + `vadhghat_boom_close`. Outside: `vadhghat_weight_adjustment` only, Overweight/Underweight voice, no Move Forward.
+
+**Gross (`G|`):** same minus-only band, shared weight-details / boom-close. Status 201 starts `gross-tolerance-confirm`.
+
+**Exit boom (current code):** the boom stays open until **weight is 0 and the exit sensor is clear**. Then it closes and the lane goes IDLE. If the exit sensor is still cut after weight is 0, the boom stays open.
+
+**Move backward** plays only during positioning, when sensor 3 is cut (truck overshot the platform).
+
+The loaded WB config is **bidirectional** (`device_ip` `10.80.118.140`, MQTT digitizer). Relays: lights on 0/1, booms on 2/3.
+
+---
+
+## Other pieces
+
+| Folder | Role |
+|--------|------|
+| `checkpoint-config` | Commissioning UI on :8080. Site type is Checkpoint or Weigh Bridge (uni/bi). |
+| `digitizer-decoder` | Serial reader. MQTT publishes weight every 200 ms; Mines-WB decides stability (same value 10 times). |
+| `gmdc_common` | I/O, traffic lights, booms, sensors, Zebra login/mode/start/stop, LED MQTT, voice. |
+| Operator UI | Flask + vanilla JS. Flow Details icons, ANPR toggle, Free Pass, Reset, dark/glass theme. |
+
+---
+
+## `MSG_TARE_WT_ERR`
+
+That constant is the LED line for a **tare** truck whose captured weight is **outside the RTO band**.
+
+It is defined as `"TARE WT@  ERR"` in `Mines-WB/config/constants.py`. The `@` is a line break on the board.
+
+`weight_type_error_display()` picks the string from the RFID prefix:
+
+- `T|` → `MSG_TARE_WT_ERR`
+- `V|` → `MSG_VADAGHAT_WT_ERR`
+- `G|` → `MSG_GROSS_WT_ERR`
+
+Mines-WB shows that text, then starts the tare `weight-confirm` loop until the weight is inside the band or status 2 aborts.
+
+---
+
+Tell me what you want to change next (checkpoint, weighbridge, hardware, APIs, or dashboard) and we can implement it from this picture.
 
 ---
 
 **User**
 
-why arises this 
-2026-10-04 18:19:37 [INFO] mines_wb.core.workflow: ANPR detect anpr_status=1
-2026-10-04 18:19:49 [WARNING] mines_wb.core.workflow: Digitizer decoder heartbeat lost — notifying operator
-2026-10-04 18:19:49 [INFO] mines_wb.core.workflow: Digitizer decoder heartbeat restored
-2026-10-04 18:19:49 [INFO] gmdc_common.services.voice: Voice: Digitizer error
+why this varialbe use MSG_TARE_WT_ERR = "TARE WT@  ERR"
+
 
 ---
 
 **Cursor**
 
-Those three lines are the digitizer watchdog firing during the ANPR step. I’ll trace what counts as a lost heartbeat and why it announces a digitizer error.
+I'll trace where `MSG_TARE_WT_ERR` is shown and what trip that message belongs to.
 
-The ANPR line is a separate event. The digitizer warning 12 seconds later is the heartbeat watchdog, and it cleared itself in the same second.
+`MSG_TARE_WT_ERR` is the **LED board text** for a **tare** truck whose weight is **outside the approved band**. It is not used for Vadhghat or Gross.
 
-`anpr_status=1` at 18:19:37 only means the plate matched. That path does not read the digitizer and does not play `Digitizer_error.wav`.
+The string is `"TARE WT@  ERR"`. The `@` is a line break on the display, so the board shows:
 
-At 18:19:49 Mines-WB decided the decoder was offline, then immediately saw it again:
-
-1. **Heartbeat lost.** In MQTT mode the app treats the decoder as alive only while a weight or status message has arrived in the last **5 seconds**. The decoder normally publishes weight every 200 ms and a status heartbeat every 2 seconds on `gmdc/digitizer/status`. A check runs every 2 seconds. This time that check found no message for more than 5 seconds, so it logged the warning, showed the "Digitizer offline" popup, and played `Digitizer_error.wav`.
-2. **Heartbeat restored.** The next MQTT message arrived in that same second, so the watchdog cleared the fault and logged restored.
-3. **Voice: Digitizer error.** That line is the clip started by the lost event. The restore does not stop the audio. The lane is not reset and the ANPR result is left as it was.
-
-So the decoder, or the MQTT path from it, went quiet for a little over 5 seconds and then published again. One late or dropped heartbeat is not enough; the gap has to pass 5 seconds.
-
----
-
-**User**
-
-how to fix it
-
----
-
-**Cursor**
-
-The voice played because the watchdog treats any gap longer than 5 seconds as a dead decoder, and it announces on the first failed check. Your log recovered in the same second, so that was a short MQTT gap, not a failed weighment.
-
-The decoder publishes a status heartbeat every 2 seconds and weight every 200 ms. Mines-WB marks it offline when nothing arrives for 5 seconds (`heartbeat_timeout_sec` is not set in `iot_configuration.json`, so the default of 5 is used). The check in `_maybe_notify_digitizer_hang` then plays `Digitizer_error.wav` immediately. The next message clears the fault, but it does not stop the clip.
-
-Raise the timeout, and do not announce until the gap stays open.
-
-In `Mines-WB/iot_configuration.json`, under `digitizer`, set:
-
-```json
-"heartbeat_timeout_sec": "15"
+```
+TARE WT
+  ERR
 ```
 
-That alone still announces if the broker at `10.80.118.10` is quiet for 15 seconds. The code change that matches this log is in `_maybe_notify_digitizer_hang`: remember the time it first went offline, and play the clip and popup only if it is still offline after about 10 seconds. If a message arrives before that, clear the timer and do not call `digitizer_error()`.
+## When it is shown
 
-Also check the digitizer-decoder log at 18:19:49. If it shows `MQTT disconnected`, the stall is the broker or the decoder PC, and the timeout change only hides it.
+After ANPR, Mines-WB takes the final weight. For a `T|` RFID string, the allowed band is **tare ± tolerance** (for example tare `26000` and tolerance `500` → 25500–26500 kg).
 
-I can apply the debounce in Agent mode.
+If the weight is outside that band:
 
----
+1. `_announce(MSG_TARE_WT_ERR)` sends that text to the LED.
+2. The operator UI shows a warning with the kg band.
+3. Voice plays the tare out-of-tolerance clip.
+4. The app then polls `weight-confirm` until the weight is inside the band, or status 2 aborts.
 
-**User**
+The same message is shown again if a recaptured weight is still out of band.
 
-fix it
+## Why a separate variable
 
----
+All three trip types have their own board error:
 
-**Cursor**
+| Prefix | Variable | Board text |
+|--------|----------|------------|
+| `T\|` tare | `MSG_TARE_WT_ERR` | `TARE WT@  ERR` |
+| `V\|` Vadhghat | `MSG_VADAGHAT_WT_ERR` | `VADAGHAT WT@  ERR` |
+| `G\|` gross | `MSG_GROSS_WT_ERR` | `GROSS WT@  ERR` |
 
-The watchdog is announcing a digitizer failure on a gap that recovers in the same second. I’ll hold the alarm until the decoder has actually stayed offline.
-
-A short MQTT gap no longer plays the digitizer error. Mines-WB waits until the decoder has stayed silent for 10 seconds after the heartbeat first drops before it shows the popup and plays `Digitizer_error.wav`.
-
-The case in your log — lost and restored in the same second — stays quiet. The clip and the "Digitizer offline" popup still happen if the decoder at `10.80.118.10` is actually gone for that full 10 seconds, and they happen only once until the heartbeat returns.
-
-Restart Mines-WB so this build is the one running.
-
----
-
-**User**
-
-now we develop Mines_Checkpoint:
-when i run two same Mines_Checkpoint app in same mac but its iot_configuration.json is different.error arises like 026-10-06 10:27:09 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883
-2026-10-06 10:27:10 [WARNING] mines_checkpoint.services.frontend_mqtt: Frontend MQTT disconnected rc=7
-2026-10-06 10:27:10 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-06 10:27:10 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-06 10:27:11 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883
-2026-10-06 10:27:12 [WARNING] mines_checkpoint.services.frontend_mqtt: Frontend MQTT disconnected rc=7
-2026-10-06 10:27:12 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-06 10:27:12 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-06 10:27:13 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883
-2026-10-06 10:27:14 [WARNING] mines_checkpoint.services.frontend_mqtt: Frontend MQTT disconnected rc=7
-2026-10-06 10:27:14 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-06 10:27:14 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-06 10:27:15 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883
-2026-10-06 10:27:16 [WARNING] mines_checkpoint.services.frontend_mqtt: Frontend MQTT disconnected rc=7
-2026-10-06 10:27:17 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-06 10:27:17 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-06 10:27:17 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883
-2026-10-06 10:27:18 [WARNING] mines_checkpoint.services.frontend_mqtt: Frontend MQTT disconnected rc=7
-2026-10-06 10:27:19 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-06 10:27:19 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-06 10:27:19 [INFO] mines_checkpoint.services.
-so  fix it so that able to multple app run at same time.
-
----
-
-**Cursor**
-
-Two Mines-Checkpoint processes are dropping the same MQTT connection. I’ll find the shared client identity and ports so each config can stay connected on its own.
-
-Both apps use the same MQTT client name, so the broker drops one whenever the other connects. I’ll give each process its own client and keep each dashboard on its own topics.
-
-Both Mines-Checkpoint processes were connecting to Mosquitto with the same MQTT client name. The broker keeps only one connection per name, so each app kicked the other off about once a second. That disconnect is `rc=7`.
-
-Each process now uses its own client name, and each dashboard uses topics for its own HTTP port. A Reset or Free Pass on one checkpoint no longer hits the other.
-
-Restart both apps. Give them different dashboard ports, either `server.port` in each `iot_configuration.json` or `API_PORT` in each `.env`, and open each dashboard on that port. If both still use port 8000, the second web server cannot start.
+`weight_type_error_display(trip)` picks the one that matches the RFID prefix. For tare, that is `MSG_TARE_WT_ERR`.
 
 ---
 
 **User**
 
-where i add baud rate in digitizer-decoder
+1.if weight under the allowed band,publish to display "Under @ Weight"
+2.if weight over the allowed band,publish to display "Over @ Weight".
+3.remove constants.py (140-142) this. above condition apply all three trip types
 
 ---
 
 **Cursor**
 
-I’ll look through the digitizer-decoder settings and screen to find where the serial baud rate is set.
+I'll replace the three trip-specific weight-error board strings with Under/Over messages for all trip types, then remove those constants.
 
-Set the baud rate in the digitizer-decoder dashboard, under **Serial port**.
+Updating the display messages and wiring Under/Over for T, V, and G.
 
-1. Open the decoder page (default `http://127.0.0.1:8800/`).
-2. Log in as admin and open **Configuration**.
-3. In **Serial port**, use the **Baud rate** dropdown, then save.
+Removing the Vadhghat display overwrite so Under/Over stays on the board; voice still announces the kg difference.
 
-The choices already in that list are 9600, 19200, 38400, 57600, and 115200. The saved value is `baud_rate` at the top of `digitizer-decoder/config.json`. Yours is currently `9600`.
+Done. Out-of-band weight now uses the same Under/Over board text for all three trip types.
 
-```1:6:digitizer-decoder/config.json
+| Condition | Display |
+|-----------|---------|
+| Weight under the allowed band | `Under @ Weight` |
+| Weight over the allowed band | `Over @ Weight` |
+
+Removed from `constants.py`:
+- `MSG_TARE_WT_ERR`
+- `MSG_VADAGHAT_WT_ERR`
+- `MSG_GROSS_WT_ERR`
+
+This applies to **Tare**, **Vadhghat**, and **Gross**. Vadhghat still announces the kg difference by voice; the LED shows Under/Over instead of `Overweight@…Kg`.
+
+---
+
+**User**
+
+1.if weight under the band,then publish to display how much weight need for match with band with MSG_UNDER_WEIGHT = "Under @ Weight".
+2.if weight over the band,then publish to display how much weight need for match with band with MSG_OVER_WEIGHT = "Over @ Weight". 
+
+---
+
+**Cursor**
+
+I'll include the kg shortfall/excess on the Under/Over board text for all three trip types.
+
+Updating the Under/Over board text to include the kg needed to reach the band.
+
+Done. The board now shows how many kg are needed to reach the band.
+
+| Condition | Display example |
+|-----------|-----------------|
+| Under the band | `Under @ 500Kg` |
+| Over the band | `Over @ 1000Kg` |
+
+Templates:
+
+```python
+MSG_UNDER_WEIGHT = "Under @ {diff}Kg"
+MSG_OVER_WEIGHT = "Over @ {diff}Kg"
+```
+
+`{diff}` is the kg short of the low end, or over the high end. Same for Tare, Vadhghat, and Gross.
+
+---
+
+**User**
+
+in MInes-Checkpoint app:
+1.now all lane logs store in one file.i want store log separately(lanewise like mines entry,trafficIN,trafficOUT,minesexit).
+2.store log date wise.create log everyday but stay only last 10days.other are auto delete 
+
+---
+
+**Cursor**
+
+I'll check how Mines-Checkpoint logging and lanes are set up, then split logs by lane and by day with a 10-day retention.
+
+Daily rotation already keeps 10 days; I'll add per-lane log files and route each lane's logs with a context variable.
+
+Fixing a filter bug: stamping `lane_id` on the shared log record was blocking the main process log.
+
+Done. Mines-Checkpoint now writes **one log folder per lane**, with **daily files** and **10-day retention**.
+
+## Log layout
+
+```
+Mines-Checkpoint/logs/
+  main/mines_checkpoint.log          ← process / shared lines
+  mines_entry/mines_entry.log
+  traffic_in/traffic_in.log
+  traffic_out/traffic_out.log
+  mines_exit/mines_exit.log
+```
+
+At midnight each file rolls to e.g. `mines_entry.log.2026-10-28`. Only the **last 10 days** are kept; older dated files are removed automatically.
+
+## Behaviour
+
+| Lane activity | File |
+|---------------|------|
+| Mines Entry RFID / ANPR / boom | `logs/mines_entry/` |
+| Traffic IN | `logs/traffic_in/` |
+| Traffic OUT | `logs/traffic_out/` |
+| Mines Exit | `logs/mines_exit/` |
+| Startup / shared | `logs/main/` |
+
+Console still shows all lanes, with a `[lane_id]` tag on each line.
+
+---
+
+**User**
+
+why use main log
+
+---
+
+**Cursor**
+
+`logs/main/` is for lines that are **not tied to one lane**.
+
+A lane file only gets a line when the app is inside that lane’s work (RFID, ANPR, boom, sensor for that location). Some messages have **no lane**:
+
+- App start / stop (“Logging initialized”, “running 4 lanes”, shutting down)
+- MQTT broker ensure
+- Shared API / Flask noise before a lane is chosen
+- Anything that runs outside `lane_log_scope(...)`
+
+Without `main`, those lines would only appear on the console and would not be saved in a file.
+
+| File | What goes there |
+|------|------------------|
+| `logs/mines_entry/` … | That lane’s trip |
+| `logs/main/` | Process-wide / unassigned |
+
+If you prefer **no main folder** and only the four lane logs, say so and we can drop it in Agent mode (startup lines would then be console-only, or duplicated into every lane file).
+
+---
+
+**User**
+
+i want convert .exe of digitizer-decoder app
+
+---
+
+**Cursor**
+
+I'll check how this repo packages apps and how digitizer-decoder is structured, then set up an `.exe` build for it.
+
+I'll make digitizer-decoder freeze-aware (so config/static work from an `.exe`), then add a PyInstaller spec and Windows build script.
+
+The endpoints import may not have updated — checking and fixing that, then running the build.
+
+**`DigitizerDecoder.exe` is ready.**
+
+Path: `digitizer-decoder\dist\DigitizerDecoder.exe`
+
+**Run it**
+1. Double-click the EXE (or run from a console to see logs).
+2. Open the dashboard: **http://127.0.0.1:8800/**
+3. Keep `config.json` next to the EXE (already copied into `dist\`). Edit that file for COM port / MQTT / API settings. Logs go to `dist\logs\`.
+
+**Rebuild later**
+```bat
+cd digitizer-decoder
+build_windows.bat
+```
+
+---
+
+**User**
+
+i have fress laptop.if i transfer this exe and run it the it run or error
+
+---
+
+**Cursor**
+
+Checking what the EXE needs at startup so I can tell you what works on a fresh laptop.
+
+**Yes — the EXE can start on a fresh laptop** without installing Python. PyInstaller packs Python + your app into `DigitizerDecoder.exe`.
+
+Copy the whole `dist` folder (or at least these together):
+
+- `DigitizerDecoder.exe`
+- `config.json` (next to the EXE)
+
+---
+
+### What usually works
+- No Python / Flask / pip needed
+- Dashboard opens in the browser after the app starts
+- App creates `logs\` beside the EXE
+
+### What can fail / look broken on a fresh PC
+
+| Issue | What happens |
+|--------|----------------|
+| **Windows Defender / SmartScreen** | “Windows protected your PC” — click More info → Run anyway (unsigned EXE) |
+| **Missing VC++ runtime** | Rare crash on open — install [Microsoft Visual C++ Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) |
+| **Wrong Windows** | Built as **64-bit** — won’t run on 32-bit Windows |
+| **COM port** | Your `config.json` has `"port": "COM6"` — new laptop COM numbers differ; serial won’t connect until you set the correct port in the UI |
+| **MQTT** | Mode is `"mqtt"` and broker is `10.80.118.10` — if that PC/network isn’t there, MQTT fails; dashboard can still open; broker auto-setup may log an error and continue |
+| **Firewall** | First run may ask to allow network; needed if Mines-WB connects from another PC |
+| **Antivirus** | Sometimes quarantines PyInstaller EXEs — allow/exclude if blocked |
+
+---
+
+### Short answer
+- **App open + web UI:** should run if you transfer EXE + `config.json`.
+- **Real weighing:** you must set the correct **COM port** (and MQTT/API settings) for that laptop.
+
+On first run, if SmartScreen blocks it, allow it once. Then open the URL printed in the console (API mode ~`http://127.0.0.1:8800/`, MQTT UI often ~`http://127.0.0.1:8765/`).
+
+---
+
+**User**
+
+I want some changes in the Bi-DIrectional WB only
+1. Our logic is vehicle can enter from any side, and accordingly will read those cards,e tc will happen. Which is correct. But I want here another thing. After vehicle enters from one side, then this becomes the entry sensor for that transaction only. If then the WB sensor isn't cut, but the exit sensor is cut, then buzzer sound folowed by the error_new/weighbridge_0.wav error
+2. After middle sensor is cut, then the RFID is validated. THen in the string if I receive T, then show Tare for 5 seconds, then proceed next steps. SImilarly for G, show Gross for 5 seconds, then proceed to next steps
+
+---
+
+**Cursor**
+
+I'll inspect the bi-directional weighbridge flow and how sensors, RFID, and voice/display errors work so we can add both behaviors correctly.
+
+Implementing both bi-directional behaviors: wrong-side exit before WB cut, and a 5s Tare/Gross display after RFID validation.
+
+Both bi-directional-only changes are in.
+
+**1. Wrong-side exit before WB**
+- After ENTRY_A or ENTRY_B starts, that side is the transaction entry.
+- If the far-side (exit for that trip) cuts while the WB sensor is still clear → `error_start` buzzer + `weighbridge_0.wav` (via `check_weighbridge`), looping until cleared.
+- Unidirectional still uses move-backward for that case.
+
+**2. Tare / Gross hold after RFID**
+- On bi-dir only, after RFID validates:
+  - trip `T` → LED shows **Tare** for 5 seconds, then ANPR continues  
+  - trip `G` → LED shows **Gross** for 5 seconds, then ANPR continues  
+  - `V` / other → no hold, continues immediately  
+- Unidirectional is unchanged (no hold).
+
+---
+
+**User**
+
+tell me,which massage publish to massage to display in  run  "lane_id": "traffic_in",
+
+---
+
+**Cursor**
+
+I'll look up how `traffic_in` publishes display messages in Mines-Checkpoint.
+
+For **`lane_id: "traffic_in"`** (Traffic IN), display text is published over MQTT to topic **`data_info/b`**.
+
+Payload is plain text. `@` is the LED line break.
+
+| When | Message published |
+|------|-------------------|
+| MQTT connect / boot | `Welcome` |
+| IDLE (ready) | `Scan@RFID Card` |
+| RFID valid | API message if useful, else `RFID VALID@{truck}` |
+| RFID invalid / API fail | API message if useful, else `RFID ERR@ASK OPERATOR` |
+| Entry granted (boom open) | `{truck}@Thank You` |
+| Free pass | `FREE PASS` |
+| ANPR mismatch ERR-0 *(if ANPR path runs)* | `ANPR ERROR@ERR-0` |
+| ANPR not readable ERR-2 | `ANPR ERROR@ERR-2` |
+| ANPR server unreachable | `ANPR ERROR@ASK OPERATOR` |
+
+Defined in `Mines-Checkpoint/config/constants.py`:
+
+```100:107:Mines-Checkpoint/config/constants.py
+MSG_IDLE = "Scan@RFID Card"
+MSG_RFID_ERR = "RFID ERR@ASK OPERATOR"
+MSG_RFID_OK_FMT = "RFID VALID@{truck}"
+MSG_ANPR_ERR = "ANPR ERROR@ERR-0"
+MSG_ANPR_ERR_2 = "ANPR ERROR@ERR-2"
+MSG_ANPR_API_ERR = "ANPR ERROR@ASK OPERATOR"
+MSG_ENTRY_GRANTED_FMT = "{truck}@Thank You"
+MSG_FREE_PASS = "FREE PASS"
+```
+
+Your `traffic_in` config has **`anpr_enabled: false`**, so the usual happy path is:
+
+`Welcome` → `Scan@RFID Card` → `RFID VALID@{truck}` → `{truck}@Thank You` → back to `Scan@RFID Card`
+
+(ANPR error lines mainly appear if the status-check / mismatch path still runs after invalid-truck.)
+
+---
+
+**User**
+
+why publish "checkpoint"
+
+---
+
+**Cursor**
+
+I'll search where the app publishes the string `"checkpoint"`.
+
+**The LED for `traffic_in` does not intentionally publish the word `"checkpoint"`.**
+
+Normal display payloads on topic **`data_info/b`** are things like `Welcome`, `Scan@RFID Card`, `RFID VALID@…`, `{truck}@Thank You` — not `"checkpoint"`.
+
+---
+
+### Where `"checkpoint"` *does* appear in the app
+
+| Place | Why |
+|--------|-----|
+| **Fallback lane name** | If `lane_id` / name is missing, code uses `"checkpoint"` (logs, MQTT client id). With your config, `lane_id` is `"traffic_in"`, so this fallback should not apply. |
+| **Web dashboard title** | Hardcoded `<h1>Checkpoint</h1>` in the UI — not the LED MQTT text. |
+| **OCI API path** | For `traffic_in`, config has URLs like `/ords/.../dlms_checkpoint/checkpoint/rfid-tag` — that is an HTTP path, not a display publish. |
+| **Branding default** | Brand label is `"Checkpoint"` when `lane_name` / `wb_type` are empty. Yours has `"Traffic IN"`, so the site label should be **Traffic IN**. |
+
+---
+
+### If you literally see `"checkpoint"` on the display board
+
+Likely causes:
+1. Watching the **wrong MQTT topic** (frontend `wb_frontend/...` / client id vs `data_info/b`)
+2. **OCI RFID API** returned a message containing “checkpoint”, and `_rfid_api_display()` forwarded that to the LED
+3. Another process publishing on the same topic
+
+If you can say whether you saw it on the **LED**, in **MQTT Explorer**, or on the **web dashboard**, I can narrow it to the exact line.
+
+---
+
+**User**
+
+when i run bidirectional mode in Mine_WB app,why triffic light not working
+
+---
+
+**Cursor**
+
+I'll check how Mines-WB controls traffic lights in bidirectional mode versus unidirectional.
+
+**Main reason:** in bidirectional mode your config only wires the **exit** lights, but some of the code drives the **entry** lights — those have empty pins, so nothing happens on Modbus.
+
+---
+
+### Your `iot_configuration.json` (relay mode)
+
+| Side | Light | Pin |
+|------|--------|-----|
+| `entry_a` | entry | **empty** |
+| `entry_a` | exit | **0** |
+| `entry_b` | entry | **empty** |
+| `entry_b` | exit | **1** |
+
+So only coils **0** and **1** can actually switch a light.
+
+---
+
+### What the code does wrong on exit-grant
+
+In `_grant_exit_hardware()` for bidirectional it does roughly:
+
+- approach **entry** light → `set_red()`
+- departure **exit** light → `set_green()`
+
+Because approach **entry** pin is empty, that `set_red()` writes **nothing**.  
+The approach **exit** light (pin 0 or 1) is never updated on that path.
+
+Idle is different: it correctly uses `exit_tl or entry_tl`, so pins 0/1 *can* move at IDLE. During the trip, lights often look “dead”.
+
+---
+
+### Other things to check
+
+1. **`on_state`: `"red"`** — coil ON = red, OFF = green. If wiring is opposite, colors look inverted (may look “broken”).
+2. **I/O / demo** — if Modbus is down or `demo_mode` is on without real DO, you won’t see field lights change.
+3. **Unidirectional** uses flat `entry` / `exit` pins; bi needs `entry_a` / `entry_b` → `entry`/`exit`. Wrong structure = no pins resolved.
+
+---
+
+### What to fix (conceptually)
+
+Either:
+
+- Put real relay pins under `traffic_lights.relay.entry_a.entry` / `entry_b.entry`, **or**
+- Change bi-dir grant/idle paths to always drive **`exit` light when `entry` pin is empty** (same pattern as boom-close: `exit_tl or entry_tl`).
+
+I’m in **Ask mode**, so I can’t edit the code here. Switch to **Agent mode** if you want that grant-exit fix applied.
+
+---
+
+**User**
+
+now understand me how working Bidirectional mode of Mines-WB
+
+---
+
+**Cursor**
+
+I'll walk through how bidirectional Mines-WB works end-to-end from your config and workflow.
+
+## Bidirectional Mines-WB — how it works
+
+`wb_type = "bidirectional"` means the truck can enter from **either end**. The first sensor that cuts chooses the direction for that trip only.
+
+---
+
+### Physical layout (3 sensors, 2 ends)
+
+```text
+   SIDE A (ENTRY_A)                    SIDE B (ENTRY_B)
+   ┌────────────┐                      ┌────────────┐
+   │ Sensor 1   │ ←──── WB Sensor ────→│ Sensor 3   │
+   │ (entry)    │      (middle / s2)   │ (exit)     │
+   │ Boom A     │                      │ Boom B     │
+   │ TL A (pin0)│                      │ TL B (pin1)│
+   │ RFID A     │                      │ RFID B     │
+   └────────────┘                      └────────────┘
+```
+
+| Hardware name in code | Role |
+|------------------------|------|
+| Sensor 1 `entry` | Side A approach / Side B departure |
+| Sensor 2 `wb` | Middle platform |
+| Sensor 3 `exit` | Side B approach / Side A departure |
+| Boom pin 2 / 3 | Side A / Side B barriers |
+| TL pin 0 / 1 | Side A / Side B traffic lights (exit lights in your config) |
+| RFID `entry_a` / `entry_b` | Reader on each side |
+
+---
+
+### 1) IDLE (waiting)
+
+- Both booms **open**
+- Both TL channels set to **NC** (in your relay wiring that is usually green)
+- Display: `Enter@Vehicle`
+- Digitizer weight should be **0**
+- If WB + exit are cut, or weight ≠ 0 → fault voice (`weighbridge_0` / digitizer check), **no new trip**
+
+---
+
+### 2) Vehicle arrives — direction is chosen
+
+| First sensor cut | Direction | Meaning |
+|------------------|-----------|---------|
+| Sensor 1 (entry) | **ENTRY_A** | Truck from Side A → goes toward Side B |
+| Sensor 3 (exit) | **ENTRY_B** | Truck from Side B → goes toward Side A |
+
+Then:
+
+- State → `VEHICLE_POSITIONING`
+- Display/voice: **MOVE FORWARD**
+- RFID is **not** started yet
+- That side becomes “entry” for this transaction only; the other side becomes “exit”
+
+---
+
+### 3) Positioning rules (before middle sensor only)
+
+Truck should move onto the middle (WB) sensor.
+
+Special bi-dir rule you added:
+
+- If **far-side (exit for this trip)** cuts **before** WB is cut → **buzzer + `weighbridge_0`**
+  - ENTRY_A → Sensor 3 cut while Sensor 2 clear  
+  - ENTRY_B → Sensor 1 cut while Sensor 2 clear  
+
+If WB is cut and far side is also cut → **MOVE BACKWARD** (wrong position).
+
+---
+
+### 4) Middle sensor only → weigh
+
+When **only Sensor 2** is cut (entry + exit clear):
+
+- Both booms **close**
+- Weight capture starts (digitizer)
+- Need weight **> 5 ton** (`MIN_WEIGHT_KG`)
+- Then RFID starts on the **approach side reader only**
+  - ENTRY_A → `entry_a` reader  
+  - ENTRY_B → `entry_b` reader  
+
+---
+
+### 5) RFID → trip type → ANPR → weight APIs
+
+Same core flow as uni, with bi extras:
+
+1. Validate RFID (OCI)
+2. **Bi only:** if truck string starts with **T** → show **Tare** 5 sec; if **G** → show **Gross** 5 sec; then continue  
+3. ANPR (or skip if disabled) → invalid-truck / status_check as needed  
+4. Final weight + RTO / Vadhghat / Gross checks  
+5. `weight_details` / boom-close APIs  
+
+---
+
+### 6) Exit granted
+
+- Departure boom opens, approach boom stays closed (or boom-close path opens both and sets departure light)
+- Display: `EXIT GRANTED`
+- Truck must leave through the **far side**
+
+| Direction | Must clear on |
+|-----------|----------------|
+| ENTRY_A | Sensor 3 (exit): cut → clear |
+| ENTRY_B | Sensor 1 (entry): cut → clear |
+
+Also: live weight must return to **0**, and departure sensor clear, before IDLE + boom close finish.
+
+---
+
+### 7) Back to IDLE
+
+When crossing done + weight 0 + far sensor clear:
+
+- Reset transaction  
+- Both booms open again  
+- Lights back to idle  
+- Ready for next truck from **either** side  
+
+---
+
+### Simple flow diagram
+
+```text
+IDLE
+  │
+  ├─ Sensor1 cut ──► ENTRY_A ──┐
+  │                            ├──► MOVE FORWARD
+  └─ Sensor3 cut ──► ENTRY_B ──┘
+                              │
+                    only Sensor2 cut
+                              │
+                    Weight > 5t → RFID (same side)
+                              │
+                    T/G show 5s (bi) → ANPR → weight APIs
+                              │
+                         EXIT GRANTED
+                              │
+              leave opposite side + weight 0
+                              │
+                            IDLE
+```
+
+---
+
+### vs Unidirectional
+
+| | Uni | Bi |
+|--|-----|----|
+| Start | Only Sensor 1 | Sensor 1 **or** Sensor 3 |
+| RFID | One reader | Reader matching entry side |
+| Exit complete | Always Sensor 3 | Opposite side of entry |
+| Idle booms | Entry open, exit closed | **Both open** |
+| Tare/Gross 5s LED | No | Yes (T/G) |
+
+---
+
+### Why traffic lights often look dead in bi (your site)
+
+Your config only has TL pins on **exit** lights (pin 0 / 1). Some grant-exit code drives **entry** lights (empty pins), so coils don’t change. Idle path uses exit lights, so IDLE can look OK while mid-trip lights don’t.
+
+---
+
+If you want, next I can map **exact coil states (ON/OFF)** for pin 0–3 at each step for ENTRY_A and ENTRY_B using your relay config — still in Ask mode as explanation only.
+
+---
+
+**User**
+
+if sensor 1 cut ,then vehicle not arrive in middle senso.what happen
+
+---
+
+**Cursor**
+
+I'll check the positioning timeout and related paths when Sensor 1 is cut but the truck never reaches the middle sensor.
+
+**If Sensor 1 cuts but the truck never reaches the middle (WB) sensor:**
+
+### What starts
+1. Trip starts as **ENTRY_A**
+2. State = `VEHICLE_POSITIONING`
+3. Display/voice: **MOVE FORWARD** (repeats every ~5 sec)
+4. RFID does **not** start
+5. Weight capture does **not** start
+6. A timer starts: **`POSITIONING_SEC` = 120 seconds** (2 minutes, unless changed in `.env`)
+
+### While waiting (no middle sensor)
+- App keeps saying move forward
+- Stays in positioning
+- No RFID, no ANPR, no boom “exit grant” for weighing
+
+### After 2 minutes (timeout)
+1. Voice: **error_start + rescan_card** (`rescan_card_entry_timeout`)
+2. State resets to **IDLE**
+3. Hardware returns to idle (bi: both booms open again)
+4. Display back to **Enter@Vehicle**
+5. Ready for a new truck
+
+---
+
+### Special cases before timeout
+
+| Situation | What happens |
+|-----------|----------------|
+| Sensor 3 (far side) cuts while WB still clear (bi) | Buzzer + `weighbridge_0` |
+| Weight goes up then back to 0 before only-on-WB | Check-weighbridge voice, then exit/reset depending on weight |
+| Operator presses Reset | Immediate IDLE |
+
+---
+
+**Short answer:** Sensor 1 alone only starts “move forward” positioning. If the truck never sits on the middle sensor, after **~120 seconds** it times out, plays rescan voice, and goes back to **IDLE**.
+
+---
+
+**User**
+
+in mines wb app:
+if i reset through dashboard all loop api call should stop and application return to ideal
+
+---
+
+**Cursor**
+
+I'll check how dashboard reset works in Mines-WB and which API loops keep running so we can stop them and return to IDLE.
+
+Fixing dashboard reset: keep the stop flag set so API poll loops exit immediately, and ensure aborted loops don't grant exit afterward.
+
+Dashboard **Reset** now stops looping API calls and returns the app to **IDLE**.
+
+### What was wrong
+`force_reset()` set `_manual_stop`, then **cleared it immediately**. So `status_check` / weight-confirm / gross-tolerance loops kept calling OCI after Reset. A stopped status_check could also wrongly open the exit path.
+
+### What we fixed
+1. Reset **keeps** the stop flag set until the next vehicle trip starts (`_begin_vehicle_positioning`).
+2. Poll loops use interruptible waits and exit on Reset (`None` / `"stopped"`).
+3. After Reset, the workflow **does not** grant exit or continue ANPR/weight APIs.
+4. Timers, RFID, lights/booms, and display still go back to idle as before.
+
+### Loops that stop on Reset
+- `status_check` (manual ANPR update)
+- `weight-confirm`
+- `gross-tolerance-confirm`
+
+---
+
+**User**
+
+in ideal ,what is status of entry_a and entry_b  traffic_lights
+
+---
+
+**Cursor**
+
+**In IDLE (bidirectional), both sides are set to “normally closed”.**
+
+With your current config (`mode: relay`, `on_state: red`):
+
+| Side | Light | Pin | IDLE status |
+|------|--------|-----|-------------|
+| **entry_a** | exit | **0** | Coil **OFF** → NC → **GREEN** |
+| **entry_a** | entry | *(empty)* | Not driven |
+| **entry_b** | exit | **1** | Coil **OFF** → NC → **GREEN** |
+| **entry_b** | entry | *(empty)* | Not driven |
+
+So both wired traffic lights (**channel 0 and 1**) show **green** in IDLE.
+
+Code does this in `_set_idle_traffic_lights()`:
+
+```214:219:Mines-WB/core/workflow.py
+        if self._is_bidirectional() and getattr(self.ctx, "traffic_lights", None):
+            for direction in ("entry_a", "entry_b"):
+                entry_tl, exit_tl, _boom = self._side(direction)
+                self._set_light_contact(exit_tl or entry_tl, normally_open=False)
+                if entry_tl and entry_tl is not exit_tl:
+                    self._set_light_contact(entry_tl, normally_open=False)
+```
+
+`normally_open=False` + `on_state: "red"` → `set_green()` → coil low → green.
+
+---
+
+**User**
+
+2026-10-30 15:19:03 [INFO] mines_wb.main: I/O mapped demo=False TL entry=4/None exit=0/None boom entry=2(en=True) exit=3(en=True) sensors entry=0 wb=1 exit=2
+
+@Mines-WB/iot_configuration.json 
+i am facing a issue,where the traffic light pins are configured but in real the exit traffic light not working and according to terminal log the pins taken are wrong please recheck in bidirectional mode only
+
+---
+
+**Cursor**
+
+I'll recheck bidirectional traffic-light pin resolution against your config and that log line.
+
+The log only shows `entry_a` aliases (`entry=4`, `exit=0`), so `entry_b` pins `5`/`1` never appear—and grant-exit drives the wrong lights. Fixing bi-dir pin logging and making exit-grant drive both sides' lights correctly.
+
+**Root cause:** In bidirectional mode the startup log only showed `entry_a` aliases (`TL entry=4/None exit=0/None`), so it looked like pins were wrong. Worse, exit-grant only drove `entry` on the approach side and `exit` on the depart side — so the usual `relay.*.exit` lights (**pins 0 and 1**) often never changed.
+
+### Your config pins (correctly resolved)
+| Side | Role | Pin |
+|------|------|-----|
+| entry_a | entry | **4** |
+| entry_a | exit | **0** |
+| entry_b | entry | **5** |
+| entry_b | exit | **1** |
+
+### Fixes
+1. **Startup log** now prints all four bi TL pins, e.g.  
+   `TL bi entry_a entry=4/None exit=0/None; entry_b entry=5/None exit=1/None`
+2. **Default aliases** use each side’s **exit** light (0 / 1), matching site wiring.
+3. **Exit grant / boom-close / approach red** now drive **every** light on that side (entry + exit), so pins **0 and 1** actually switch.
+
+Restart Mines-WB and check the new TL bi log line; exit lights should work on grant.
+
+---
+
+**User**
+
+2026-10-30 15:45:17 [INFO] mines_wb.main: I/O mapped demo=False TL entry=0/None exit=1/None boom entry=2(en=True) exit=3(en=True) sensors entry=0 wb=1 exit=2 TL bi entry_a entry=4/None exit=0/None; entry_b entry=5/None exit=1/None
+the pin mapping is correct now,what this none 
+
+---
+
+**Cursor**
+
+**`None` = no second (green) pin.**
+
+Log format is: `red_pin/green_pin`
+
+| Log | Meaning |
+|-----|---------|
+| `0/None` | Relay coil on pin **0** only (single-coil) |
+| `4/None` | Relay coil on pin **4** only |
+| `2/3` | Direct mode: red on 2, green on 3 |
+
+Your config uses **`mode: "relay"`**, so each light has one pin. That pin is stored as `red_pin`; `green_pin` stays **`None`**. That is expected, not a missing wire.
+
+So:
+
+- `entry_a exit=0/None` → Side A exit light = DO **0**
+- `entry_b exit=1/None` → Side B exit light = DO **1**
+- `entry_a entry=4/None` → Side A entry light = DO **4**
+- `entry_b entry=5/None` → Side B entry light = DO **5**
+
+`TL entry=0/None exit=1/None` are the default aliases (entry_a exit / entry_b exit).
+
+---
+
+**User**
+
+now the pin configuration is working perfectly but in real none of the trafic light relay are not working.there are four traffic light.
+
+---
+
+**Cursor**
+
+I'll trace how the four relay coils are written at idle and on color changes — pin mapping may be fine while the coil ON/OFF logic or Modbus writes still fail.
+
+Pin mapping looks right; the likely issue is single-coil relay polarity (`_single_coil` only works when `on_state=green`) and silent Modbus write failures. Fixing coil drive logic and adding clear write success/failure logs.
+
+Pin numbers were fine. The problem was **how the single-coil relays were driven**, plus silent Modbus failures.
+
+### What was wrong
+For relay mode (`green_pin = None`), the light must treat the DO as a **single coil**. With `on_state: "red"`, that coil should be:
+
+| Color | Coil |
+|-------|------|
+| **RED** | ON (`True`) |
+| **GREEN** | OFF (`False`) |
+
+Old logic only treated it as a single coil when `on_state` was green, so polarity/logging was unreliable. Also, failed Modbus writes were easy to miss.
+
+### What we changed
+1. Fixed single-coil RED/GREEN writes in `gmdc_common` `TrafficLight`
+2. Log every TL coil write: `write coil=N value=True/False ok` or **`FAILED`**
+3. Boot log for all 4 lights: pin, state, `single_coil`, `relay_on_green`
+4. Aligned config text: **NO=Red, NC=Green** (matches `on_state: "red"`)
+
+### After restart, check the log for
+```text
+TrafficLight[entry_a_exit] write coil=0 value=False ok
+TrafficLight[entry_b_exit] write coil=1 value=False ok
+TrafficLight[entry_a_entry] write coil=4 value=False ok
+TrafficLight[entry_b_entry] write coil=5 value=False ok
+TL boot check entry_a.exit pin=0 state=green single_coil=True relay_on_green=False
+```
+
+- If you see **`FAILED`** → Modbus/IP/`10.80.118.140:502` / slave problem  
+- If **`ok`** but lamp color is inverted → set `"on_state": "green"` (and `"off_state": "red"`) in `traffic_lights.relay_logic`  
+- At IDLE, coils stay **OFF** (green). You may hear no click until a trip forces **RED** (coil ON)
+
+Also confirm: do boom relays on pins **2** and **3** move? That tells us if Modbus DO writes work at all.
+
+---
+
+**User**
+
+2026-10-30 15:59:00 [WARNING] mines_wb.core.state_machine: Force state FREE_PASS -> FREE_PASS
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_a_entry] write coil=4 value=False ok
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_a_entry] -> GREEN
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_a_exit] write coil=0 value=False ok
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_a_exit] -> GREEN
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_b_entry] write coil=5 value=False ok
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_b_entry] -> GREEN
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_b_exit] write coil=1 value=False ok
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry_b_exit] -> GREEN
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.boom_barrier: BoomBarrier[entry] -> OPEN
+2026-10-30 15:59:00 [INFO] gmdc_common.hardware.boom_barrier: BoomBarrier[exit] -> OPEN
+
+now alsoonly  traffic lights are not swiching. But boom barrier are switching perfectly as intented.
+
+---
+
+**Cursor**
+
+Modbus writes succeed, but free-pass/idle set GREEN as coil `False`. Booms work because they write `True` to energize. That points to inverted TL polarity (site is likely NO=Green). Fixing config and idle/free-pass so green energizes the coil.
+
+Checking current file state and applying remaining fixes.
+
+Root cause: Free Pass was writing **coil=`False` for GREEN** (`on_state=red`), so the TL relays never energized. Booms write **`True` for OPEN**, which is why they worked.
+
+Fix applied:
+- `iot_configuration.json` → `on_state: green` (coil ON = green, same polarity as boom open)
+- Bi-dir idle/Free Pass drives all four lights green → coil **`True`**
+
+Restart Mines-WB and hit Free Pass again. You should see:
+
+```text
+TrafficLight[...] write coil=0/1/4/5 value=True ok
+TrafficLight[...] -> GREEN
+```
+
+and the relays should click like the booms.
+
+---
+
+**User**
+
+<timestamp>Friday, Oct 30, 2026, 4:04 PM (UTC+5:30)</timestamp>
+<system_notification>
+The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
+
+<task>
+kind: shell
+status: success
+task_id: 254504
+title: Run idle output unit tests
+tool_call_id: call-3fb6a3fe-c43c-4824-b3a0-73f41b184a47-15
+fc_12678194-3e3f-91e9-a351-c68e7330f199_1
+output_path: C:\Users\bidyadhar.muduli\.cursor\projects\c-Users-bidyadhar-muduli-Desktop-GMDC-NEW\terminals\254504.txt
+</task>
+</system_notification>
+<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
+
+---
+
+**Cursor**
+
+Idle output tests all passed (9/9). Restart Mines-WB and try Free Pass — TL coils should now write `value=True` for green.
+
+---
+
+**User**
+
+okay its now working, the red and green are working. I want small changes. During the IDLE conditions, the entry lights will be on on both sides, and exit will be red on both sides. When free pass will be clicked, then all the traffic lights will switch to green, and BB OPEN. wHEN RESET will go to IDLE, and entry traffic lights will be on, exit traffic lights will be red. During the exit process, the corresponding exit light will turn on only.
+Then once direction is set by vehicle coming through any of 2 sensors, the other side's all traffic light should be red both entry and exit, and the correspoding truck where the vehicle have entered it's exit boom barrier will close. the corresponding direction entry will close when vehicle have entered WB, as per our unidirectional flow
+
+The above changes are for Bi-directional only, Unidirectional is working perfectly
+
+---
+
+**Cursor**
+
+Updating bi-directional idle, Free Pass, reset, and direction-set light/boom behavior. Checking the current workflow paths.
+
+Implementing bi-dir idle (entry green / exit red), direction-set (other side red + depart boom close), WB entry-boom close, and exit-grant (only depart exit light green).
+
+Updating the bi-dir tests to match the new light and boom behavior.
+
+Bi-directional light/boom behavior is updated (uni unchanged). Restart Mines-WB to pick it up.
+
+| State | Traffic lights | Booms |
+|---|---|---|
+| **IDLE / Reset** | Entry green both sides, exit red both sides | Both open |
+| **Free Pass** | All green | Both open |
+| **Direction set** (S1 or S3) | Approach entry green; other side entry+exit red | Depart boom closes |
+| **On WB** | Approach side red | Approach boom closes (like uni) |
+| **Exit grant** | Only the depart **exit** light green | Depart boom opens |
+
+Idle/direction/exit unit tests for this behavior pass.
+
+---
+
+**User**
+
+url : https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint
+ 
+payload :  {
+  "device_ip": "10.80.118.136",
+  "rfid_no": "34161FA8203290180A42D6C0",
+  "truck_details": "T|34161FA8203290180A42D6C0|OD14AE3900|45000|26000|20|9582910261|10.80.118.136|OD14AE3900"
+}
+ 
+ 
+response : 
+ 
 {
-  "port": "/dev/cu.usbserial-130",
-  "baud_rate": 9600,
-  "data_bits": 8,
-  "parity": "N",
-  "stop_bits": 1,
-```
-
-The serial reader uses that field when it opens the port. A rate that is not in the dropdown has to be added as another `<option>` on the Baud rate select in `digitizer-decoder/static/web/index.html`.
-
----
-
-**User**
-
-i want read four rfid,send data four display by mqtt and also communicate four modbus module (i/o cotrollor) at same time in Mine-Checkpoint application. in this app i use four rfid  at four different location,four display four different location ,four i/o controllor four different location and also i use diferent api's for different locations so i want this app run in one mac like server and if read first rfid it communicate with first display,first modbus like this others.this flow simuntneously.can it possible?
-
-
----
-
-**Cursor**
-
-I’ll check how Mines-Checkpoint binds RFID, display, Modbus, and the APIs today, so I can say whether one Mac process can run four locations at once.
-
-Yes. One Mac can run all four locations at the same time. Mines-Checkpoint today is built as one location per process, so the way to do it is four copies of the app on that Mac, not one process that owns all four sites.
-
-Each running copy has a single trip. It has one state machine, one RFID reader, one MQTT display, one Modbus I/O controller, and one set of API addresses. A tag that arrives on that copy moves only that copy’s display and that copy’s boom and lights. A second tag on the same copy waits until the first trip finishes.
-
-Four processes on one Mac stay independent and run together:
-
-| Location | Its own config |
-|----------|----------------|
-| 1 | RFID reader 1, display IP 1, Modbus IP 1, API URLs and `device_ip` for site 1 |
-| 2 | RFID 2, display 2, Modbus 2, site 2 APIs |
-| 3 | RFID 3, display 3, Modbus 3, site 3 APIs |
-| 4 | RFID 4, display 4, Modbus 4, site 4 APIs |
-
-They can share the one Mosquitto broker on that Mac. Each process already uses its own MQTT client name, so they no longer kick each other off the broker. A read at location 1 does not open the boom or write the display at location 2.
-
-Each copy needs its own dashboard port (`server.port` in that `iot_configuration.json`, or `API_PORT` in that `.env`). Point each RFID reader’s tag post at that copy’s port (`http://<this-mac>:<that-port>/rfid_data`). Give each location its own Modbus IP and its own display IP. If two copies use the same HTTP port, the second web server cannot start.
-
-One program that internally routes “reader 1 → display 1 + Modbus 1 + API set 1” while the other three lanes run inside the same process is not how this app works now. That would be a new multi-lane server. Four processes give you the same result with the app as it is.
-
----
-
-**User**
-
-no copy use .i want one app
+    "status": 200,
+    "response_type": 1,
+    "message": "Current checkpoint transaction reset successfully. RFID can be read again.",
+    "device_ip": "10.80.118.136",
+    "rfid_no": "34161FA8203290180A42D6C0",
+    "truck_details": "T|34161FA8203290180A42D6C0|OD14AE3900|45000|26000|20|9582910261|10.80.118.136|OD14AE3900",
+    "token": "9582910261",
+    "location_id": 2,
+    "location_name": "Tare Weighbridge Gate 1",
+    "reset_count": {
+        "entry_log": 5,
+        "checkpoint": 0,
+        "movement": 0,
+        "weighment": 0
+    }
+}
+ 
+This needs to be added in the tare weigh-bridge application. When we are calling in "/weight-confirm" in loop, and when we get response "weight_status" as "2", then this above reset api will be called immediately. AFter in this API's response when we get 200, then exit the vehicle as per the process. THe process is same only this api will be called in addition . The device_id, rfid_no, truck_details will be taken from rfid validation response "/rfid_tag". 
+ 
 
 ---
 
 **Cursor**
 
-You want one Mines-Checkpoint process with four independent lanes. I’ll map that onto how the app is built now so the gap is clear.
+I'll find how `/weight-confirm` and `weight_status: 2` are handled in the tare WB flow, then wire in the reset checkpoint call before exit.
 
-Yes. One Mines-Checkpoint program can run four locations at the same time. The app does not do that today, so it has to be built as four lanes inside this one process.
+Wiring `reset_checkpoint` into the weight-confirm `weight_status=2` path, then exiting after a 200 response.
 
-Right now the program is one site. `AppContext` holds one state machine, one trip, one Modbus connection, one RFID reader, one display client, and one set of API addresses. `/rfid_data` always starts that same trip. While that trip is running, the next tag is ignored. Extra RFID listen ports, if you add them, still feed that one trip. A tag from location 2 would move location 1’s boom and write location 1’s display.
+Tare WB now calls `reset_checkpoint` when `/weight-confirm` returns `weight_status: 2`.
 
-One app with four locations looks like this:
+**Flow**
+1. Weight-confirm loop gets `weight_status: 2`
+2. Immediately POST `reset_checkpoint` with `device_ip`, `rfid_no`, `truck_details` from the RFID validate (`/rfid_tag`) transaction
+3. On `200` → same exit as before (skip weight-details / boom-close, grant exit)
+4. On failure → retry until `200` (or dashboard Reset)
 
-- `iot_configuration.json` lists four locations. Each location has its own RFID reader, display IP, Modbus IP, `device_ip`, and API URLs.
-- The process starts four lanes. Each lane has its own trip, its own Modbus connection, its own display subscription (`display_info/{that IP}`), and its own API client.
-- Each reader posts tags to its own port on this Mac, or the post is matched by the reader IP. That tag runs only that lane: location 1’s reader talks only to location 1’s display, location 1’s I/O module, and location 1’s APIs.
-- The four lanes do not share a lock, so a truck at location 2 does not wait for location 1.
-
-One Flask process and one Mosquitto broker stay on the Mac. The dashboard would show four lanes instead of one.
-
-This is a change to the core of Mines-Checkpoint, not a config switch. Switch to Agent mode when you want that built.
+This path always calls the API (not gated by `RESET_CHECKPOINT_FLAG`). That flag still only applies to the UI Reset button.
 
 ---
 
 **User**
 
-now mines_checkpoint app use in four location but i use copy and different iot_configuration.json for different location.
-i want do merge the all four  iot_configuration.json and build it four  lane app so that i can handle four location procces simantuneosly in one app
+now i add weight_details_url_tare and boom_close_url_tare variable iniot_configuration.json .in bidirecational mode i can Tare and Gross in this wb.if tare use  weight_details_url_tare and boom_close_url_tare.
+
+if Gross use weight_details_url and boom_close_url
+
+keep in mind process not change. only change above things
 
 ---
 
 **Cursor**
 
-Four locations should run as four lanes in one Mines-Checkpoint process. I’ll start from the four site configs and the current single-lane flow so each reader stays tied to its own display, Modbus module, and APIs.
+I'll wire tare-specific `weight_details` / `boom_close` URLs for bi-dir T trips, leaving Gross on the existing URLs without changing the process.
 
-The four site files stay separate locations inside one process. I’ll merge them into one config and run each location as its own lane, with its own reader, display, Modbus connection, and APIs.
+Bi-dir URL routing is in place. Process is unchanged; only the endpoint selection differs by trip type:
 
-Mines-Checkpoint now runs all four locations in one process. Each location keeps its own RFID reader, display topic, Modbus controller, and API URLs, and a tag at one location only moves that location’s boom and display.
+| Trip | weight-details | boom-close |
+|------|----------------|------------|
+| **T** (Tare) | `weight_details_url_tare` | `boom_close_url_tare` |
+| **G** (Gross) | `weight_details_url` | `boom_close_url` |
 
-The app loads `Mines-Checkpoint/iot_configuration.json`, which now contains all four sites. The previous site files are still there, including a copy of the old Mines Entry file as `iot_configuration_mines_entry.json`.
-
-| Location | RFID listen port | Reader | Display | Modbus |
-|---|---|---|---|---|
-| Mines Entry | 8001 | 10.80.118.57 | data_info/a | 10.80.118.135 |
-| Traffic IN | 8002 | 10.80.118.59 | data_info/b | 10.80.118.137 |
-| Traffic OUT | 8003 | 10.80.118.57 | data_info/a | 10.80.118.135 |
-| Mines Exit | 8004 | 10.80.118.65 | data_info/c | 10.80.118.142 |
-
-Point each reader at `http://<this Mac>:<port>/rfid_data`. The dashboard stays on port 8000, with a Location menu that switches the live flow, reset, free pass, and ANPR controls. Mines Exit keeps its own API host, `https://10.80.118.10:8001`.
-
-Traffic OUT still has the same RFID reader, Modbus address, and display topic as Mines Entry. The app keeps it as its own lane and separates the two by port 8003. Startup logs that shared hardware.
-
-Restart Mines-Checkpoint so it picks up the merged file.
+If a `*_tare` URL is empty, it falls back to the default (same as before). Restart Mines-WB to load the new config.
 
 ---
 
 **User**
 
-when i run this app error arises :
- python3 main.py
-2026-10-21 16:16:27 [INFO] mines_checkpoint: Logging initialized -> /Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/logs/mines_checkpoint.log (daily rotate, keep 10 days)
-2026-10-21 16:16:27 [ERROR] mines_checkpoint.main: MQTT broker ensure failed: No module named 'mqtt_broker_setup'
-Traceback (most recent call last):
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/main.py", line 59, in _ensure_local_mqtt_broker
-    from mqtt_broker_setup import bootstrap_local_mqtt
-ModuleNotFoundError: No module named 'mqtt_broker_setup'
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Loaded IoT config from /Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/iot_configuration.json
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.135
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.137
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=False OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.139
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.142
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://10.80.118.10:8001 ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Loaded 4 checkpoint lanes from /Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/iot_configuration.json
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.135
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.137
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=False OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.139
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://gmuatociexp.gmdcltd.co.in ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: device_ip from iot_configuration.json: 10.80.118.142
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Mines-Checkpoint type=checkpoint boom_style=entry anpr_enabled=True OCI=https://10.80.118.10:8001 ANPR=http://localhost:5001/api/detect
-2026-10-21 16:16:27 [INFO] mines_checkpoint.config: Loaded 4 checkpoint lanes from /Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/iot_configuration.json
-2026-10-21 16:16:27 [INFO] gmdc_common.services.display: MQTT display connecting to 127.0.0.1:1883 mode=a ips=['127.0.0.1'] tx=['data_info/a']
-2026-10-21 16:16:27 [INFO] gmdc_common.services.display: MQTT display subscribed display_info/127.0.0.1
-2026-10-21 16:16:27 [INFO] gmdc_common.services.display: DISPLAY MQTT -> data_info/a: Welcome
-2026-10-21 16:16:27 [INFO] gmdc_common.services.display: MQTT display connected rc=0
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.io: ModbusTCP connected 10.80.118.135:502 slave=1 read_fc=2 write_fc=5 di_start=0 do_start=0
-2026-10-21 16:16:27 [INFO] mines_checkpoint.main: Hardware mapped: TL red/green DO=0/1 boom open/close DO=2/3 entry_sensor DI=0 (di_start=0 do_start=0 demo=False)
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.rfid: RFID mode=API - using HTTP intake (/rfid_data); TCP client disabled
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.traffic_light: TrafficLight[entry] -> RED
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.boom_barrier: BoomBarrier[entry] -> CLOSED
-2026-10-21 16:16:27 [INFO] gmdc_common.services.display: DISPLAY MQTT -> data_info/a: Scan@RFID Card
-2026-10-21 16:16:27 [INFO] mines_checkpoint.core.workflow: Hardware reset to IDLE (TL red, boom closed)
-2026-10-21 16:16:27 [INFO] mines_checkpoint.services.mqtt_ws: MQTT WebSocket port 9001 already in use (Mosquitto or another broker) — skipping in-app broker. Browser keeps using ws://<pc-ip>:9001; this app publishes over MQTT TCP :1883.
-2026-10-21 16:16:27 [INFO] mines_checkpoint.services.frontend_mqtt: MQTT TCP 127.0.0.1:1883 (browser dashboard uses ws://<pc-ip>:9001)
-2026-10-21 16:16:27 [INFO] mines_checkpoint.services.frontend_mqtt: Frontend MQTT connected 127.0.0.1:1883 client_id=mines_checkpoint_frontend-mines_entry-33786 topics=wb_frontend/mines_entry
-Exception in thread paho-mqtt-client-mines_checkpoint_frontend-mines_entry-33786:
-Traceback (most recent call last):
-  File "/opt/homebrew/Cellar/python@3.12/3.12.14/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
-    self.run()
-  File "/opt/homebrew/Cellar/python@3.12/3.12.14/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1012, in run
-    self._target(*self._args, **self._kwargs)
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 4523, in _thread_main
-    self.loop_forever(retry_first_connection=True)
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 2297, in loop_forever
-    rc = self._loop(timeout)
-         ^^^^^^^^^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 1686, in _loop
-    rc = self.loop_read()
-         ^^^^^^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 2100, in loop_read
-    rc = self._packet_read()
-         ^^^^^^^^^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 3142, in _packet_read
-    rc = self._packet_handle()
-         ^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 3814, in _packet_handle
-    return self._handle_connack()
-           ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 3922, in _handle_connack
-    on_connect(
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/services/frontend_mqtt.py", line 277, in _on_connect
-    client.subscribe(self._topic("request_status"))
-                     ^^^^^^^^^^^
-AttributeError: 'FrontendMqtt' object has no attribute '_topic'
-2026-10-21 16:16:27 [INFO] mines_checkpoint.services.frontend_mqtt: Using external MQTT broker: TCP 127.0.0.1:1883 + WebSocket :9001 (in-app WS skipped — port already bound)
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.sensor: SensorPoller started entry_pin=0 exit_pin=None wb_pin=None di_start=0 interval=0.3 edge=falling-after-occupied
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID IDLE prepare: login -> mode -> start
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud login GET https://10.80.118.57/cloud/localRestLogin (user=admin)
-2026-10-21 16:16:27 [INFO] gmdc_common.hardware.sensor: Entry sensor TRUE (occupied) addr=0
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud login http=200 body={"code":0,"message":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjEiLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3OTI2MDg2NTYsImV4cCI6MTc5MjYzNzQ1Nn0.a5Du6IS_xdX_VwqOZbGkc_g0Cjb6Wtp3M8vys2_ZHMc"}
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID bearer token acquired (len=160)
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud set mode PUT https://10.80.118.57/cloud/mode
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud mode http=200 body=
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud start PUT https://10.80.118.57/cloud/start (Bearer)
-2026-10-21 16:16:27 [INFO] gmdc_common.services.rfid_control: RFID cloud start http=422 body={"code":3,"message":"\"start\" Failed to apply. Description: unsuccessful rc response: Failure: Start currently ongoing. Issue a stop prior to issuing a start."}
-2026-10-21 16:16:27 [ERROR] gmdc_common.services.rfid_control: RFID IDLE prepare failed at start
-2026-10-21 16:16:27 [INFO] mines_checkpoint.core.workflow: RFID IDLE prepare (login/mode/start) ok=False
-2026-10-21 16:16:27 [INFO] mines_checkpoint.core.workflow: reset_checkpoint skipped - RESET_CHECKPOINT_FLAG is false
-Traceback (most recent call last):
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/main.py", line 429, in <module>
-    sys.exit(main())
-             ^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/main.py", line 355, in main
-    ctx = bootstrap()
-          ^^^^^^^^^^^
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/main.py", line 315, in bootstrap
-    _activate_lane(ctx)
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/main.py", line 268, in _activate_lane
-    ctx.frontend.publish_device_status()
-  File "/Users/csm-gmdc/Downloads/vadh-ghat/Mines-Checkpoint/services/frontend_mqtt.py", line 408, in publish_device_status
-    self._topic("device_status"), message, qos=0, force=force
-    ^^^^^^^^^^^
-AttributeError: 'FrontendMqtt' object has no attribute '_topic'
+in mines-checkpoint during idle condition,,when  /rfid_management HTTP/1.1" 200 will be called then every time the rfid login and start command to rfid will be exicured
 
 ---
 
 **Cursor**
 
-The crash is in the dashboard MQTT client: it calls `_topic` during connect, and that method is missing. I’ll find where topics are built and restore it.
+I'll find how Mines-Checkpoint handles `/rfid_management` in IDLE and where RFID login/start are triggered.
 
-The process stopped because the dashboard MQTT client had no `_topic` method. On connect it tried to subscribe to `wb_frontend/mines_entry/request_status` and crashed before the other three locations started.
+Updating `/rfid_management` so that in IDLE it re-runs RFID login/mode/start on every keepalive.
 
-That method is back. Each location now publishes on its own prefix, such as `wb_frontend/mines_entry/device_status`.
+In Mines-Checkpoint, every `/rfid_management` call while **IDLE** now queues RFID **login → mode → start** (`prepare_idle`). HTTP still returns `200` immediately; the cloud commands run in the background. Non-IDLE states are unchanged (keepalive only).
 
-Restart with:
+---
+
+**User**
+
+when oci api is not reachable after retry still not reachable then in display publish internet@ down
+
+---
+
+**Cursor**
+
+I'll find how OCI unreachable retries and display publishes work, then wire "internet@ down" after retries fail.
+
+Publishing `internet@ down` on the LED when an OCI call is unreachable (after retries). Applying it in both Checkpoint and WB.
+
+When an OCI/GMDC API stays unreachable (connection/timeout), the LED now shows **`internet@ down`** (also published to the dashboard display).
+
+Applies in both Mines-Checkpoint and Mines-WB for OCI calls (RFID, status-check, weight-details, boom-close, etc.). Local ANPR/digitizer failures stay on their own messages.
+
+---
+
+**User**
+
+Now i run Mines-Checkpoint and Mines-WB manualy.i want run it in MAC mini M4 as service.so give me proper steps
+
+---
+
+**Cursor**
+
+I'll check how both apps start and what they need, then give Mac Mini M4 launchd service steps.
+
+Use **launchd** on the Mac Mini M4 (not Windows services). Run each app as its own KeepAlive agent so it restarts on crash and at login/boot.
+
+## 1. One-time Mac setup
 
 ```bash
-python3 main.py
+# Homebrew (if missing)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Python + Mosquitto (MQTT 1883 / WS 9001)
+brew install python@3.12 mosquitto
+brew services start mosquitto
 ```
 
-The earlier `No module named 'mqtt_broker_setup'` line did not stop the app. Mosquitto was already listening, and the first location connected to it on port 1883.
+Copy the project onto the Mac, e.g.:
 
----
-
-**User**
-
-1.add a sidebar in existing web page and it is common dashboard for four location.
-2.if click Mines Entry then i can show mines entry related thing.
-3.if click Traffic IN then i can show Traffic IN related thing.
-4.if click Traffic OUT then i can show Traffic OUT related thing.
-5.if click Mines Exit then i can show mines exit related thing.
-6 
-
----
-
-**Cursor**
-
-The dashboard should use one sidebar for all four locations, and clicking a location should show only that site’s live status. I’ll look at the current page and wire the sidebar into the location switch that is already there.
-
-The location menu is only a dropdown inside the flow panel. I’ll add a sidebar that lists all four sites, and clicking one will switch the device status and transaction flow to that site.
-
-The dashboard now has a **Locations** sidebar for all four sites. Clicking a location switches the header, device status, and transaction flow to that site only.
-
-- **Mines Entry** shows the Mines Entry reader, Modbus controller, and flow.
-- **Traffic IN** shows the Traffic IN reader, Modbus controller, and flow.
-- **Traffic OUT** shows the Traffic OUT reader, Modbus controller, and flow.
-- **Mines Exit** shows the Mines Exit reader, Modbus controller, and flow.
-
-Each sidebar item also shows that location’s current state, such as Idle or RFID Read. Refresh the dashboard page in the browser to see the sidebar.
-
----
-
-**User**
-
-<timestamp>Thursday, Oct 22, 2026, 9:57 AM (UTC+5:30)</timestamp>
-<system_notification>
-The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
-
-<task>
-kind: shell
-status: error
-task_id: 701917
-title: Restart preview server with static files
-tool_call_id: call-a679ab55-87d2-42e6-a6f3-19a0d6cb9ea4-161
-fc_6324f5f1-e283-9113-a8fe-d6d58fb8b4a1_0
-detail: exit_code=1
-</task>
-</system_notification>
-
-<timestamp>Thursday, Oct 22, 2026, 9:57 AM (UTC+5:30)</timestamp>
-<system_notification>
-The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
-
-<task>
-kind: shell
-status: error
-task_id: 701916
-title: Serve dashboard preview with four locations
-tool_call_id: call-76cb6bb6-8d7a-428e-96ef-8791dd97b358-156
-fc_6483ddd3-587e-9ff6-9923-518b4f77fb13_0
-detail: exit_code=143
-output_path: /Users/csm-gmdc/.cursor/projects/Users-csm-gmdc-Downloads-vadh-ghat/terminals/701916.txt
-</task>
-</system_notification>
-<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
-
----
-
-**Cursor**
-
-Those notices are from the temporary preview I used to check the sidebar. I’ll confirm it is no longer running.
-
-The preview server is still running on port 8767. I’ll stop it so it doesn’t sit beside the real checkpoint app.
-
-The sidebar is in place. Those errors were only from the temporary preview used to check it, and that preview is stopped.
-
-Refresh the checkpoint dashboard to use the Locations sidebar.
-
----
-
-**User**
-
-<timestamp>Thursday, Oct 22, 2026, 9:58 AM (UTC+5:30)</timestamp>
-<system_notification>
-The following task has finished. If you were already aware, ignore this notification and do not restate prior responses.
-
-<task>
-kind: shell
-status: aborted
-task_id: 701918
-title: Start dashboard preview on port 8767
-tool_call_id: call-1542d936-6e38-4a0c-82c4-462c53e26373-165
-fc_41e92343-347c-95fe-825a-a852a37528fa_0
-output_path: /Users/csm-gmdc/.cursor/projects/Users-csm-gmdc-Downloads-vadh-ghat/terminals/701918.txt
-</task>
-</system_notification>
-<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there's no follow-ups needed, don't explicitly say that.</user_query>
-
----
-
-**Cursor**
-
-The temporary dashboard preview has stopped. Refresh the checkpoint dashboard to use the Locations sidebar.
-
----
-
-**User**
-
-Now we develop Mines-WB application:
-if Biderecational :
-1.now in ideal condition channel 0 to channel 3 stay Normal Open condition of i/o controllor.
-2.but i want in ideal condition  channel 0 and channel 1 normaly close.
-3. in ideal condition channel 2 and channel 3 normally open.
-4. if only trigger sensor-2 then channel 2 and channel 3 normaly close.channel 2 and channel 3 normaly open after call Boom close api .
-5.if entry-A side,only channel 1 is normal open after call boom close api.then ideal.at reset time app ideal
-6.if entry-B side,only channel 0 is normal open after call boom close api.at reset time app ideal.
-
----
-
-**Cursor**
-
-Bidirectional Mines-WB should hold channels 0 and 1 closed and channels 2 and 3 open while idle, then change those outputs only for sensor 2 and the boom-close result on the entry side. I’ll read how idle outputs and boom close work now.
-
-Bidirectional idle currently energizes all four relays, so they sit normally open. I’ll hold channels 0 and 1 closed and channels 2 and 3 open, then move the booms and the exit-side light only for sensor 2 and a successful boom-close.
-
-Bidirectional Mines-WB now uses these relay states on channels 0–3.
-
-**Idle, and again after Reset**
-- Channels 0 and 1 are normally closed.
-- Channels 2 and 3 are normally open.
-
-**Sensor 2 alone**
-- Channels 2 and 3 go normally closed. Channels 0 and 1 stay closed.
-- If another sensor is also on, the booms stay open.
-
-**After the boom-close API succeeds**
-- Channels 2 and 3 go normally open again.
-- Entry A opens only channel 1.
-- Entry B opens only channel 0.
-- When the truck finishes, or you press Reset, the app returns to the idle states above.
-
-Restart Mines-WB so this takes effect.
-
----
-
-**User**
-
-rfid tag api respnce massage publish to display
-
----
-
-**Cursor**
-
-The RFID tag API’s response message should go out on the display. I’ll find where that response is handled and where display text is published.
-
-The RFID board still shows a fixed error line. I’ll send the RFID tag API’s own message to the display instead.
-
-The RFID tag API message is now sent to that location’s display.
-
-- If the API rejects the tag, the board shows the response message, such as `Tag not registered`.
-- If the API accepts the tag and returns a real message, that message is shown. A plain `ok` or `success` still shows `RFID VALID@{truck}`.
-- If the response has no message, the board keeps `RFID ERR@ASK OPERATOR`.
-
-Restart Mines-Checkpoint, then scan a tag to see the API message on the display.
-
----
-
-**User**
-
-where is the change rfid mode set api json
-
----
-
-**Cursor**
-
-I’ll look up where the RFID mode-set API builds its JSON.
-
-The RFID mode JSON is sent by `PUT /cloud/mode`. The body is `DEFAULT_MODE_PAYLOAD` in `gmdc_common/gmdc_common/services/rfid_control.py`.
-
-```18:58:gmdc_common/gmdc_common/services/rfid_control.py
-DEFAULT_MODE_PAYLOAD: Dict[str, Any] = {
-  "type": "CUSTOM",
-  "antennaStopCondition": {
-    "type": "DURATION",
-    "value": 100
-  },
-  "antennas": [
-    5
-  ],
-  ...
-  "transmitPower": [
-    30
-  ],
-  ...
-}
+```text
+/Users/gmdc/GMDC_NEW/
+  gmdc_common/
+  Mines-Checkpoint/
+  Mines-WB/
 ```
 
-`set_mode()` posts that object:
+Use a dedicated user (example: `gmdc`) that can reach Modbus/RFID/OCI on the LAN.
 
-```165:175:gmdc_common/gmdc_common/services/rfid_control.py
-def set_mode(self, payload: Optional[Dict[str, Any]] = None) -> bool:
-    """PUT /cloud/mode with Bearer token and CUSTOM mode payload."""
-    ...
-    body = payload or self.mode_payload
+## 2. Python venv + deps (once per app)
+
+```bash
+cd /Users/gmdc/GMDC_NEW
+
+# Shared lib
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e ./gmdc_common
+
+# Checkpoint
+cd Mines-Checkpoint
+pip install -r requirements.txt
+cp -n .env.example .env   # then edit .env + iot_configuration.json
+
+# WB (same venv is fine)
+cd ../Mines-WB
+pip install -r requirements.txt
+cp -n .env.example .env   # then edit .env + iot_configuration.json
 ```
 
-None of the `iot_configuration.json` files set `mode_payload`, so every reader uses this default. To change it for one reader, add a `mode_payload` object on that reader in `iot_configuration.json` (`rfids.entry_a` or `rfids.entry_b`). `build_rfid_cloud_control()` uses that object when it is present.
+**Important if both run on the same Mac Mini:** give them different ports in `.env` / config, e.g.:
 
----
+| App | `API_PORT` (example) |
+|-----|----------------------|
+| Mines-Checkpoint | `8000` |
+| Mines-WB | `8080` |
 
-**User**
+Also set `DEMO_MODE=false`, correct `DEVICE_IP` / config JSON, and RFID API ports so they don’t clash.
 
-URL: https://gmuatociexp.gmdcltd.co.in/ords/gmdc_dicsm/dlms_checkpoint/rfid-tag
-Payload: {
-  "rfid": "34161fa820328e400491fce0",
-  "device_ip": "10.80.118.135"
-}
-Response: {
-  "status": 403,
-  "message": "No loading slip is available against the RFID."
+Verify manually first:
 
-this is rfid tag validate api and its responce.
-i want responce massage publish to display by mqtt 
-
-
-
-
----
-
-**Cursor**
-
-That 403 text should go to the display board over MQTT. I’ll trace the RFID validate path and the display publish to see whether this message is already sent.
-
-That 403 message is already sent to the display board over MQTT. For your example, the board receives:
-
-`No loading slip is available against the RFID.`
-
-The RFID validate call in `Mines-Checkpoint/services/oci_client.py` reads `message` from the JSON. Because `status` is 403, the tag is rejected, and `Mines-Checkpoint/core/workflow.py` passes that text to the display:
-
-```688:688:Mines-Checkpoint/core/workflow.py
-self._announce(self._rfid_api_display(last_resp, MSG_RFID_ERR))
+```bash
+source /Users/gmdc/GMDC_NEW/.venv/bin/activate
+cd /Users/gmdc/GMDC_NEW/Mines-Checkpoint && python main.py
+# Ctrl+C, then:
+cd /Users/gmdc/GMDC_NEW/Mines-WB && python main.py
 ```
 
-`_announce` calls `display.send()`, which publishes the same string on the lane’s MQTT topic (`data_info/a` for Mines Entry, `data_info/b` for Traffic IN, `data_info/c` for Mines Exit). The log line looks like:
+## 3. Create launchd plists
 
-`DISPLAY MQTT -> data_info/a: No loading slip is available against the RFID.`
-
-It stays on the board for `RFID_ERROR_DISPLAY_SEC` (10 seconds), then the idle text `Scan@RFID Card` replaces it.
-
-Restart Mines-Checkpoint if it was started before this change. A generic `ok` or `success` is not shown; the board keeps `RFID VALID@{truck}` in that case.
-
----
-
-**User**
-
-it implement in four lane accordingly in mines_checkpoint application
-
----
-
-**Cursor**
-
-The RFID response text should go to the display of the lane that read the tag. I’ll check that each of the four checkpoint lanes publishes on its own MQTT topic.
-
-The RFID reply is handled separately for each location, but the LED board still receives every lane’s text on `data_info/a`.
-
-Each lane has its own workflow, its own `device_ip`, and its own display client. A tag posted to that lane’s RFID port is validated with that lane’s `device_ip`, and the API `message` is the text that lane announces. Your example (`device_ip` `10.80.118.135`, message `No loading slip is available against the RFID.`) is Mines Entry.
-
-| Location | RFID port | `device_ip` sent to rfid-tag | Configured display topic |
-|---|---|---|---|
-| Mines Entry | 8001 | 10.80.118.135 | `data_info/a` |
-| Traffic IN | 8002 | 10.80.118.137 | `data_info/b` |
-| Traffic OUT | 8003 | 10.80.118.139 | `data_info/c` |
-| Mines Exit | 8004 | 10.80.118.142 | `data_info/d` |
-
-The dashboard copy is already per location (`wb_frontend/mines_entry/display`, `wb_frontend/traffic_in/display`, and the same for Traffic OUT and Mines Exit).
-
-The physical board is not. `display.send()` rebuilds the topic from PCB mode, and every lane is started with mode `a`. Modes other than `a` and `b` are also forced back to `a`. So Traffic IN, Traffic OUT, and Mines Exit publish the same RFID sentence to `data_info/a`, the Mines Entry board, instead of `data_info/b`, `data_info/c`, and `data_info/d`.
-
-```240:251:gmdc_common/gmdc_common/services/display_service.py
-    def _publish_text(self, client, text: str, side: Optional[str] = None) -> bool:
-        topics = data_info_topics_for_ips(
-            self.display_ips, pcb_mode=self.pcb_mode, side=side
-        )
-        self._tx_topics = topics
-        if topics:
-            self.topic_tx = topics[0]
-        ...
-                client.publish(topic, str(text), qos=1)
+```bash
+mkdir -p ~/Library/LaunchAgents
+mkdir -p /Users/gmdc/GMDC_NEW/logs
 ```
 
-Switch to Agent mode and I can keep each lane’s `mqtt_topic_tx` on publish, so a 403 at Traffic IN goes only to `data_info/b`, Traffic OUT only to `data_info/c`, and Mines Exit only to `data_info/d`. Restart Mines-Checkpoint after that change.
-
----
-
-**User**
-
-1.mine entry rfid massage sent to data_info/a.
-2.Trffic IN rfid massage sent to data_info/b.
-3Traffic Out  rfid massage sent to data_info/c.
-4.mine exit rfid massage sent to data_info/d.
-
----
-
-**Cursor**
-
-Each lane’s RFID message should stay on its own display topic. I’ll keep Mines Entry on `data_info/a`, Traffic IN on `data_info/b`, Traffic OUT on `data_info/c`, and Mines Exit on `data_info/d`.
-
-Each location now publishes its RFID response on its own display topic.
-
-| Location | MQTT topic |
-|---|---|
-| Mines Entry | `data_info/a` |
-| Traffic IN | `data_info/b` |
-| Traffic OUT | `data_info/c` |
-| Mines Exit | `data_info/d` |
-
-A 403 such as `No loading slip is available against the RFID.` from Mines Entry goes only to `data_info/a`. The same sentence from Traffic IN goes only to `data_info/b`, Traffic OUT only to `data_info/c`, and Mines Exit only to `data_info/d`.
-
-Restart Mines-Checkpoint so the running process picks up this change.
-
----
-
-**User**
-
-Now we develop Mines-WB applicatin:
-1.in Mines-WB app, RFID responce massage publish to display by mqtt like Mines-Checkpoint
-
----
-
-**Cursor**
-
-Mines-WB should publish the RFID API message on the display the same way Mines-Checkpoint does. I’ll match the weighbridge RFID path to that display publish.
-
-The weighbridge still shows the fixed `RFID ERR@ASK OPERATOR` line. I’ll send the RFID API `message` to the display over MQTT, and keep the truck-and-weight line when the API only returns a generic success.
-
-Mines-WB now publishes the RFID API message to the display over MQTT, the same way Mines-Checkpoint does.
-
-A response such as `No loading slip is available against the RFID.` is sent to the board. A generic `ok` or `success` still shows the truck and weight line, for example `OD14AE3900@15000 Kg`.
-
-On this bidirectional weighbridge the text goes to the side the vehicle entered: Entry A on `data_info/a`, Entry B on `data_info/b`.
-
-Restart Mines-WB so the running process picks up the change.
-
----
-
-**User**
-
- RFID bearer token acquired (len=160)
-2026-10-24 14:34:59 [INFO] gmdc_common.services.rfid_control: RFID cloud set mode PUT https://10.80.118.57/cloud/mode
-2026-10-24 14:34:59 [INFO] gmdc_common.services.rfid_control: RFID cloud mode http=422 body={"code":3,"message":"\"set_mode\" Failed to apply. Description: unsuccessful rc response: Failure: Number of arrays in the array must be 1 to match the number of antennas enabled"}
-2026-10-24 14:34:59 [ERROR] gmdc_common.services.rfid_control: RFID IDLE prepare failed at set_mode
-this arises in Mines-Checkpoint application 
-so fix it
-
-
-
-
----
-
-**Cursor**
-
-The reader rejected the mode payload because an antenna array length does not match the one enabled antenna. I’ll check the mode JSON sent to `10.80.118.57` and align it.
-
-The reader has one antenna enabled, but `transmitPower` is a flat list. Zebra expects one nested power array per antenna, so the mode call is being rejected with HTTP 422.
-
-The reader at `10.80.118.57` rejected the mode call because `transmitPower` was a flat list, `[30]`, while antenna 5 is the only antenna enabled. Zebra requires one inner array per antenna, so the payload is now `[[30]]`.
-
-Restart Mines-Checkpoint. The mode log should show:
-
-`RFID cloud set mode PUT https://10.80.118.57/cloud/mode antennas=[5] transmitPower=[[30]]`
-
-A successful call returns HTTP 200, and the idle prepare continues to start.
-
----
-
-**User**
-
-i need two antena 5 and 6 to active
-
----
-
-**Cursor**
-
-Antenna 5 and antenna 6 both need to be enabled, with one transmit-power entry for each. I’ll update the RFID mode payload to match.
-
-Antennas 5 and 6 are both enabled in the RFID mode payload. Each one has its own transmit power of 30, so the reader receives two matching power arrays.
-
-Restart Mines-Checkpoint. The mode log should show:
-
-`antennas=[5, 6] transmitPower=[[30], [30]]`
-
----
-
-**User**
-
-update the version.md with version 1.18
-
----
-
-**Cursor**
-
-I’ll add a 1.18 section to `version.md` in the same style as the existing notes, covering the changes made in this work.
-
-The changelog still stops at 1.17. I’ll add 1.18 for the four-lane checkpoint, the RFID display text, the bidirectional outputs, and antennas 5 and 6.
-
-`version.md` is now at **1.18**, dated 2026-10-24.
-
-The new section covers the four checkpoint lanes in one process, the RFID API message on each lane’s display, the bidirectional boom-close outputs, and Zebra antennas 5 and 6.
-
----
-
-**User**
-
-what is publish to display if found error in rfid validate api responce.
-
----
-
-**Cursor**
-
-The display text comes from the RFID validate error body. I’ll check both apps for the exact string that is published.
-
-The display receives the RFID validate API `message` text. For your 403 example, the MQTT payload is exactly:
-
-`No loading slip is available against the RFID.`
-
-That happens in both Mines-Checkpoint and Mines-WB. The code reads `message` from the response and publishes that string. A generic value such as `ok`, `success`, or `200` is not shown. If the response has no usable message, the board gets the fallback:
-
-`RFID ERR@ASK OPERATOR`
-
-On Mines-Checkpoint the topic is the lane that read the tag:
-
-| Location | Topic |
-|---|---|
-| Mines Entry | `data_info/a` |
-| Traffic IN | `data_info/b` |
-| Traffic OUT | `data_info/c` |
-| Mines Exit | `data_info/d` |
-
-On Mines-WB the same sentence goes to the side the truck entered: Entry A on `data_info/a`, Entry B on `data_info/b`. The text stays up for 10 seconds (`RFID_ERROR_DISPLAY_SEC`), then the idle message replaces it.
-
----
-
-**User**
-
-whree is publish RFID service Error
-
----
-
-**Cursor**
-
-I’ll find where the RFID service error text is published.
-
-The words **RFID SERVICE SERVER ERROR** are published to the dashboard, not to the LED board. That happens only when the RFID validate call itself fails: the host is unreachable, or the HTTP status is 401, 403, or 500 or higher.
-
-Mines-Checkpoint builds the popup in `Mines-Checkpoint/core/workflow.py` and sends it from `Mines-Checkpoint/services/frontend_mqtt.py`:
-
-```662:668:Mines-Checkpoint/core/workflow.py
-        if service_alert is not None:
-            sm.trigger(Event.RFID_INVALID)
-            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
-            self._ui_api_failure(
-                STEP_VALIDATING_RFID,
-                service_alert,
-                fallback="RFID service not reachable",
-            )
+**Checkpoint** — `~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-checkpoint</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/gmdc/GMDC_NEW/Mines-Checkpoint</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/gmdc/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/gmdc/GMDC_NEW/Mines-Checkpoint/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/gmdc/GMDC_NEW/logs/mines-checkpoint.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gmdc/GMDC_NEW/logs/mines-checkpoint.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
 ```
 
-`_ui_api_failure` calls `publish_status`, which publishes JSON on `wb_frontend/{lane}/status`. The title comes from `Mines-Checkpoint/services/api_errors.py`:
+**WB** — `~/Library/LaunchAgents/co.gmdc.mines-wb.plist`:
 
-| Failure | Popup title |
-|---|---|
-| Reader or server down | `RFID SERVICE NOT REACHABLE` |
-| HTTP 401, 403, or 500+ | `RFID SERVICE SERVER ERROR` |
+Same as above, but:
 
-The popup body is the API `message` when one is present. Otherwise it is `RFID service not reachable`.
+- Label: `co.gmdc.mines-wb`
+- WorkingDirectory / `main.py` → `Mines-WB`
+- Logs → `mines-wb.out.log` / `mines-wb.err.log`
 
-The LED gets a different publish from the same block, through `_announce` and `display.send`. That text is the API `message`, or `RFID ERR@ASK OPERATOR` when the response has no usable message.
+## 4. Load / control
 
-A JSON body of `{"status": 403, "message": "No loading slip is available against the RFID."}` with HTTP 200 is a rejected tag, not this service popup. The board still gets that sentence. The dashboard shows it as a red step, and the popup titled `RFID SERVICE SERVER ERROR` is not published.
+```bash
+# Load + start (user session)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
 
-Mines-WB uses the same split in `Mines-WB/core/workflow.py` around the `service_alert` check, publishing the popup on `wb_frontend/status`.
+# Status
+launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint
+launchctl print gui/$(id -u)/co.gmdc.mines-wb
 
----
+# Restart after config change
+launchctl kickstart -k gui/$(id -u)/co.gmdc.mines-checkpoint
+launchctl kickstart -k gui/$(id -u)/co.gmdc.mines-wb
 
-**User**
+# Stop / unload
+launchctl bootout gui/$(id -u)/co.gmdc.mines-checkpoint
+launchctl bootout gui/$(id -u)/co.gmdc.mines-wb
 
-why  "RFID SERVICE SERVER ERROR" is publish to display
-
----
-
-**Cursor**
-
-That title is meant for the dashboard popup. I’ll trace whether it is also sent to the LED display.
-
-**RFID SERVICE SERVER ERROR** is the dashboard popup heading. It is not the text sent to the LED board.
-
-It is published when the RFID validate HTTP call fails: the server is unreachable, or the HTTP status is 401, 403, or 500 or higher. `Mines-Checkpoint/services/api_errors.py` builds that title from the service name `RFID service`, and `publish_status` sends it on `wb_frontend/{lane}/status`. The page shows it with `showApiAlert`.
-
-The LED gets a different string from the same failure, in `Mines-Checkpoint/core/workflow.py`:
-
-```662:664:Mines-Checkpoint/core/workflow.py
-        if service_alert is not None:
-            sm.trigger(Event.RFID_INVALID)
-            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
+# Logs
+tail -f /Users/gmdc/GMDC_NEW/logs/mines-checkpoint.err.log
+tail -f /Users/gmdc/GMDC_NEW/logs/mines-wb.err.log
 ```
 
-`_rfid_api_display` uses the JSON `message` when one exists. When the failed response has no message, it uses `operator_message`, which is the generated sentence `RFID service server error`. That sentence is what `display.send` publishes. The fixed line `RFID ERR@ASK OPERATOR` is used only when both of those are empty.
+Check dashboards:
 
-A body such as `{"status": 403, "message": "No loading slip is available against the RFID."}` returned with HTTP 200 does not create this popup. The board gets that `message` text.
+- Checkpoint: `http://127.0.0.1:8000/`
+- WB: `http://127.0.0.1:8080/`
 
----
+## 5. Boot / always-on tips (M4 Mini)
 
-**User**
+1. **System Settings → Energy** (or Battery/Power): disable sleep / enable “Prevent automatic sleeping when display is off” / “Start up automatically after power failure” if available.
+2. Keep the `gmdc` user logged in, **or** move plists to `/Library/LaunchDaemons/` (root-owned, `UserName` key) if you need start with no GUI login.
+3. First run may need **Local Network** permission for Modbus/RFID; approve when macOS prompts.
+4. Mosquitto as service: `brew services start mosquitto` (already above).
+5. If WB needs digitizer on the same Mini, add a third plist for `digitizer-decoder` the same way.
 
-"Rfid service not reachable" where is publish
+## 6. Update deploy flow later
 
----
-
-**Cursor**
-
-`RFID service not reachable` is published when the RFID validate host cannot be reached. The sentence is built in `Mines-Checkpoint/services/api_errors.py` from the service name `RFID service`, and the same fallback is passed in `Mines-Checkpoint/core/workflow.py` at the service-alert call.
-
-It goes to two places:
-
-- **Dashboard.** `_ui_api_failure` calls `publish_status`. The MQTT topic is `wb_frontend/{lane}/status`. The message is `RFID service not reachable`, and the popup title is `RFID SERVICE NOT REACHABLE`.
-- **LED board.** The same failure calls `_announce`, so `display.send` publishes `RFID service not reachable` on that lane’s topic (`data_info/a` through `data_info/d`). The dashboard copy of that board text is on `wb_frontend/{lane}/display`.
-
-Mines-WB does the same thing from `Mines-WB/core/workflow.py`. The dashboard topic there is `wb_frontend/status`, and the board text goes to the side the truck entered.
-
----
-
-**User**
-
-how to change this string
-
----
-
-**Cursor**
-
-Change the service name that builds the sentence. Editing only the fallback in the workflow does not change the text that is published, because the unreachable response already carries `operator_message`.
-
-In `Mines-Checkpoint/services/api_errors.py`, the name is here:
-
-```21:21:Mines-Checkpoint/services/api_errors.py
-    "rfid-validate": "RFID service",
+```bash
+source /Users/gmdc/GMDC_NEW/.venv/bin/activate
+pip install -e /Users/gmdc/GMDC_NEW/gmdc_common
+# pull/copy new code, then:
+launchctl kickstart -k gui/$(id -u)/co.gmdc.mines-checkpoint
+launchctl kickstart -k gui/$(id -u)/co.gmdc.mines-wb
 ```
 
-`operator_copy` turns that name into the two published strings:
+If you tell me the exact Mac username and which ports you use on site, I can rewrite the two plist files with your real paths ready to paste.
 
-```60:61:Mines-Checkpoint/services/api_errors.py
-    if kind == KIND_UNREACHABLE:
-        return (f"{name} not reachable", f"{name.upper()} NOT REACHABLE")
+---
+
+**User**
+
+ GMDC_NEW % mkdir -p ~/Library/LaunchAgents
+csm-gmdc@CSM-GMDCs-Mac-mini-3 GMDC_NEW % mkdir -p /Users/gmdc/GMDC_NEW/logs
+mkdir: /Users/gmdc: Permission denied
+csm-gmdc@CSM-GMDCs-Mac-mini-3 GMDC_NEW % ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+zsh: no such file or directory: /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+
+---
+
+**Cursor**
+
+Your Mac user is **`csm-gmdc`**, not `gmdc`. Use your home path everywhere.
+
+## 1. Create folders
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+mkdir -p ~/GMDC_NEW/logs
 ```
 
-Set `"rfid-validate"` to the words you want in front of `not reachable`. For example, `"RFID reader"` publishes `RFID reader not reachable` on the dashboard and the LED, and the popup title becomes `RFID READER NOT REACHABLE`.
+(If the project is already at `~/Desktop/GMDC_NEW` or another path, use that instead of `~/GMDC_NEW`.)
 
-Then set the same words in the fallback at `Mines-Checkpoint/core/workflow.py` line 668, so an empty response uses the same sentence. Mines-WB has its own copies: `Mines-WB/services/api_errors.py` line 21 and `Mines-WB/core/workflow.py` line 1717.
+Find where the code actually is:
 
-Restart the app after the edit. I am in Ask mode, so I cannot change the files from here. Switch to Agent mode if you want this applied.
-
----
-
-**User**
-
-now,what you do if ANPR is off in dashboard in mines-checkpoint
-
----
-
-**Cursor**
-
-I’ll trace the Mines-Checkpoint path that runs when the dashboard ANPR switch is off.
-
-With ANPR off, Mines-Checkpoint still validates the RFID, then skips the camera and continues as an unreadable plate.
-
-After a valid tag, the app does not call `/api/detect`. The ANPR step on the dashboard turns green with `ANPR skipped (disabled by operator).` The trip is stored as `anpr_status` 2, with an empty ANPR vehicle number.
-
-It then posts `invalid-truck-number` with `anpr_status` 2 and polls status check:
-
-- A normal trip polls `status_check`. `vehicleStatus` 1 opens the boom. `vehicleStatus` 2 resets the lane to idle. `vehicleStatus` 0 keeps polling.
-- A `CE|` trip polls check-status until `statusCode` is 200, then opens the boom.
-
-The board does not show `ANPR ERROR@ERR-2`, because the camera was not used. The setting is saved on the selected lane in `iot_configuration.json`, so it stays off after a restart.
-
----
-
-**User**
-
-now we development mines-chechpoint:
-1.if ANPR is off in dashboard,call skip anpr api.capture photo useing rtsp link which is avilable in iot_configuration.json.
-2.save it location wise folder
-3.if ANPR is ON ,skip capture photo and follow exist flow  
-
----
-
-**Cursor**
-
-When ANPR is off, Mines-Checkpoint should skip the ANPR API, capture a photo from the lane’s RTSP camera, and save it in that location’s folder. When ANPR is on, the existing flow stays and no photo is taken. I’ll look at how the camera and the ANPR-off path are set up now.
-
-ANPR off already skips the camera API. I’ll add a front-camera snapshot from each lane’s RTSP URL and save it under that location’s folder. ANPR on will leave the current flow unchanged and will not take a photo.
-
-When ANPR is off, Mines-Checkpoint skips `/api/detect`, takes one photo from that lane’s `camera.front.rtsp_url`, and then continues the existing path: `invalid-truck` with `anpr_status` 2, then status check.
-
-Each location has its own folder:
-
-| Location | Folder |
-|---|---|
-| Mines Entry | `Mines-Checkpoint/images/mines_entry/` |
-| Traffic IN | `Mines-Checkpoint/images/traffic_in/` |
-| Traffic OUT | `Mines-Checkpoint/images/traffic_out/` |
-| Mines Exit | `Mines-Checkpoint/images/mines_exit/` |
-
-The file name looks like `TOKEN_25-10-26-16-40-00_TRUCK_10.80.118.10_FRONT.jpg`. That path is also sent as `front_image` on the invalid-truck and boom-close calls. If the camera URL is missing or the snapshot fails, the trip still continues.
-
-When ANPR is on, no photo is taken and the current ANPR flow is unchanged.
-
-Restart Mines-Checkpoint so this runs. The snapshot needs `opencv-python` on that machine.
-
----
-
-**User**
-
-can you publish rfid validate api response massage to display in mines-wb app
-
----
-
-**Cursor**
-
-Mines-WB already has a path for that display text. I’ll confirm it still publishes the RFID validate `message`.
-
-Mines-WB already publishes the RFID validate `message` to the display over MQTT.
-
-A rejected tag such as `No loading slip is available against the RFID.` is the text sent to the board. `_announce` in `Mines-WB/core/workflow.py` calls `display.send` with that sentence. On this bidirectional bridge it goes to the side the truck entered: Entry A on `data_info/a`, Entry B on `data_info/b`.
-
-A generic `ok` or `success` is not shown. A valid tag still shows the truck and weight line, for example `OD14AE3900@15000 Kg`. If the response has no usable message, the board shows `RFID ERR@ASK OPERATOR`.
-
-Restart Mines-WB if that process was started before this change. The new text is used only after the restart.
-
----
-
-**User**
-
-why use MIN_WEIGHT_KG variable
-
----
-
-**Cursor**
-
-I’ll look up where `MIN_WEIGHT_KG` is set and how the weighbridge uses it.
-
-`MIN_WEIGHT_KG` is the lightest platform weight Mines-WB will accept before it starts the RFID reader. The default is **5000 kg**.
-
-After the truck is only on the weighbridge sensor, the app reads a stable weight and compares it in `Mines-WB/core/workflow.py`:
-
-- **5000 kg or less:** it plays the weight-error voice and returns to idle. RFID login, mode, and start are not run.
-- **Above 5000 kg:** the weight is accepted and the RFID reader starts.
-
-This keeps an empty platform, a person, or a light vehicle from being treated as a truck. The site value is `MIN_WEIGHT_KG` in `Mines-WB/.env`. When that variable is missing, the code uses `5000` from `Mines-WB/config/constants.py`.
-
----
-
-**User**
-
-now we develop Mines-WB app
-if MIN_WEIGHT_KG > vehicle weight:
-       publish to display "Invalied Weight"
-if MIN_WEIGHT_KG < vehicle weight:
-       publish to display current weight
-
-
----
-
-**Cursor**
-
-A weight at or below `MIN_WEIGHT_KG` should show **Invalid Weight** on the display. A heavier reading should show the current weight. I’ll match that to the existing weighbridge capture step.
-
-Mines-WB now chooses the display text from the captured weight and `MIN_WEIGHT_KG`.
-
-- **Weight below the minimum**, including a weight equal to it, publishes `Invalid Weight`. The weight-error voice still plays, the lane returns to idle, and the RFID reader does not start.
-- **Weight above the minimum** publishes the current weight, for example `Weight@15000`, and the RFID reader starts as before.
-
-Restart Mines-WB so the running process uses this change.
-
----
-
-**User**
-
-it will configure through .env file
-
----
-
-**Cursor**
-
-The invalid-weight text is still fixed in code. I’ll read it from the Mines-WB `.env` file so you can change the display message without editing the program.
-
-The cutoff already comes from `MIN_WEIGHT_KG` in `.env`. I’ll also take the low-weight display text from `.env`, so that line can be changed without editing the program.
-
-The live Mines-WB `.env` already sets `MIN_WEIGHT_KG=40`. I’ll add the display line there so the board text can be changed in the same file.
-
-The low-weight display text now comes from the Mines-WB `.env` file.
-
-```
-MIN_WEIGHT_KG=40
-INVALID_WEIGHT_DISPLAY=Invalid Weight
+```bash
+pwd
+ls
 ```
 
-`MIN_WEIGHT_KG` is still the cutoff. With the current value, a captured weight of 40 kg or less shows `Invalid Weight`. A heavier weight shows the current weight, such as `Weight@15000`.
+## 2. Create the Checkpoint plist (don’t “run” the path — write the file)
 
-Change `INVALID_WEIGHT_DISPLAY` to the words you want on the board, then restart Mines-WB.
-
----
-
-**User**
-
-INVALID_WEIGHT_DISPLAY=Invalid Weight this remove from .env. add in @Mines-Checkpoint/config/constants.py so that i change all massage in one place
-
----
-
-**Cursor**
-
-The invalid-weight line should live with the other display messages, not in `.env`. I’ll check both constants files and move it there.
-
-`Invalid Weight` will come from the weighbridge display messages in code. I’ll take `INVALID_WEIGHT_DISPLAY` out of `.env` so that text is edited with the other board messages.
-
-`INVALID_WEIGHT_DISPLAY` is removed from `Mines-WB/.env` and `.env.example`. The board text is now the constant with the other weighbridge display lines:
-
-```127:127:Mines-WB/config/constants.py
-MSG_INVALID_WEIGHT = "Invalid Weight"
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-checkpoint</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
 ```
 
-Change that string to change what the weighbridge shows for a low weight. `MIN_WEIGHT_KG` stays in `.env` because that value is the kilogram cutoff, not a display sentence.
+## 3. Create the WB plist
 
-`Mines-Checkpoint/config/constants.py` is the checkpoint board (`Scan@RFID Card`, `RFID ERR@ASK OPERATOR`, and the rest). The weighbridge does not read that file, so the invalid-weight line is in `Mines-WB/config/constants.py` with `Weight@{weight}` and the other weighbridge messages. Restart Mines-WB after you edit it.
-
----
-
-**User**
-
-EXIT_WAIT_SEC=120  why tis use
-
----
-
-**Cursor**
-
-I’ll look up where `EXIT_WAIT_SEC` is used in Mines-WB and what that 120-second wait covers.
-
-`EXIT_WAIT_SEC=120` is how long Mines-WB waits for the truck to leave after exit is granted.
-
-When the trip reaches `EXIT_GRANTED`, the app opens the exit path, shows Move Forward, and starts a 120-second timer. If the exit sensor completes the crossing within that time, the lane returns to idle normally. If 120 seconds pass with no exit clear, `_on_exit_timeout` runs, logs `Exit wait timeout - reset IDLE`, and force-resets the lane.
-
-So the value is a safety timeout. It keeps the weighbridge from staying stuck in exit forever when a truck never clears the sensor. Change it in `Mines-WB/.env` if you need a longer or shorter wait.
-
----
-
-**User**
-
-Now i want changes in Mines-WB code. Currently if the weight after reaching weighbridge sensor is less than MIN_WEIGHT_KG, then announcement and application goes to IDLE mode. Here i need change. if weight is less than MIN_WEIGHT_KG, then in the next steps instead of announcement and IDLE, the weight check will happen, and will go reset iDLE mode until weight is 0. TIll then continuous loop existing error announcement will be there. And in every idle case, display will be published “Enter@Vehicle”
-
----
-
-**Cursor**
-
-A low weight should keep checking until the platform is empty, with the error announcement looping. Idle should always show `Enter@Vehicle` on the display. I’ll inspect the current low-weight and idle paths first.
-
-
-I'll change the low-weight path so it keeps checking until the platform is empty, with the weight-error announcement looping, and set idle display text to `Enter@Vehicle`.
-
-Mines-WB low-weight handling is updated.
-
-When the captured weight is at or below `MIN_WEIGHT_KG`:
-1. The board shows `Invalid Weight`
-2. The lane stays in weight capture and keeps reading the digitizer
-3. The existing weight-error announcement (`error_start` + `weight-error`) loops until the weight is 0
-4. Only then does the app reset to IDLE
-
-When weight is above the minimum, the current weight is still shown and RFID starts as before.
-
-Every idle reset publishes `Enter@Vehicle` on the display (`MSG_IDLE` in `Mines-WB/config/constants.py`).
-
-Restart Mines-WB so the running process picks this up.
-
----
-
-**User**
-
-Great help, that worked. Now i want your help in another logic. After sensor 1 is cut, then our transaction starts. THen the weight is increasing and if sudden 0  is received, then application is announcing error and vehicle exit is happening. THis is correct, but need to add a small thing. In the .env add a variable named MISC_MIN_WEIGHT=200. This weight is the max weight of a person, cow, animals etc. What I want you to do is, if the last weight before 0 received is <= MISC_MIN_WEIGHT, then announce the existing error, then instead of exit process, reset the application
-
----
-
-**Cursor**
-
-When weight rises then drops to 0 after sensor 1, a last reading at or below `MISC_MIN_WEIGHT` should reset to idle instead of exit. I’ll wire that from `.env` into the positioning zero-weight path.
-
-I'll store the last non-zero positioning weight, add `MISC_MIN_WEIGHT` from `.env`, and reset to idle when that last weight is at or below the misc limit.
-
-The exit boom was already opened at idle on this bidirectional setup. I’ll reset that mock after entry, then assert only the misc-weight reset path.
-
-After sensor 1 starts a trip, a sudden drop to 0 still plays the existing error. What happens next depends on the last weight before 0, using `MISC_MIN_WEIGHT` from `.env`:
-
-```
-MISC_MIN_WEIGHT=200
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-wb.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-wb</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/Mines-WB</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/GMDC_NEW/Mines-WB/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-wb.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-wb.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
 ```
 
-| Last weight before 0 | Result |
-|---|---|
-| ≤ 200 kg (person/animal) | Error announcement, then reset to IDLE |
-| > 200 kg (vehicle) | Error announcement, then the existing exit path |
+If your project is **not** at `/Users/csm-gmdc/GMDC_NEW`, replace that path in both plists (e.g. `/Users/csm-gmdc/Desktop/GMDC_NEW`).
 
-Change `MISC_MIN_WEIGHT` in `Mines-WB/.env` for the site limit. Restart Mines-WB so it picks up the new value.
+## 4. Confirm files exist
+
+```bash
+ls -l ~/Library/LaunchAgents/co.gmdc.*.plist
+ls -ld ~/GMDC_NEW/logs
+ls -l ~/GMDC_NEW/.venv/bin/python
+```
+
+## 5. Load services
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
+```
+
+## 6. Check logs if something fails
+
+```bash
+tail -50 ~/GMDC_NEW/logs/mines-checkpoint.err.log
+tail -50 ~/GMDC_NEW/logs/mines-wb.err.log
+```
+
+Reply with the output of `pwd` and `ls` from `GMDC_NEW` if the paths still don’t match, and I’ll adjust the plists to your exact folder.
+
+---
+
+**User**
+
+csm-gmdc@CSM-GMDCs-Mac-mini-3 GMDC_NEW % ls -l ~/GMDC_NEW/.venv/bin/python
+ls: /Users/csm-gmdc/GMDC_NEW/.venv/bin/python: No such file or directory
+
+---
+
+**Cursor**
+
+The venv was never created. Create it first, then point the services at it.
+
+## 1. Confirm you are in the project
+
+```bash
+cd ~/GMDC_NEW
+pwd
+ls
+```
+
+You should see `gmdc_common`, `Mines-Checkpoint`, `Mines-WB`.
+
+## 2. Create venv + install deps
+
+```bash
+cd ~/GMDC_NEW
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -U pip
+pip install -e ./gmdc_common
+pip install -r Mines-Checkpoint/requirements.txt
+pip install -r Mines-WB/requirements.txt
+
+# confirm python exists
+ls -l .venv/bin/python
+which python
+```
+
+## 3. Create logs folder
+
+```bash
+mkdir -p ~/GMDC_NEW/logs
+```
+
+## 4. Quick manual test (before service)
+
+```bash
+source ~/GMDC_NEW/.venv/bin/activate
+cd ~/GMDC_NEW/Mines-Checkpoint
+python main.py
+```
+
+If that starts OK, Ctrl+C, then test WB:
+
+```bash
+cd ~/GMDC_NEW/Mines-WB
+python main.py
+```
+
+## 5. Recreate plists (only after `.venv` exists)
+
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-checkpoint</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+```
+
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-wb.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-wb</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/Mines-WB</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/GMDC_NEW/Mines-WB/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-wb.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/GMDC_NEW/logs/mines-wb.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+```
+
+## 6. Load services
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
+```
+
+If `python3 -m venv .venv` fails, paste that error. If `python3` is missing, run:
+
+```bash
+brew install python@3.12
+```
+
+---
+
+**User**
+
+how to know service status
+
+---
+
+**Cursor**
+
+Use these on the Mac Mini:
+
+## Status
+
+```bash
+launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint
+launchctl print gui/$(id -u)/co.gmdc.mines-wb
+```
+
+Look for:
+- `state = running` → service is up  
+- `state = not running` / exit code → failed or stopped  
+- `pid = <number>` → process ID while running  
+
+## Quick check (loaded or not)
+
+```bash
+launchctl list | grep gmdc
+```
+
+Columns are roughly: **PID**, **last exit code**, **label**  
+- PID present → running  
+- PID `-` and exit `0` → exited cleanly  
+- PID `-` and non-zero exit → crashed  
+
+## Process check
+
+```bash
+ps aux | grep -E 'Mines-Checkpoint/main.py|Mines-WB/main.py' | grep -v grep
+```
+
+## Logs
+
+```bash
+tail -50 ~/GMDC_NEW/logs/mines-checkpoint.err.log
+tail -50 ~/GMDC_NEW/logs/mines-wb.err.log
+```
+
+## HTTP check
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/status
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/status
+```
+
+(`8000` / `8080` = whatever you set in each app’s `.env` `API_PORT`.)
+
+---
+
+**User**
+
+ launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint
+gui/501/co.gmdc.mines-checkpoint = {
+        active count = 0
+        path = /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+        type = LaunchAgent
+        state = spawn scheduled
+
+        program = /Users/csm-gmdc/GMDC_NEW/.venv/bin/python
+        arguments = {
+                /Users/csm-gmdc/GMDC_NEW/.venv/bin/python
+                /Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint/main.py
+        }
+
+        working directory = /Users/csm-gmdc/GMDC_NEW/Mines-Checkpoint
+
+        stdout path = /Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.out.log
+        stderr path = /Users/csm-gmdc/GMDC_NEW/logs/mines-checkpoint.err.log
+        inherited environment = {
+                SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.6rVJLPcYmd/Listeners
+        }
+
+        default environment = {
+                PATH => /usr/bin:/bin:/usr/sbin:/sbin
+        }
+
+        environment = {
+                OSLogRateLimit => 64
+                PYTHONUNBUFFERED => 1
+                PATH => /Users/csm-gmdc/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+                XPC_SERVICE_NAME => co.gmdc.mines-checkpoint
+        }
+
+        domain = gui/501 [100003]
+        asid = 100003
+        minimum runtime = 10
+        exit timeout = 5
+        runs = 51
+        last exit code = 78: EX_CONFIG
+
+        resource coalition = {
+                ID = 1149
+                type = resource
+                state = active
+                active count = 1
+                name = co.gmdc.mines-checkpoint
+        }
+
+        jetsam coalition = {
+                ID = 1150
+                type = jetsam
+                state = active
+                active count = 1
+                name = co.gmdc.mines-checkpoint
+        }
+
+        spawn type = daemon (3)
+        jetsam priority = 40
+        jetsam memory limit (active) = (unlimited)
+        jetsam memory limit (inactive) = (unlimited)
+        jetsamproperties category = daemon
+        jetsam thread limit = 32
+        cpumon = default
+
+        properties = keepalive | runatload | inferred program
+
+---
+
+**Cursor**
+
+Service is **not healthy**. `KeepAlive` keeps restarting it (`runs = 51`), and it dies with:
+
+`last exit code = 78: EX_CONFIG`
+
+That usually means bad config / missing binary / app exiting on startup.
+
+## 1. Read the error log
+
+```bash
+tail -100 ~/GMDC_NEW/logs/mines-checkpoint.err.log
+tail -100 ~/GMDC_NEW/logs/mines-checkpoint.out.log
+```
+
+## 2. Confirm paths exist
+
+```bash
+ls -l ~/GMDC_NEW/.venv/bin/python
+ls -l ~/GMDC_NEW/Mines-Checkpoint/main.py
+ls -l ~/GMDC_NEW/Mines-Checkpoint/.env
+ls -l ~/GMDC_NEW/Mines-Checkpoint/iot_configuration.json
+```
+
+## 3. Run the same command manually
+
+```bash
+cd ~/GMDC_NEW/Mines-Checkpoint
+~/GMDC_NEW/.venv/bin/python main.py
+```
+
+Paste whatever error appears in the terminal or in the `.err.log`.
+
+## 4. Stop the crash loop for now
+
+```bash
+launchctl bootout gui/$(id -u)/co.gmdc.mines-checkpoint
+```
+
+---
+
+Most common causes on your setup:
+1. `.venv/bin/python` missing or wrong path  
+2. Missing `.env` / `iot_configuration.json`  
+3. Import error (`gmdc_common` not installed in that venv)  
+4. Port already in use  
+
+Send the output of step 1 and 3 and we can fix the exact cause.
+
+---
+
+**User**
+
+ ls -l ~/GMDC_NEW/.venv/bin/python
+ls: /Users/csm-gmdc/GMDC_NEW/.venv/bin/python: No such file or directory
+
+---
+
+**Cursor**
+
+The service fails because **`.venv` has no Python**. Create it now:
+
+```bash
+cd ~/GMDC_NEW
+
+# remove broken/incomplete venv if any
+rm -rf .venv
+
+# create fresh venv
+python3 -m venv .venv
+
+# verify
+ls -l .venv/bin/python
+```
+
+If `python3 -m venv` fails, install Python first:
+
+```bash
+brew install python@3.12
+/opt/homebrew/bin/python3.12 -m venv .venv
+ls -l .venv/bin/python
+```
+
+Then install packages:
+
+```bash
+source ~/GMDC_NEW/.venv/bin/activate
+pip install -U pip
+pip install -e ~/GMDC_NEW/gmdc_common
+pip install -r ~/GMDC_NEW/Mines-Checkpoint/requirements.txt
+pip install -r ~/GMDC_NEW/Mines-WB/requirements.txt
+```
+
+Test Checkpoint manually:
+
+```bash
+cd ~/GMDC_NEW/Mines-Checkpoint
+~/GMDC_NEW/.venv/bin/python main.py
+```
+
+Only after that works, reload the service:
+
+```bash
+launchctl bootout gui/$(id -u)/co.gmdc.mines-checkpoint 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint | grep -E 'state|pid|last exit'
+```
+
+Paste the output of:
+
+```bash
+python3 --version
+which python3
+ls -l ~/GMDC_NEW/.venv/bin/python
+```
+
+if the venv still does not create.
+
+---
+
+**User**
+
+"/Users/csm-gmdc/Downloads/GMDC_NEW/Mines-WB" this is my path
+
+---
+
+**Cursor**
+
+Use **`/Users/csm-gmdc/Downloads/GMDC_NEW`** everywhere (not `~/GMDC_NEW`).
+
+## 1. Create venv in the real project folder
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_NEW
+
+rm -rf .venv
+python3 -m venv .venv
+ls -l .venv/bin/python
+
+source .venv/bin/activate
+pip install -U pip
+pip install -e ./gmdc_common
+pip install -r Mines-Checkpoint/requirements.txt
+pip install -r Mines-WB/requirements.txt
+
+mkdir -p logs
+```
+
+## 2. Manual test
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_NEW/Mines-Checkpoint
+/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin/python main.py
+```
+
+Ctrl+C, then:
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_NEW/Mines-WB
+/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin/python main.py
+```
+
+## 3. Recreate plists with correct path
+
+```bash
+# stop old broken services if loaded
+launchctl bootout gui/$(id -u)/co.gmdc.mines-checkpoint 2>/dev/null
+launchctl bootout gui/$(id -u)/co.gmdc.mines-wb 2>/dev/null
+```
+
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-checkpoint</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/Mines-Checkpoint</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/Mines-Checkpoint/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/logs/mines-checkpoint.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/logs/mines-checkpoint.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+```
+
+```bash
+cat > ~/Library/LaunchAgents/co.gmdc.mines-wb.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.gmdc.mines-wb</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/Mines-WB</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin/python</string>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/Mines-WB/main.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/logs/mines-wb.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/csm-gmdc/Downloads/GMDC_NEW/logs/mines-wb.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/csm-gmdc/Downloads/GMDC_NEW/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
+EOF
+```
+
+## 4. Load + check
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
+
+launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint | grep -E 'state|pid|last exit'
+launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid|last exit'
+```
+
+Healthy looks like: `state = running` and a `pid = ...` number.
+
+---
+
+**User**
+
+On my macos, thefiles and folder is stored in the following location
+Mines Weghbridge Folder: /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-WB
+Mines Weighbrdge Run Script: /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-WB/pyenv/bin/python3 main.py
+
+Mines CheckpointFolder: /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-Checkpoint
+Mines Checkpoint Run Script: /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-Checkpoint/pyenv/bin/python3 main.py
+
+I want 2 scripts that will help the macos to run this entire application as a service. When MacOS powers on, then wait for LAN communication successfully and then run the application. ALso tell me how can i stop the service so that i can run the application manually. ALso i want the terminal to open and run the application so that I can debug the application later if issue arises
+
+---
+
+**Cursor**
+
+Creating start/stop scripts and launchd plists for your real `GMDC_IOT` paths, with LAN wait and Terminal windows for debugging.
+
+Scripts are ready under `macos-services/` (copy that folder onto the Mac).
+
+## On the Mac Mini
+
+```bash
+# 1) Put scripts here (copy from your PC / USB / git):
+#    /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/
+
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh
+./install-services.sh
+```
+
+At **power-on / login** each app will:
+1. Wait for LAN (up to 180s)
+2. Open **Terminal**
+3. Run  
+   `.../pyenv/bin/python3 main.py`  
+   so you can see logs and debug
+
+---
+
+## Stop service → run manually
+
+**Weighbridge**
+```bash
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/stop-mines-wb.sh
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-WB
+./pyenv/bin/python3 main.py
+```
+
+**Checkpoint**
+```bash
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/stop-mines-checkpoint.sh
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/Mines-Checkpoint
+./pyenv/bin/python3 main.py
+```
+
+`stop-*.sh` kills the process **and unloads** auto-start until you enable it again.
+
+---
+
+## Re-enable auto-start
+
+```bash
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/install-services.sh
+```
+
+---
+
+## Files created
+
+| File | Purpose |
+|------|---------|
+| `start-mines-wb.sh` | Wait LAN → open Terminal → run WB |
+| `start-mines-checkpoint.sh` | Wait LAN → open Terminal → run Checkpoint |
+| `stop-mines-wb.sh` | Stop WB + unload service |
+| `stop-mines-checkpoint.sh` | Stop Checkpoint + unload service |
+| `wait-for-lan.sh` | Shared LAN wait |
+| `install-services.sh` | Install LaunchAgents |
+| `co.gmdc.mines-*.plist` | Login auto-start |
+
+First run may ask for **Terminal / Automation** permission — allow it. Keep the user logged in so Terminal can open.
+
+---
+
+**User**
+
+okay in make 2 install services, one for mines-checkpoint and another for mines-wb, as both will not run at a time.
+
+---
+
+**Cursor**
+
+Splitting into separate install scripts for Checkpoint and WB so only one is enabled at a time.
+
+Use one install script per Mac:
+
+**Checkpoint Mac**
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh
+./install-mines-checkpoint.sh
+```
+
+**Weighbridge Mac**
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh
+./install-mines-wb.sh
+```
+
+Each script enables that app and removes the other app’s LaunchAgent so both won’t auto-start together.
+
+---
+
+**User**
+
+csm-gmdc@CSM-GMDCs-Mac-mini-3 ~ % bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/start-mines-wb.sh
+: command not foundnloads/GMDC_IOT/macos-services/start-mines-wb.sh: line 4:
+: invalid option nameoads/GMDC_IOT/macos-services/start-mines-wb.sh: line 5: set: pipefail
+csm-gmdc@CSM-GMDCs-Mac-mini-3 ~ % cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % ls
+README.md                       install-services.sh             stop-mines-wb.sh
+co.gmdc.mines-checkpoint.plist  start-mines-checkpoint.sh       wait-for-lan.sh
+co.gmdc.mines-wb.plist          start-mines-wb.sh
+install-mines-wb.sh             stop-mines-checkpoint.sh
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % bash start-mines-wb.sh
+: command not foundline 4:
+: invalid option namene 5: set: pipefail
+
+---
+
+**Cursor**
+
+Scripts have Windows `CRLF` line endings, which breaks bash on Mac. Converting all `.sh` files to Unix `LF`.
+
+That error is from **Windows CRLF** line endings (`\r`). The scripts on disk here are fixed to Unix `LF`.
+
+## On the Mac
+
+**Option A — re-copy** the whole `macos-services` folder from this PC again, then:
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh
+bash start-mines-wb.sh
+```
+
+**Option B — fix the files already on the Mac:**
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+sed -i '' $'s/\r$//' *.sh
+chmod +x *.sh
+bash start-mines-wb.sh
+```
+
+Your Mac listing was also missing `install-mines-checkpoint.sh` — after re-copy you should see both:
+
+- `install-mines-wb.sh`
+- `install-mines-checkpoint.sh`
+
+---
+
+**User**
+
+bash start-mines-wb.sh starts the application in terminal immediately, but not stores as boot, because after reboot it doesn't run the application as a service
+
+---
+
+**Cursor**
+
+`start-mines-wb.sh` only runs now; boot start needs the LaunchAgent installed, and opening Terminal from launchd often fails. Fixing that with `.command` files and a more reliable login auto-start.
+
+`start-mines-wb.sh` only starts the app **right now**. Boot start needs **install**, and after reboot Terminal must open via Login Item / `.command` (AppleScript from launchd often fails).
+
+## On the Mac (WB)
+
+Copy the updated `macos-services` folder, then:
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+sed -i '' $'s/\r$//' *.sh *.command
+chmod +x *.sh *.command
+./install-mines-wb.sh
+```
+
+Check:
+
+```bash
+launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep path
+osascript -e 'tell application "System Events" to get the name of every login item'
+```
+
+You must see **`run-mines-wb-in-terminal`** in Login Items.
+
+## After reboot
+
+macOS will not start GUI apps until a user is logged in. Enable:
+
+**System Settings → Users & Groups → Automatic login → csm-gmdc**
+
+Also check **Login Items** and allow the item if macOS blocked it.
+
+## Manual now (without reboot)
+
+```bash
+open /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/run-mines-wb-in-terminal.command
+```
+
+---
+
+**User**
+
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % ./install-mines-wb.sh
+login item UNKNOWN
+
+Installed Mines-WB boot/login auto-start.
+  LaunchAgent: /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-wb.plist
+  Login Item:  /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/run-mines-wb-in-terminal.command
+  Checkpoint auto-start removed.
+
+Verify agent is loaded:
+        path = /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-wb.plist
+        state = not running
+        program = /bin/bash
+        stdout path = /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-launchd.out.log
+        stderr path = /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-launchd.err.log
+                state = active
+                state = active
+        properties = runatload | inferred program
+
+IMPORTANT for reboot:
+  1) Stay logged in as csm-gmdc (or enable Automatic Login).
+  2) System Settings → General → Login Items → confirm Mines-WB .command is listed.
+  3) System Settings → Energy → prevent sleep / start after power failure.
+
+Stop for manual run:
+  bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/stop-mines-wb.sh
+
+Test open now (without reboot):
+  open /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/run-mines-wb-in-terminal.command
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep path
+        path = /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-wb.plist
+        stdout path = /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-launchd.out.log
+        stderr path = /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-launchd.err.log
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % osascript -e 'tell application "System Events" to get the name of every login item'
+
+but in the login item there is the application showing, and after reboot the application have run successfully. Is it done correctly or from above messages any advancement required?
+
+---
+
+**Cursor**
+
+Yes — **it’s done correctly**.
+
+After reboot the app started successfully, and it shows in **Login Items**. That’s what matters.
+
+About the messages you saw:
+
+| Message | Meaning |
+|--------|---------|
+| `login item UNKNOWN` | Cosmetic macOS naming quirk for `.command` files — ignore if the item is listed and works |
+| `state = not running` on the LaunchAgent | Normal: agent runs once at login, opens Terminal, then exits. The app keeps running **inside Terminal** |
+| Login Item visible | Good — this is the reliable reboot path |
+
+No further change is required for boot start.
+
+Optional hardening (only if you want):
+1. **Automatic login** for `csm-gmdc` (so it starts even after cold power-on without someone signing in)
+2. **Energy**: prevent sleep / start after power failure
+3. Keep the Terminal window open so you can debug
+
+**Stop for manual run**
+```bash
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/stop-mines-wb.sh
+```
+
+**Re-enable boot start later**
+```bash
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/install-mines-wb.sh
+```
+
+---
+
+**User**
+
+Lets work on resolving this, as i dont want any issues in future macos updates
+
+---
+
+**Cursor**
+
+Moving boot start to a LaunchAgent that runs Python directly (no Terminal/Login Item). Keeping Terminal only for optional debug so it stays stable across macOS updates.
+
+Switched to a **durable launchd KeepAlive service** (no Login Item / Terminal / AppleScript for boot). That path is what Apple supports long-term.
+
+## What changed
+
+| Before (fragile) | Now (durable) |
+|------------------|---------------|
+| Login Item + `.command` + Terminal | LaunchAgent runs Python directly |
+| `state = not running` after open | `state = running` + real `pid` |
+| Breaks with Login Item / Automation changes | Standard `~/Library/LaunchAgents` |
+
+Terminal is **only for debug** via `debug-*.command`.
+
+## On the Mac Mini (WB)
+
+Copy the updated `macos-services` folder, then:
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+sed -i '' $'s/\r$//' *.sh *.command *.plist
+chmod +x *.sh *.command
+./install-mines-wb.sh
+```
+
+**Manually remove** old Login Items in  
+**System Settings → General → Login Items**  
+(`UNKNOWN`, `run-mines-wb-in-terminal`, `MinesWBStart`, etc.)
+
+Check:
+
+```bash
+launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid|last exit'
+```
+
+Expect: `state = running` and a `pid = ...`
+
+Logs:
+
+```bash
+tail -f ~/Downloads/GMDC_IOT/logs/mines-wb-service.err.log
+```
+
+## Debug later
+
+```bash
+bash ~/Downloads/GMDC_IOT/macos-services/stop-mines-wb.sh
+open ~/Downloads/GMDC_IOT/macos-services/debug-mines-wb.command
+```
+
+## Still set once
+
+- Automatic login for `csm-gmdc`
+- Energy: no sleep / restart after power failure
+
+Then reboot once to confirm.
+
+---
+
+**User**
+
+now do a final check of the @macos-services/ all the files, check if any changes and remove the files that aren't required. And tell me in simply terms in the readm.me
+1. First Time service setup for autostart
+2. Stop service command
+3. Manually enable the service
+4. Manually disable the service
+
+---
+
+**Cursor**
+
+Reviewing `macos-services`, removing unused files, and simplifying the README.
+
+Final check done. Removed obsolete Login Item / Terminal / `.app` helpers.
+
+**Removed:** `start-*.sh`, `install-services.sh`, `run-*-in-terminal.command`, `MinesWBStart.app`, `MinesCheckpointStart.app`
+
+**Kept:** install / enable / disable / stop / service / plist / wait-for-lan / debug / `_common` / README
+
+Copy the updated folder to the Mac, then use:
+
+### 1. First-time autostart
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh *.command
+./install-mines-wb.sh          # or ./install-mines-checkpoint.sh
+```
+
+### 2. Stop service
+```bash
+bash .../stop-mines-wb.sh      # or stop-mines-checkpoint.sh
+```
+
+### 3. Manually enable
+```bash
+bash .../enable-mines-wb.sh    # or enable-mines-checkpoint.sh
+```
+
+### 4. Manually disable
+```bash
+bash .../disable-mines-wb.sh   # or disable-mines-checkpoint.sh
+```
+
+Full steps are in `macos-services/README.md`.
+
+---
+
+**User**
+
+bash /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/enable-mines-wb.sh
+Is this same as Linux sudo systemctl enable x.service or is it sudo systemctl start x.service.
+
+I want the macos version of
+1. Enable service, in linux: sudo systemctl enable x.service, its mac version
+2. Disable service, in linux: sudo systemctl disable x.service, its mac version
+3. start service, in linux: sudo systemctl start x.service, its mac version
+4. stop service, in linux: sudo systemctl stop x.service, its mac version
+
+Write in this way. Also the previous version service how to remove and implement this new one?
+
+---
+
+**Cursor**
+
+Splitting enable/disable/start/stop to match `systemctl`, and updating the README with a clear Linux→macOS mapping plus migration steps.
+
+`enable-mines-wb.sh` is **not** the same as `systemctl start`.
+
+It is closest to:
+
+`sudo systemctl enable --now x.service`
+
+(autostart on + start now)
+
+---
+
+## Mapping (Weighbridge example)
+
+| Linux | macOS |
+|-------|--------|
+| `sudo systemctl enable x.service` | `bash .../enable-mines-wb.sh` |
+| `sudo systemctl disable x.service` | `bash .../disable-mines-wb.sh` |
+| `sudo systemctl start x.service` | `bash .../start-mines-wb.sh` |
+| `sudo systemctl stop x.service` | `bash .../stop-mines-wb.sh` |
+
+- **enable** = autostart on (and starts now)  
+- **disable** = autostart off + stop  
+- **start** = start now (must enable first)  
+- **stop** = stop now (autostart still on for next login)
+
+Same for Checkpoint: `enable-mines-checkpoint.sh`, `disable-...`, `start-...`, `stop-...`
+
+---
+
+## Remove old service → use new one
+
+```bash
+# unload old
+launchctl bootout gui/$(id -u)/co.gmdc.mines-wb 2>/dev/null
+launchctl bootout gui/$(id -u)/co.gmdc.mines-checkpoint 2>/dev/null
+rm -f ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
+rm -f ~/Library/LaunchAgents/co.gmdc.mines-checkpoint.plist
+```
+
+In **System Settings → General → Login Items**, delete old items (`UNKNOWN`, `run-mines-*`, `MinesWBStart`, etc.).
+
+Then copy new `macos-services` and run:
+
+```bash
+cd /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services
+chmod +x *.sh *.command
+./enable-mines-wb.sh    # or enable-mines-checkpoint.sh
+```
+
+Details are in `macos-services/README.md`.
+
+---
+
+**User**
+
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % ./enable-mines-wb.sh
+Enabled co.gmdc.mines-wb (autostart on login).
+  Plist: /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-wb.plist
+        path = /Users/csm-gmdc/Library/LaunchAgents/co.gmdc.mines-wb.plist
+        state = xpcproxy
+        pid = 1382
+                state = active
+                state = active
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid'
+        state = spawn scheduled
+                state = active
+                state = active
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid|last exit'
+tail -f /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-service.err.log        state = spawn scheduled
+        last exit code = 126
+                state = active
+                state = active
+csm-gmdc@CSM-GMDCs-Mac-mini-3 macos-services % tail -f /Users/csm-gmdc/Downloads/GMDC_IOT/logs/mines-wb-service.err.log
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/service-mines-wb.sh: Operation not permitted
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/service-mines-wb.sh: Operation not permitted
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/service-mines-wb.sh: Operation not permitted
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/service-mines-wb.sh: Operation not permitted
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: /Users/csm-gmdc/Downloads/GMDC_IOT/macos-services/service-mines-wb.sh: Operation not permitted
+
+---
+
+**Cursor**
+
+LaunchAgents can't run scripts from `Downloads` (macOS privacy). Stopping the crash loop and moving the install path out of `Downloads`.
+
+Cause: macOS **blocks LaunchAgents from running files in `~/Downloads`**. That is why you get `Operation not permitted` and exit `126`.
+
+## Do this now on the Mac
+
+```bash
+# 1) Stop the crash loop
+launchctl bootout gui/$(id -u)/co.gmdc.mines-wb 2>/dev/null
+rm -f ~/Library/LaunchAgents/co.gmdc.mines-wb.plist
+
+# 2) Move project OUT of Downloads
+mv ~/Downloads/GMDC_IOT ~/GMDC_IOT
+
+# 3) Clear quarantine
+xattr -dr com.apple.quarantine ~/GMDC_IOT
+
+# 4) Copy/update macos-services (new scripts use ~/GMDC_IOT path), then:
+cd ~/GMDC_IOT/macos-services
+chmod +x *.sh *.command
+./enable-mines-wb.sh
+```
+
+Check:
+
+```bash
+launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid|last exit'
+tail -20 ~/GMDC_IOT/logs/mines-wb-service.err.log
+```
+
+You want `state = running` and **no** `Operation not permitted`.
+
+All service paths are now `/Users/csm-gmdc/GMDC_IOT/...` (not Downloads).
+
+---
+
+**User**
+
+1. upload new codes from laptop to all mac minis in the root directory
+2. rename the folder to GMDC_IOT
+3. create virtual environment named pyenv strictly in Mines-WB or Mines-Checkpoint
+4. pip3 install requirements.txt and gmdc_common
+5. Test application run
+6. Deactivate the pyenv
+--------------
+Services Setup
+1. cd /Users/csm-gmdc/GMDC_IOT/macos-services
+2. sed -i '' $'s/\r$//' *.sh *.command *.plist
+3. chmod +x *.sh *.command
+4. ./enable-mines-wb.sh or ./enable-mines-checkpoint.sh
+5. Service status, 
+wb: launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid'
+checkpoint: launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint | grep -E 'state|pid'
+6. Service Error:
+wb: tail -f /Users/csm-gmdc/GMDC_IOT/logs/mines-wb-service.err.log
+checkpoint:  tail -f /Users/csm-gmdc/GMDC_IOT/logs/mines-checkpoint-service.err.log
+
+
+Please check if this is the correct process for a user or techinical person to start the service
+
+---
+
+**Cursor**
+
+Yes — this is the right overall process for a technical person. A few gaps and order tweaks matter so you don’t hit the previous failures again.
+
+## Verdict
+
+| Section | OK? | Notes |
+|--------|-----|--------|
+| Upload → rename to `GMDC_IOT` in home | Yes | Must be `/Users/csm-gmdc/GMDC_IOT` — **not** under `Downloads` |
+| `pyenv` inside Mines-WB or Mines-Checkpoint | Yes | Service expects `.../Mines-WB/pyenv/bin/python3` |
+| pip + gmdc_common | Yes | Use that app’s `pyenv` |
+| Manual test then deactivate | Yes | Good |
+| macos-services enable | Yes | Correct for autostart |
+
+---
+
+## Suggested order (corrected checklist)
+
+### App setup (per Mac — only the app that runs there)
+
+1. Upload code to Mac home (avoid `Downloads` / `Desktop`).
+2. Final folder must be: `/Users/csm-gmdc/GMDC_IOT`
+3. Clear quarantine (important after copy from Windows/USB):
+   ```bash
+   xattr -dr com.apple.quarantine /Users/csm-gmdc/GMDC_IOT
+   ```
+4. Create venv **only in the app folder for that Mac**:
+   ```bash
+   # WB Mac
+   cd /Users/csm-gmdc/GMDC_IOT/Mines-WB
+   python3 -m venv pyenv
+   source pyenv/bin/activate
+   pip install -U pip
+   pip install -e ../gmdc_common
+   pip install -r requirements.txt
+
+   # Checkpoint Mac (instead)
+   # cd .../Mines-Checkpoint && same pyenv steps
+   ```
+5. Ensure `.env` + `iot_configuration.json` are present/edited for that site.
+6. Test:
+   ```bash
+   python main.py
+   ```
+7. Ctrl+C, then `deactivate`.
+
+### Service setup
+
+1. `cd /Users/csm-gmdc/GMDC_IOT/macos-services`
+2. `sed -i '' $'s/\r$//' *.sh *.command *.plist`
+3. `chmod +x *.sh *.command`
+4. **Only one** of:
+   - `./enable-mines-wb.sh` **or**
+   - `./enable-mines-checkpoint.sh`
+5. Status / logs — your commands are correct.
+
+Also once per Mac: Automatic login + Energy (no sleep / power-fail restart).  
+Remove any old Login Items (`UNKNOWN`, `run-mines-*`, etc.).
+
+---
+
+## Small clarifications
+
+1. **`enable` ≈ `systemctl enable --now`** (autostart + start now), not only `start`.
+2. Upload must include: `Mines-WB` or `Mines-Checkpoint`, `gmdc_common`, and `macos-services`.
+3. Do **not** create one shared `pyenv` at `GMDC_IOT` root — service points at app-local `pyenv`.
+4. Prefer `pip` after `source pyenv/bin/activate` (or `pyenv/bin/pip`) over bare `pip3` so packages go into `pyenv`.
+5. Before first enable on a machine that had the old service: `disable` / remove old plist + Login Items.
+6. After enable, expect `state = running` and a `pid`. `spawn scheduled` + exit `126` usually means still in Downloads or permission/quarantine issue.
+
+---
+
+## Who should use this?
+
+- **Technical person / integrator:** yes — full list above.
+- **Operator:** only status/logs + maybe stop/start; not venv/pip/enable.
+
+Your flow is correct if path is `/Users/csm-gmdc/GMDC_IOT`, `pyenv` is inside the app folder, and only one enable script is used per Mac.
+
+---
+
+**User**
+
+update the version 1.20, and complete documentation
+
+---
+
+**Cursor**
+
+I'll find where versions are defined and update them to 1.20, then complete the related documentation.
+
+**1.20** is set across the product.
+
+| File | Change |
+|------|--------|
+| `Mines-WB/VERSION` | `1.20.0` |
+| `Mines-Checkpoint/VERSION` | `1.20.0` |
+| `version.md` | Current **1.20** + full release notes |
+| `README.md` | Version + `macos-services` layout + Mac Mini deploy |
+| `macos-services/README.md` | First-time install, mapping, migrate, how-it-works |
+| `Mines-WB/README.md` / `Mines-Checkpoint/README.md` | Version + 1.20 behaviour notes |
 

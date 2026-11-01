@@ -438,6 +438,57 @@ class TestAnprBranchWorkflow(unittest.TestCase):
         self.assertEqual(title, "ANPR NOT REACHABLE")
         self.assertNotIn("HTTPConnectionPool", message)
 
+    def test_dashboard_reset_stops_status_check_loop(self):
+        """Reset during status_check must stop OCI polls and stay IDLE."""
+        import threading
+        import time
+        from config.constants import State
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow()
+        ctx.settings.anpr_enabled = False
+        ctx.settings.truck_anpr_retry_timer = 0.05
+        ctx.oci.invalid_truck_number.return_value = OCIResponse(
+            ok=True, status=200
+        )
+        ctx.oci.update_truck_number.return_value = OCIResponse(
+            ok=True, status=0, raw={"vehicleStatus": 0, "statusCode": 200}
+        )
+        ctx.oci.weight_details.reset_mock()
+        ctx.oci.boom_close.reset_mock()
+
+        worker = threading.Thread(target=wf._after_rfid_valid, daemon=True)
+        worker.start()
+        for _ in range(50):
+            if ctx.oci.update_truck_number.called:
+                break
+            time.sleep(0.02)
+        self.assertTrue(ctx.oci.update_truck_number.called)
+        calls_before = ctx.oci.update_truck_number.call_count
+
+        wf.force_reset(announce_reset=True)
+        worker.join(timeout=2.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(ctx.state_machine.current_state, State.IDLE)
+        time.sleep(0.15)
+        self.assertEqual(
+            ctx.oci.update_truck_number.call_count, calls_before
+        )
+        ctx.oci.weight_details.assert_not_called()
+        ctx.oci.boom_close.assert_not_called()
+
+    def test_dashboard_reset_keeps_stop_flag_until_next_trip(self):
+        from config.constants import State
+
+        wf, ctx = self._make_workflow()
+        wf.force_reset(announce_reset=True)
+        self.assertTrue(wf._reset_requested())
+        ctx.state_machine.force_state(State.IDLE)
+        wf._begin_vehicle_positioning("ENTRY_A")
+        self.assertFalse(wf._reset_requested())
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+        wf.force_reset()
+
     def test_manual_reset_without_transaction_skips_reset_api(self):
         wf, ctx = self._make_workflow()
         ctx.transactions.clear()

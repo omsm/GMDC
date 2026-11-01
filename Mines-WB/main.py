@@ -168,7 +168,9 @@ def _build_hardware(ctx: AppContext) -> None:
     relay_on_green = _io_mode(tl_section) == "relay" and on_state != "red"
 
     ctx.traffic_lights = {}
+    tl_map_log = ""
     if settings.is_bidirectional():
+        bi_pins: Dict[str, Any] = {}
         for direction in ("entry_a", "entry_b"):
             entry_red, entry_green = _resolve_tl_pins(
                 io_cfg, "entry", do_start, direction
@@ -192,12 +194,30 @@ def _build_hardware(ctx: AppContext) -> None:
                     relay_on_green=relay_on_green,
                 ),
             }
-        ctx.entry_tl = ctx.traffic_lights["entry_a"]["entry"]
-        ctx.exit_tl = ctx.traffic_lights["entry_a"]["exit"]
-        entry_red = ctx.entry_tl.red_pin
-        entry_green = ctx.entry_tl.green_pin
-        exit_red = ctx.exit_tl.red_pin
-        exit_green = ctx.exit_tl.green_pin
+            bi_pins[direction] = {
+                "entry": f"{entry_red}/{entry_green}",
+                "exit": f"{exit_red}/{exit_green}",
+            }
+        # Prefer the exit light as the default side alias when both exist
+        # (bi sites often wire one relay per approach under relay.*.exit).
+        ctx.entry_tl = (
+            ctx.traffic_lights["entry_a"]["exit"]
+            or ctx.traffic_lights["entry_a"]["entry"]
+        )
+        ctx.exit_tl = (
+            ctx.traffic_lights["entry_b"]["exit"]
+            or ctx.traffic_lights["entry_b"]["entry"]
+        )
+        entry_red = getattr(ctx.entry_tl, "red_pin", None)
+        entry_green = getattr(ctx.entry_tl, "green_pin", None)
+        exit_red = getattr(ctx.exit_tl, "red_pin", None)
+        exit_green = getattr(ctx.exit_tl, "green_pin", None)
+        tl_map_log = (
+            f" TL bi entry_a entry={bi_pins['entry_a']['entry']} "
+            f"exit={bi_pins['entry_a']['exit']}; "
+            f"entry_b entry={bi_pins['entry_b']['entry']} "
+            f"exit={bi_pins['entry_b']['exit']}"
+        )
     else:
         entry_red, entry_green = _resolve_tl_pins(io_cfg, "entry", do_start)
         exit_red, exit_green = _resolve_tl_pins(io_cfg, "exit", do_start)
@@ -278,7 +298,7 @@ def _build_hardware(ctx: AppContext) -> None:
     )
     logger.info(
         "I/O mapped demo=%s TL entry=%s/%s exit=%s/%s boom entry=%s(en=%s) "
-        "exit=%s(en=%s) sensors entry=%s wb=%s exit=%s",
+        "exit=%s(en=%s) sensors entry=%s wb=%s exit=%s%s",
         demo,
         entry_red,
         entry_green,
@@ -291,6 +311,7 @@ def _build_hardware(ctx: AppContext) -> None:
         entry_pin,
         wb_pin,
         exit_pin,
+        tl_map_log,
     )
 
     def on_tags(id_hexes: List[str], raw: List[dict]) -> None:
@@ -338,6 +359,8 @@ def bootstrap() -> AppContext:
         update_truck_url=settings.update_truck_url,
         weight_details_url=settings.weight_details_url,
         boom_close_url=settings.boom_close_url,
+        weight_details_url_tare=settings.weight_details_url_tare,
+        boom_close_url_tare=settings.boom_close_url_tare,
         reset_checkpoint_url=settings.reset_checkpoint_url,
         weight_confirm_url=settings.weight_confirm_url,
         gross_tolerance_confirm_url=settings.gross_tolerance_confirm_url,
@@ -451,6 +474,37 @@ def bootstrap() -> AppContext:
     if ctx.workflow:
         ctx.workflow.apply_idle_signals()
 
+    # Confirm Modbus actually wrote the four bi-dir TL coils (or uni pair).
+    if ctx.io and getattr(ctx, "traffic_lights", None):
+        for direction, pair in ctx.traffic_lights.items():
+            for role, light in (pair or {}).items():
+                if not light:
+                    continue
+                st = light.get_status() if hasattr(light, "get_status") else {}
+                logger.info(
+                    "TL boot check %s.%s pin=%s state=%s single_coil=%s "
+                    "relay_on_green=%s",
+                    direction,
+                    role,
+                    st.get("red_pin"),
+                    st.get("state"),
+                    st.get("single_coil"),
+                    st.get("relay_on_green"),
+                )
+    elif ctx.io and (ctx.entry_tl or ctx.exit_tl):
+        for label, light in (("entry", ctx.entry_tl), ("exit", ctx.exit_tl)):
+            if not light or not hasattr(light, "get_status"):
+                continue
+            st = light.get_status()
+            logger.info(
+                "TL boot check %s pin=%s state=%s single_coil=%s relay_on_green=%s",
+                label,
+                st.get("red_pin"),
+                st.get("state"),
+                st.get("single_coil"),
+                st.get("relay_on_green"),
+            )
+
     # Start sensors after workflow + MQTT exist so an already-cut S1 is
     # published to the dashboard and can start positioning.
     if ctx.sensor_poller:
@@ -462,7 +516,7 @@ def bootstrap() -> AppContext:
     logger.info(
         "Hardware reset to IDLE (%s)",
         (
-            "both entries green, both exits red, both booms open"
+            "entry green / exit red both sides, both booms open"
             if settings.is_bidirectional()
             else "entry green/open, exit red/closed"
         ),

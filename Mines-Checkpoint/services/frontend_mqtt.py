@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable, Dict, Optional
 
 from services.mqtt_ws_broker import get_mqtt_ws_broker
+from utils.logging_setup import lane_log_scope, slug_lane_name
 
 logger = logging.getLogger("mines_checkpoint.services.frontend_mqtt")
 
@@ -111,6 +112,7 @@ class FrontendMqtt:
         self.client_id = client_id
         key = str(instance_key or "").strip()
         self.topic_root = f"wb_frontend/{key}" if key else "wb_frontend"
+        self.lane_log_key = slug_lane_name(key) if key else ""
         self.ctx = ctx
         self._client = None
         self._connected = False
@@ -241,12 +243,15 @@ class FrontendMqtt:
         if self._monitor and self._monitor.is_alive():
             return
 
+        lane_key = self.lane_log_key
+
         def _loop():
             while not self._stop.wait(interval_sec):
-                try:
-                    self.publish_device_status()
-                except Exception as e:
-                    logger.debug("device_status publish: %s", e)
+                with lane_log_scope(lane_key):
+                    try:
+                        self.publish_device_status()
+                    except Exception as e:
+                        logger.debug("device_status publish: %s", e)
 
         self._monitor = threading.Thread(
             target=_loop, name="FrontendDeviceStatus", daemon=True

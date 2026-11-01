@@ -136,10 +136,14 @@ class Settings:
     invalid_truck_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number"
     update_truck_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/status_check"
     boom_close_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/boom-close"
+    # Bi-dir: Tare trip uses these when set; Gross keeps boom_close_path.
+    boom_close_path_tare: str = ""
     reset_checkpoint_path: str = "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
     weight_details_path: str = (
         "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-details"
     )
+    # Bi-dir: Tare trip uses these when set; Gross keeps weight_details_path.
+    weight_details_path_tare: str = ""
     weight_confirm_path: str = (
         "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-confirm"
     )
@@ -239,12 +243,26 @@ class Settings:
         return _join_url(self.oci_base_url, self.boom_close_path)
 
     @property
+    def boom_close_url_tare(self) -> str:
+        path = (self.boom_close_path_tare or "").strip()
+        if not path:
+            return ""
+        return _join_url(self.oci_base_url, path)
+
+    @property
     def reset_checkpoint_url(self) -> str:
         return _join_url(self.oci_base_url, self.reset_checkpoint_path)
 
     @property
     def weight_details_url(self) -> str:
         return _join_url(self.oci_base_url, self.weight_details_path)
+
+    @property
+    def weight_details_url_tare(self) -> str:
+        path = (self.weight_details_path_tare or "").strip()
+        if not path:
+            return ""
+        return _join_url(self.oci_base_url, path)
 
     @property
     def weight_confirm_url(self) -> str:
@@ -544,6 +562,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "boom_close_url",
             "/ords/gmdc_dicsm/dlms_checkpoint/boom-close",
         ),
+        boom_close_path_tare=str(
+            api_eps.get("boom_close_url_tare") or ""
+        ).strip(),
         reset_checkpoint_path=api_eps.get(
             "reset_checkpoint_url",
             "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint",
@@ -553,6 +574,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
             "weight_details_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-details",
         ),
+        weight_details_path_tare=str(
+            api_eps.get("weight_details_url_tare") or ""
+        ).strip(),
         weight_confirm_path=api_eps.get(
             "weight_confirm_url",
             "/ords/gmdc_dicsm/dlms_weighbridge/validate_truck/weight-confirm",

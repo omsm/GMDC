@@ -4,7 +4,7 @@ Python runtimes for Gujarat Mineral Development Corporation (GMDC) mine-yard che
 
 This workspace is one site install. Shared packages (`gmdc_common`, `checkpoint-config`, `digitizer-app`) live next to two family runtimes so every PC can commission hardware, share drivers, and run the matching site flow via `checkpoint_type`.
 
-**Current product version:** see [`version.md`](version.md) (**1.19**).
+**Current product version:** see [`version.md`](version.md) (**1.20**).
 
 ## Site flow
 
@@ -23,7 +23,7 @@ Legacy folders `Mine-entry/`, `Tracking-point-1/`, and `TareWb-App/` remain as r
 ## Repository layout
 
 ```
-new-IoT/
+GMDC_IOT/  (or this workspace)
 ├── gmdc_common/          Shared library (hardware, RFID, FSM, display, voice)
 ├── checkpoint-config/    Commissioning UI - writes iot_configuration.json
 ├── digitizer-app/        PySide serial weighbridge reader + HTTP weight API
@@ -31,6 +31,7 @@ new-IoT/
 ├── mqtt_broker_setup/    Ensure local Mosquitto on 1883 + WebSocket 9001
 ├── Mines-Checkpoint/     Checkpoint family runtime (entry / tracking / exit)
 ├── Mines-WB/             Weighbridge family runtime (tare / vadaghat / gross)
+├── macos-services/       Mac Mini launchd enable/disable/start/stop
 └── version.md
 ```
 
@@ -179,10 +180,35 @@ python -m unittest discover -s Mines-WB/tests -v
 | Modbus TCP | 502 |
 | Optional Mosquitto | 1883 |
 
+## Mac Mini deploy (production)
+
+Install under **`/Users/csm-gmdc/GMDC_IOT`** (never under `~/Downloads`). Full steps: [`macos-services/README.md`](macos-services/README.md).
+
+```bash
+# App venv (example WB Mac)
+cd /Users/csm-gmdc/GMDC_IOT/Mines-WB
+python3 -m venv pyenv && source pyenv/bin/activate
+pip install -U pip && pip install -e ../gmdc_common && pip install -r requirements.txt
+python main.py   # smoke test, then Ctrl+C && deactivate
+
+# Service (one app per Mac)
+cd /Users/csm-gmdc/GMDC_IOT/macos-services
+sed -i '' $'s/\r$//' *.sh *.command *.plist && chmod +x *.sh *.command
+./enable-mines-wb.sh          # or ./enable-mines-checkpoint.sh
+```
+
+| Linux | macOS script |
+|-------|----------------|
+| `systemctl enable` | `enable-mines-wb.sh` / `enable-mines-checkpoint.sh` |
+| `systemctl disable` | `disable-mines-*.sh` |
+| `systemctl start` | `start-mines-*.sh` |
+| `systemctl stop` | `stop-mines-*.sh` |
+
 ## Per-app docs
 
 - [`Mines-Checkpoint/README.md`](Mines-Checkpoint/README.md)
 - [`Mines-WB/README.md`](Mines-WB/README.md)
+- [`macos-services/README.md`](macos-services/README.md)
 - [`gmdc_common/README.md`](gmdc_common/README.md)
 - [`checkpoint-config/README.md`](checkpoint-config/README.md)
 - [`digitizer-app/README.md`](digitizer-app/README.md)

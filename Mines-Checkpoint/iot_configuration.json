@@ -555,7 +555,7 @@
                 "output_mode": "direct",
                 "connection": {
                     "ethernet": {
-                        "ip": "10.80.118.139",
+                        "ip": "10.80.118.141",
                         "port": "502",
                         "timeout": "1"
                     },
@@ -965,8 +965,8 @@
                 "model": ""
             },
             "api_endpoints": {
-                "oci_base_url": "https://10.80.118.10:8001",
-                "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/rfid_tag",
+                "oci_base_url": "https://gmuatociexp.gmdcltd.co.in",
+                "rfid_validate_url": "/ords/gmdc_dicsm/dlms_checkpoint/mine_exit/rfid_tag",
                 "anpr_base_url": "http://localhost:5001",
                 "anpr_detect_url": "/api/detect",
                 "invalid_truck_url": "/ords/gmdc_dicsm/dlms_checkpoint/invalid-truck-number",
@@ -983,7 +983,7 @@
                 "remarks": "ok",
                 "setup_timestamp": "2026-05-21T04:55:03.066Z"
             },
-            "anpr_enabled": true,
+            "anpr_enabled": false,
             "lane_id": "mines_exit",
             "lane_name": "Mines Exit",
             "rfid_listen_port": 8004

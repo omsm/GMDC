@@ -111,6 +111,10 @@ def extract_api_message(resp: Any) -> str:
     return ""
 
 
+# Local / non-OCI services — do not map their transport failures to internet@ down.
+_LOCAL_SERVICE_LABELS = frozenset({"anpr-detect", "digitizer"})
+
+
 def annotate_response(resp: Any, label: str, *, kind: Optional[str] = None) -> Any:
     """Fill operator_message / popup on an OCIResponse-like object."""
     try:
@@ -119,6 +123,7 @@ def annotate_response(resp: Any, label: str, *, kind: Optional[str] = None) -> A
         http = 0
     resolved = kind or classify_http_status(http)
     api_msg = extract_api_message(resp)
+    resp.service_label = str(label or "").strip().lower()
 
     if resolved == KIND_OK:
         resp.kind = KIND_OK
@@ -141,6 +146,14 @@ def annotate_response(resp: Any, label: str, *, kind: Optional[str] = None) -> A
     resp.popup = resolved in (KIND_UNREACHABLE, KIND_SERVER)
     resp.popup_title = title if resp.popup else ""
     return resp
+
+
+def is_oci_transport_failure(resp: Any) -> bool:
+    """True when an OCI/GMDC API is unreachable (not ANPR/digitizer)."""
+    if not is_transport_failure(resp):
+        return False
+    label = str(getattr(resp, "service_label", "") or "").strip().lower()
+    return label not in _LOCAL_SERVICE_LABELS
 
 
 def is_transport_failure(resp: Any) -> bool:

@@ -11,9 +11,8 @@ from typing import Any, Dict, Optional, Tuple
 import requests
 
 from config.constants import (
-    MSG_GROSS_WT_ERR,
-    MSG_TARE_WT_ERR,
-    MSG_VADAGHAT_WT_ERR,
+    MSG_OVER_WEIGHT,
+    MSG_UNDER_WEIGHT,
     TIMEOUTS,
 )
 from services.api_errors import KIND_OK, annotate_response
@@ -164,12 +163,19 @@ def rto_weight_band(truck_details: str) -> Optional[tuple]:
     return None
 
 
-def weight_type_error_display(trip: str) -> str:
-    if trip == "T":
-        return MSG_TARE_WT_ERR
-    if trip == "V":
-        return MSG_VADAGHAT_WT_ERR
-    return MSG_GROSS_WT_ERR
+def weight_type_error_display(
+    current_kg: float, truck_details: str = ""
+) -> str:
+    """
+    LED text when weight is outside the RTO band (T / V / G).
+
+    Under: kg still needed to reach the band low.
+    Over: kg over the band high.
+    """
+    kind, diff_kg = vadhghat_weight_delta(current_kg, truck_details)
+    if kind == "u":
+        return MSG_UNDER_WEIGHT.format(diff=diff_kg)
+    return MSG_OVER_WEIGHT.format(diff=diff_kg)
 
 
 def replace_truck_details_tolerance(
@@ -431,6 +437,8 @@ class OCIClient:
         update_truck_url: str,
         weight_details_url: str,
         boom_close_url: str = "",
+        weight_details_url_tare: str = "",
+        boom_close_url_tare: str = "",
         reset_checkpoint_url: str = "",
         weight_confirm_url: str = "",
         gross_tolerance_confirm_url: str = "",
@@ -458,6 +466,9 @@ class OCIClient:
         self.boom_close_url = boom_close_url or (
             self.base_url + "/ords/gmdc_dicsm/dlms_checkpoint/boom-close"
         )
+        # Bi-dir: Tare trips use *_tare when configured; Gross uses defaults.
+        self.weight_details_url_tare = str(weight_details_url_tare or "").strip()
+        self.boom_close_url_tare = str(boom_close_url_tare or "").strip()
         self.reset_checkpoint_url = reset_checkpoint_url or (
             self.base_url + "/ords/gmdc_dicsm/dlms_checkpoint/reset_checkpoint"
         )
@@ -645,11 +656,29 @@ class OCIClient:
             resp.status = 0
         return resp
 
+    def _trip_type(self, truck_details: str = "") -> str:
+        return str(
+            parse_truck_details(truck_details or "").get("trip_type") or ""
+        ).upper()[:1]
+
+    def _weight_details_url_for(self, truck_details: str = "") -> str:
+        """Tare → weight_details_url_tare when set; otherwise default (Gross)."""
+        if self._trip_type(truck_details) == "T" and self.weight_details_url_tare:
+            return self.weight_details_url_tare
+        return self.weight_details_url
+
+    def _boom_close_url_for(self, truck_details: str = "") -> str:
+        """Tare → boom_close_url_tare when set; otherwise default (Gross)."""
+        if self._trip_type(truck_details) == "T" and self.boom_close_url_tare:
+            return self.boom_close_url_tare
+        return self.boom_close_url
+
     def boom_close(self, truck_details: str = "") -> OCIResponse:
         """POST boom-close with tare WB payload {truck_details}."""
         payload = build_boom_close_payload(truck_details=truck_details)
+        url = self._boom_close_url_for(truck_details)
         resp = self._post(
-            self.boom_close_url, payload, "boom-close",
+            url, payload, "boom-close",
             auth=self._auth_for("boom_close"),
         )
         status_raw = resp.raw.get("status", resp.status)
@@ -702,8 +731,9 @@ class OCIClient:
             top_image_name=top_image_name,
             anpr_image_name=anpr_image_name,
         )
+        url = self._weight_details_url_for(truck_details)
         return self._post(
-            self.weight_details_url, payload, "weight-details",
+            url, payload, "weight-details",
             auth=self._auth_for("weight_details"),
         )
 

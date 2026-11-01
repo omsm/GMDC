@@ -1,21 +1,21 @@
 {
-  "port": "/dev/cu.usbserial-130",
+  "port": "COM5",
   "baud_rate": 9600,
   "data_bits": 8,
   "parity": "N",
   "stop_bits": 1,
   "status": true,
   "indexing": {
-    "frame_start_char": "[",
-    "frame_end_char": "]",
+    "frame_start_char": "\\r",
+    "frame_end_char": "\\n",
     "weight_start": 1,
-    "weight_end": 6,
+    "weight_end": 8,
     "integer_start": null,
     "integer_end": null,
     "decimals": 0,
     "scale": 1.0
   },
-  "calibration_sample_hex": "323030305d5b34323030305d5b34323030305d5b34323030305d5b34323030305d5b34323030305d",
+  "calibration_sample_hex": "300a0d202020202020300a0d202020202020300a0d202020202020300a0d202020202020300a0d20",
   "communication": {
     "mode": "mqtt",
     "api": {
@@ -24,13 +24,13 @@
       "path": "/read_stable_weight"
     },
     "mqtt": {
-      "broker_host": "localhost",
+      "broker_host": "10.80.118.10",
       "broker_port": 1883,
       "username": "",
       "password": "",
       "topic_publish": "gmdc/digitizer/weight",
       "topic_subscribe": "gmdc/digitizer/request",
-      "client_id": "gmdc-digitizer-decoder"
+      "client_id": "gmdc-digitizer-decoder-app"
     }
   },
   "admin": {

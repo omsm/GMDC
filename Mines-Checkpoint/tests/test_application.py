@@ -1233,6 +1233,31 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["status"], "success")
 
+    def test_rfid_management_while_idle_prepares_rfid(self):
+        import time
+
+        from config.constants import State
+
+        self.ctx.state_machine.force_state(State.IDLE)
+        r = self.client.post("/rfid_management", json={})
+        self.assertEqual(r.status_code, 200)
+        for _ in range(20):
+            if self.ctx.workflow.prepare_rfid_for_idle.called:
+                break
+            time.sleep(0.05)
+        self.ctx.workflow.prepare_rfid_for_idle.assert_called()
+
+    def test_rfid_management_while_busy_skips_prepare(self):
+        import time
+
+        from config.constants import State
+
+        self.ctx.state_machine.force_state(State.ENTRY_GRANTED)
+        r = self.client.post("/rfid_management", json={})
+        self.assertEqual(r.status_code, 200)
+        time.sleep(0.2)
+        self.ctx.workflow.prepare_rfid_for_idle.assert_not_called()
+
     def test_rfid_from_mobile_app_returns_oci_body(self):
         self.ctx.workflow.on_rfid_from_mobile.return_value = {
             "status": 500,

@@ -1,0 +1,22 @@
+1. upload new codes from laptop to all mac minis in the root directory
+2. rename the folder to GMDC_IOT
+2.1. xattr -dr com.apple.quarantine /Users/csm-gmdc/GMDC_IOT
+3. create virtual environment named pyenv strictly in Mines-WB or Mines-Checkpoint
+4. pip3 install requirements.txt and gmdc_common
+5. Test application run
+6. Deactivate the pyenv
+--------------
+Services Setup
+1. cd /Users/csm-gmdc/GMDC_IOT/macos-services
+2. sed -i '' $'s/\r$//' *.sh *.command *.plist
+3. chmod +x *.sh *.command
+4. ./enable-mines-wb.sh or ./enable-mines-checkpoint.sh
+5. Service status, 
+wb: launchctl print gui/$(id -u)/co.gmdc.mines-wb | grep -E 'state|pid'
+checkpoint: launchctl print gui/$(id -u)/co.gmdc.mines-checkpoint | grep -E 'state|pid'
+6. Service Error:
+wb: tail -f /Users/csm-gmdc/GMDC_IOT/logs/mines-wb-service.err.log
+checkpoint:  tail -f /Users/csm-gmdc/GMDC_IOT/logs/mines-checkpoint-service.err.log
+
+
+Please check if this is the correct process for a user or techinical person to start the service

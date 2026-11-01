@@ -9,13 +9,13 @@ import secrets
 from flask import Flask
 
 from api.endpoints import register_routes
-from config.settings import app_dir
+from config.settings import resource_dir
 
 logger = logging.getLogger("digitizer_decoder.server")
 
 
 def create_app(os_type: str = "auto") -> Flask:
-    web_root = os.path.join(app_dir(), "static", "web")
+    web_root = os.path.join(resource_dir(), "static", "web")
     app = Flask(
         "digitizer_decoder",
         static_folder=web_root,

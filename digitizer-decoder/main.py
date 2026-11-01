@@ -23,17 +23,20 @@ import os
 import sys
 
 # Ensure package root is on sys.path when launched as script
-ROOT = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    ROOT = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from api.server import start_api_server
-from config.settings import load_settings, version_string
+from config.settings import install_dir, load_settings, version_string
 from core.app_context import AppContext
 
 
 def setup_logging() -> None:
-    log_dir = os.path.join(ROOT, "logs")
+    log_dir = os.path.join(install_dir(), "logs")
     os.makedirs(log_dir, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -53,13 +56,18 @@ def main() -> None:
 
     # Ensure local Mosquitto on 1883 (MQTT) + 9001 (WS) before MQTT mode connects
     try:
-        repo_root = os.path.dirname(ROOT)
-        for path in (os.path.join(repo_root, "mqtt_broker_setup"), repo_root):
-            if path not in sys.path:
-                sys.path.insert(0, path)
+        search_roots = [ROOT, os.path.dirname(ROOT)]
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", "")
+            if meipass:
+                search_roots.insert(0, meipass)
+        for root in search_roots:
+            for path in (os.path.join(root, "mqtt_broker_setup"), root):
+                if path not in sys.path:
+                    sys.path.insert(0, path)
         from mqtt_broker_setup import bootstrap_local_mqtt
 
-        bootstrap_local_mqtt(__file__)
+        bootstrap_local_mqtt(sys.executable if getattr(sys, "frozen", False) else __file__)
     except Exception as exc:
         logger.exception("MQTT broker ensure failed: %s", exc)
 

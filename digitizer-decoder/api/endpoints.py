@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, jsonify, request, send_from_directory, session
 from functools import wraps
 
-from config.settings import app_dir, is_calibrated, serial_port_configured
+from config.settings import is_calibrated, resource_dir, serial_port_configured
 from core.app_context import AppContext
 from services.index_engine import (
     WIZARD_CAPTURE_BYTES,
@@ -115,7 +115,7 @@ def register_routes(app: Flask, os_type: str = "auto") -> None:
 
     from ui_os import inject_liquid_glass, liquid_glass_enabled
 
-    static_root = os.path.join(app_dir(), "static", "web")
+    static_root = os.path.join(resource_dir(), "static", "web")
     liquid_glass = liquid_glass_enabled(os_type)
 
     @app.get("/")

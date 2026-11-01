@@ -16,6 +16,7 @@ from config.constants import (
     MSG_ENTRY_GRANTED_FMT,
     MSG_FREE_PASS,
     MSG_IDLE,
+    MSG_INTERNET_DOWN,
     MSG_RFID_ERR,
     MSG_RFID_OK_FMT,
     TIMEOUTS,
@@ -52,10 +53,12 @@ from services.api_errors import (
     KIND_UNREACHABLE,
     extract_api_message,
     is_api_failure,
+    is_oci_transport_failure,
     is_service_alert,
     is_transport_failure,
     operator_copy,
 )
+from utils.logging_setup import lane_log_scope, slug_lane_name
 
 logger = logging.getLogger("mines_checkpoint.core.workflow")
 
@@ -79,7 +82,16 @@ class CheckpointWorkflow:
         self._crossing_timer_lock = threading.Lock()
         self._boom_close_timer: Optional[threading.Timer] = None
         self._boom_close_timer_lock = threading.Lock()
+        self._rfid_idle_prepare_lock = threading.Lock()
         self._status_check_alerted = False
+
+    def _lane_log_key(self) -> str:
+        settings = self.ctx.settings
+        return slug_lane_name(
+            (settings.lane_id if settings else "")
+            or (settings.display_name if settings else "")
+            or "checkpoint"
+        )
 
     def _collect_reset_fields(self) -> tuple[str, str, str]:
         settings = self.ctx.settings
@@ -218,6 +230,9 @@ class CheckpointWorkflow:
         if popup and not title:
             title = "SERVICE ERROR"
         self._ui_status(step, "error", msg, popup=popup, popup_title=title)
+        # OCI unreachable after retries → LED / MQTT display
+        if is_oci_transport_failure(resp):
+            self._announce(MSG_INTERNET_DOWN)
 
     def _anpr_wait_message(self, txn: Any) -> str:
         try:
@@ -274,14 +289,17 @@ class CheckpointWorkflow:
             return
         self._cancel_boom_close_timer()
 
+        lane_key = self._lane_log_key()
+
         def _close():
-            boom = self.ctx.boom_barrier
-            if boom:
-                boom.close()
-                logger.info(
-                    "Boom closed after %ss crossing delay",
-                    TIMEOUTS.BOOM_CLOSE_DELAY_SEC,
-                )
+            with lane_log_scope(lane_key):
+                boom = self.ctx.boom_barrier
+                if boom:
+                    boom.close()
+                    logger.info(
+                        "Boom closed after %ss crossing delay",
+                        TIMEOUTS.BOOM_CLOSE_DELAY_SEC,
+                    )
 
         timer = threading.Timer(TIMEOUTS.BOOM_CLOSE_DELAY_SEC, _close)
         timer.daemon = True
@@ -372,11 +390,14 @@ class CheckpointWorkflow:
             logger.warning("Workflow busy - ignoring RFID")
             return
 
+        lane_key = self._lane_log_key()
+
         def _run():
-            try:
-                self._process_rfid_cycle(id_hexes, raw_tags or [])
-            finally:
-                self._worker_lock.release()
+            with lane_log_scope(lane_key):
+                try:
+                    self._process_rfid_cycle(id_hexes, raw_tags or [])
+                finally:
+                    self._worker_lock.release()
 
         threading.Thread(target=_run, name="RFIDCycle", daemon=True).start()
 
@@ -435,13 +456,16 @@ class CheckpointWorkflow:
                 resp if (not valid and is_api_failure(resp)) else None
             )
 
+            lane_key = self._lane_log_key()
+
             def _run():
-                try:
-                    self._continue_after_rfid_validation(
-                        valid, service_alert=service_alert
-                    )
-                finally:
-                    self._worker_lock.release()
+                with lane_log_scope(lane_key):
+                    try:
+                        self._continue_after_rfid_validation(
+                            valid, service_alert=service_alert
+                        )
+                    finally:
+                        self._worker_lock.release()
 
             threading.Thread(
                 target=_run, name="MobileRFIDCycle", daemon=True
@@ -462,44 +486,52 @@ class CheckpointWorkflow:
         Vehicle cleared the entry sensor (FALSE after TRUE) while waiting to cross.
         Close boom, set TL red, reset to IDLE.
         """
-        sm = self.ctx.state_machine
-        if not sm:
-            return
-        if sm.current_state not in (
-            State.ENTRY_GRANTED,
-            State.WAIT_CROSSING,
-            State.FREE_PASS,
-        ):
-            logger.debug(
-                "Crossing-clear ignored in state %s (sensor idle/validation)",
-                sm.current_state.name,
-            )
-            return
-        if sm.current_state == State.FREE_PASS:
-            logger.info(
-                "Entry sensor cleared - free pass complete, delayed boom close, reset"
-            )
-        else:
-            logger.info(
-                "Entry sensor cleared (truck passed) - TL red, delayed boom close, reset"
-            )
-            self._ui_status(STEP_EXIT_COMPLETED, "success", "Transaction complete.")
-        self._cancel_crossing_timer()
-        sm.trigger(Event.EXIT_SENSOR)
-        self._reset_to_idle(delay_boom_close=True, notify_gmdc=False)
+        with lane_log_scope(self._lane_log_key()):
+            sm = self.ctx.state_machine
+            if not sm:
+                return
+            if sm.current_state not in (
+                State.ENTRY_GRANTED,
+                State.WAIT_CROSSING,
+                State.FREE_PASS,
+            ):
+                logger.debug(
+                    "Crossing-clear ignored in state %s (sensor idle/validation)",
+                    sm.current_state.name,
+                )
+                return
+            if sm.current_state == State.FREE_PASS:
+                logger.info(
+                    "Entry sensor cleared - free pass complete, delayed boom close, reset"
+                )
+            else:
+                logger.info(
+                    "Entry sensor cleared (truck passed) - TL red, delayed boom close, reset"
+                )
+                self._ui_status(
+                    STEP_EXIT_COMPLETED, "success", "Transaction complete."
+                )
+            self._cancel_crossing_timer()
+            sm.trigger(Event.EXIT_SENSOR)
+            self._reset_to_idle(delay_boom_close=True, notify_gmdc=False)
 
     def force_reset(self) -> None:
-        logger.info("Force reset requested")
-        self._manual_stop.set()
-        self._cancel_crossing_timer()
-        sm = self.ctx.state_machine
-        if sm:
-            sm.trigger(Event.RESET)
-            sm.force_state(State.IDLE)
-        self._reset_to_idle(manual=True)
+        with lane_log_scope(self._lane_log_key()):
+            logger.info("Force reset requested")
+            self._manual_stop.set()
+            self._cancel_crossing_timer()
+            sm = self.ctx.state_machine
+            if sm:
+                sm.trigger(Event.RESET)
+                sm.force_state(State.IDLE)
+            self._reset_to_idle(manual=True)
 
     def start_free_pass(self) -> None:
         """Open traffic light and boom; return to IDLE after entry sensor."""
+        with lane_log_scope(self._lane_log_key()):
+            self._start_free_pass_body()
+
+    def _start_free_pass_body(self) -> None:
         logger.info("Free pass - opening traffic light and boom barrier")
         self._manual_stop.set()
         self._cancel_crossing_timer()
@@ -566,8 +598,15 @@ class CheckpointWorkflow:
         logger.info("RFID reader stop requested ok=%s", ok)
 
     def prepare_rfid_for_idle(self) -> None:
-        """Public: login -> mode -> start when entering IDLE."""
-        self._prepare_rfid_idle()
+        """Public: login -> mode -> start when entering IDLE / rfid_management."""
+        # Skip if another prepare is already running (keepalive can overlap).
+        if not self._rfid_idle_prepare_lock.acquire(blocking=False):
+            logger.debug("RFID IDLE prepare already in progress - skip")
+            return
+        try:
+            self._prepare_rfid_idle()
+        finally:
+            self._rfid_idle_prepare_lock.release()
 
     def _prepare_rfid_idle(self) -> None:
         """login (Basic) -> mode (Bearer) -> start (Bearer)."""
@@ -670,7 +709,8 @@ class CheckpointWorkflow:
 
         if service_alert is not None:
             sm.trigger(Event.RFID_INVALID)
-            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
+            if not is_oci_transport_failure(service_alert):
+                self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
             self._ui_api_failure(
                 STEP_VALIDATING_RFID,
                 service_alert,
@@ -1272,22 +1312,25 @@ class CheckpointWorkflow:
     def _start_crossing_timer(self, timeout_sec: float) -> None:
         self._cancel_crossing_timer()
 
+        lane_key = self._lane_log_key()
+
         def _on_timeout():
-            sm = self.ctx.state_machine
-            if not sm:
-                return
-            if sm.current_state not in (State.ENTRY_GRANTED, State.WAIT_CROSSING):
-                logger.debug(
-                    "Crossing timeout ignored - state is %s",
-                    sm.current_state.name,
+            with lane_log_scope(lane_key):
+                sm = self.ctx.state_machine
+                if not sm:
+                    return
+                if sm.current_state not in (State.ENTRY_GRANTED, State.WAIT_CROSSING):
+                    logger.debug(
+                        "Crossing timeout ignored - state is %s",
+                        sm.current_state.name,
+                    )
+                    return
+                logger.info(
+                    "Vehicle crossing timeout (%ss) - auto reset to IDLE",
+                    timeout_sec,
                 )
-                return
-            logger.info(
-                "Vehicle crossing timeout (%ss) - auto reset to IDLE",
-                timeout_sec,
-            )
-            sm.trigger(Event.CROSSING_TIMEOUT)
-            self._reset_to_idle()
+                sm.trigger(Event.CROSSING_TIMEOUT)
+                self._reset_to_idle()
 
         timer = threading.Timer(timeout_sec, _on_timeout)
         timer.daemon = True

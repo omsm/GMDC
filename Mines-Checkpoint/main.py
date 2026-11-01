@@ -39,9 +39,19 @@ from services.display_service import create_display_service
 from services.frontend_mqtt import FrontendMqtt
 from services.oci_client import OCIClient
 from services.rfid_control import build_rfid_cloud_control
-from utils.logging_setup import setup_logging
+from utils.logging_setup import lane_log_scope, setup_logging, slug_lane_name
 
 logger = logging.getLogger("mines_checkpoint.main")
+
+
+def _lane_key(settings) -> str:
+    if not settings:
+        return "checkpoint"
+    return slug_lane_name(
+        getattr(settings, "lane_id", None)
+        or getattr(settings, "display_name", None)
+        or "checkpoint"
+    )
 
 
 def _ensure_local_mqtt_broker() -> None:
@@ -127,13 +137,16 @@ def _build_hardware(ctx: AppContext) -> None:
     # default_signal=low means idle is low; rising edge (active high) = vehicle present
     active_high = default_sig == "low"
 
+    lane_key = _lane_key(settings)
+
     def on_vehicle_crossed():
         """
         Entry sensor cleared (TRUE→FALSE after occupied) while boom is open
         → close boom, TL red, return to IDLE.
         """
-        if ctx.workflow:
-            ctx.workflow.on_exit_sensor()
+        with lane_log_scope(lane_key):
+            if ctx.workflow:
+                ctx.workflow.on_exit_sensor()
 
     ctx.sensor_poller = SensorPoller(
         ctx.io,
@@ -159,8 +172,9 @@ def _build_hardware(ctx: AppContext) -> None:
     )
 
     def on_tags(id_hexes: List[str], raw: List[dict]) -> None:
-        if ctx.workflow:
-            ctx.workflow.on_rfid_tags(id_hexes, raw)
+        with lane_log_scope(lane_key):
+            if ctx.workflow:
+                ctx.workflow.on_rfid_tags(id_hexes, raw)
 
     rfid_cfg = settings.rfid_config("entry_a")
     ctx.rfid_reader = create_rfid_reader(
@@ -176,6 +190,12 @@ def _activate_lane(ctx: AppContext) -> None:
     settings = ctx.settings
     assert settings
     lane = settings.lane_id or "checkpoint"
+    lane_key = _lane_key(settings)
+    with lane_log_scope(lane_key):
+        _activate_lane_body(ctx, settings, lane)
+
+
+def _activate_lane_body(ctx: AppContext, settings, lane: str) -> None:
     ctx.state_machine = StateMachine()
     ctx.transactions = TransactionStore()
 
@@ -289,14 +309,15 @@ def _reader_ip(settings) -> str:
 
 
 def bootstrap() -> AppContext:
-    setup_logging()
-    _ensure_local_mqtt_broker()
+    # Load config first so lane folders are known, then open per-lane log files.
     first = load_settings()
     lanes = (
         load_lane_settings(Path(first.config_path))
         if first.config_path
         else [first]
     )
+    setup_logging(lane_ids=[_lane_key(s) for s in lanes])
+    _ensure_local_mqtt_broker()
     AppContext.reset_instance()
     host = AppContext.get_instance()
     if len(lanes) <= 1 and not (lanes[0].lane_id if lanes else ""):

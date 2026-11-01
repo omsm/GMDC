@@ -202,7 +202,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
             status=1,
             raw={"weight_status": "1", "updated_tolerance": 25550},
         )
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         ctx.oci.weight_confirm.assert_called()
         call_kw = ctx.oci.weight_confirm.call_args.kwargs
@@ -227,7 +229,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
             status=1,
             raw={"weight_status": "1", "updated_tolerance": 25550},
         )
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         ctx.oci.weight_confirm.assert_called()
         call_kw = ctx.oci.weight_confirm.call_args.kwargs
@@ -239,22 +243,51 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_tare_out_of_band_rejected_skips_details(self):
-        """weight_status=2 → skip weight_details & boom_close, just exit."""
+        """weight_status=2 → reset_checkpoint then skip details/boom_close, exit."""
         from config.constants import State
         from services.oci_client import OCIResponse
 
         wf, ctx = self._make_workflow(TARE_DETAILS, 16000)
+        ctx.transactions.rfid = "D2030DBE"
         ctx.oci.weight_confirm.return_value = OCIResponse(
             ok=True, status=2, raw={"weight_status": "2"}
         )
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         ctx.oci.weight_confirm.assert_called()
+        ctx.oci.reset_checkpoint.assert_called_once()
+        reset_kw = ctx.oci.reset_checkpoint.call_args.kwargs
+        self.assertEqual(reset_kw["device_ip"], "192.168.10.223")
+        self.assertEqual(reset_kw["rfid_no"], "D2030DBE")
+        self.assertEqual(reset_kw["truck_details"], TARE_DETAILS)
         ctx.oci.weight_details.assert_not_called()
         ctx.oci.boom_close.assert_not_called()
-        ctx.display.send.assert_any_call("TARE WT ERR", side=None)
+        ctx.display.send.assert_any_call("Over @ 500Kg", side=None)
         ctx.voice.weight_out_of_tolerance.assert_called_with("T")
         ctx.voice.speak_weight.assert_not_called()
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+
+    def test_tare_weight_status_2_waits_for_reset_checkpoint_200(self):
+        """weight_status=2 retries reset_checkpoint until HTTP/body 200."""
+        from config.constants import State
+        from services.oci_client import OCIResponse
+
+        wf, ctx = self._make_workflow(TARE_DETAILS, 16000)
+        ctx.transactions.rfid = "D2030DBE"
+        ctx.oci.weight_confirm.return_value = OCIResponse(
+            ok=True, status=2, raw={"weight_status": "2"}
+        )
+        ctx.oci.reset_checkpoint.side_effect = [
+            OCIResponse(ok=False, status=0, http_status=500, message="down"),
+            OCIResponse(ok=True, status=200, http_status=200),
+        ]
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
+            wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
+        self.assertEqual(ctx.oci.reset_checkpoint.call_count, 2)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_weight_confirm_polls_until_status_1(self):
@@ -280,7 +313,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
                 raw={"weight_status": "1", "updated_tolerance": 25550},
             ),
         ]
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         self.assertEqual(ctx.oci.weight_confirm.call_count, 3)
         ctx.oci.weight_details.assert_called_once()
@@ -304,7 +339,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
                 raw={"weight_status": "1", "updated_tolerance": 20000},
             ),
         ]
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         self.assertEqual(ctx.oci.weight_confirm.call_count, 2)
         second = ctx.oci.weight_confirm.call_args_list[1].kwargs
@@ -342,7 +379,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
             status=1,
             raw={"tolerance_status": "1", "gross_tolerance": 3000},
         )
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
         ctx.oci.weight_confirm.assert_not_called()
         ctx.oci.gross_tolerance_confirm.assert_called()
@@ -370,7 +409,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.gross_tolerance_confirm.return_value = OCIResponse(
             ok=True, status=2, raw={"tolerance_status": "2", "gross_tolerance": 0}
         )
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
         ctx.oci.weight_confirm.assert_not_called()
         ctx.oci.weight_details.assert_called_once()
@@ -399,7 +440,9 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
                 raw={"tolerance_status": "1", "gross_tolerance": 3000},
             ),
         ]
-        with patch("core.workflow.time.sleep", return_value=None):
+        with patch.object(wf, "_wait_or_reset", return_value=False), patch(
+            "core.workflow.time.sleep", return_value=None
+        ):
             wf._final_weight_and_details(boom_close_after=GROSS_DETAILS)
         self.assertEqual(ctx.oci.gross_tolerance_confirm.call_count, 3)
         ctx.oci.weight_confirm.assert_not_called()
@@ -449,7 +492,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.voice.vadhghat_difference.assert_any_call("o", 1000, intro=True)
         ctx.voice.move_forward.assert_not_called()
         ctx.voice.speak_weight.assert_not_called()
-        ctx.display.send.assert_any_call("Overweight@1000Kg", side=None)
+        ctx.display.send.assert_any_call("Over @ 1000Kg", side=None)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_vadaghat_under_weight_calls_adjustment_with_u(self):
@@ -468,7 +511,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.voice.vadhghat_difference.assert_any_call("u", 500, intro=True)
         ctx.voice.move_forward.assert_not_called()
         ctx.voice.speak_weight.assert_not_called()
-        ctx.display.send.assert_any_call("Underweight@500Kg", side=None)
+        ctx.display.send.assert_any_call("Under @ 500Kg", side=None)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_weight_details_non_200_does_not_announce(self):
@@ -563,6 +606,61 @@ class TestWeightVoiceClips(unittest.TestCase):
         self.assertEqual(VoiceService.weight_clip_parts(44750), (44, 750))
         self.assertEqual(VoiceService.weight_clip_parts(12505), (12, 510))
         self.assertEqual(VoiceService.weight_clip_parts(12995), (13, 0))
+
+
+class TestTareGrossEndpointUrls(unittest.TestCase):
+    def _client(self):
+        from services.oci_client import OCIClient
+
+        return OCIClient(
+            base_url="https://example",
+            username="u",
+            password="p",
+            rfid_validate_url="https://example/rfid",
+            anpr_detect_url="https://example/anpr",
+            invalid_truck_url="https://example/inv",
+            update_truck_url="https://example/upd",
+            weight_details_url="https://example/gross-weight-details",
+            boom_close_url="https://example/gross_boom_close",
+            weight_details_url_tare="https://example/tare-weight-details",
+            boom_close_url_tare="https://example/tare_boom_close",
+        )
+
+    def test_selects_tare_urls_for_t_trip(self):
+        client = self._client()
+        self.assertEqual(
+            client._weight_details_url_for(TARE_DETAILS),
+            "https://example/tare-weight-details",
+        )
+        self.assertEqual(
+            client._boom_close_url_for(TARE_DETAILS),
+            "https://example/tare_boom_close",
+        )
+
+    def test_selects_gross_urls_for_g_trip(self):
+        client = self._client()
+        self.assertEqual(
+            client._weight_details_url_for(GROSS_DETAILS),
+            "https://example/gross-weight-details",
+        )
+        self.assertEqual(
+            client._boom_close_url_for(GROSS_DETAILS),
+            "https://example/gross_boom_close",
+        )
+
+    @patch("services.oci_client.requests.Session.post")
+    def test_weight_details_posts_to_tare_url(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.ok = True
+        mock_resp.json.return_value = {"status": 200}
+        mock_resp.text = "{}"
+        mock_post.return_value = mock_resp
+        client = self._client()
+        client.weight_details("16000", truck_details=TARE_DETAILS)
+        self.assertIn("tare-weight-details", mock_post.call_args.args[0])
+        client.boom_close(truck_details=GROSS_DETAILS)
+        self.assertIn("gross_boom_close", mock_post.call_args.args[0])
 
 
 if __name__ == "__main__":

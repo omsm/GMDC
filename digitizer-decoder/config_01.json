@@ -1,0 +1,41 @@
+{
+  "port": "COM7",
+  "baud_rate": 2400,
+  "data_bits": 8,
+  "parity": "N",
+  "stop_bits": 1,
+  "status": true,
+  "indexing": {
+    "frame_start_char": "\\x030",
+    "frame_end_char": null,
+    "weight_start": 6,
+    "weight_end": 13,
+    "integer_start": null,
+    "integer_end": null,
+    "decimals": 0,
+    "scale": 1.0
+  },
+  "calibration_sample_hex": "2020203003301557743a2020202020203003301c0e41411a06ff2a20088204b0554002213441ff71",
+  "communication": {
+    "mode": "mqtt",
+    "api": {
+      "host": "0.0.0.0",
+      "port": 8800,
+      "path": "/read_stable_weight"
+    },
+    "mqtt": {
+      "broker_host": "10.80.118.10",
+      "broker_port": 1883,
+      "username": "",
+      "password": "",
+      "topic_publish": "gmdc/digitizer/weight",
+      "topic_subscribe": "gmdc/digitizer/request",
+      "client_id": "gmdc-digitizer-decoder"
+    }
+  },
+  "admin": {
+    "username": "admin",
+    "password": "gmdc@123"
+  },
+  "ui_port": 8765
+}

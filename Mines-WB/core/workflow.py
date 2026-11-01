@@ -15,11 +15,14 @@ from config.constants import (
     MSG_EXIT,
     MSG_FREE_PASS,
     MSG_IDLE,
+    MSG_INTERNET_DOWN,
     MSG_MOVE_BACKWARD,
     MSG_MOVE_FORWARD,
     MSG_NO_RFID_READ,
     MSG_RFID_ERR,
     MSG_RFID_OK_FMT,
+    MSG_TYPE_GROSS,
+    MSG_TYPE_TARE,
     MSG_WEIGHT_DETAILS_FMT,
     MSG_INVALID_WEIGHT,
     MSG_WEIGHING,
@@ -47,6 +50,7 @@ from services.oci_client import (
 from services.api_errors import (
     extract_api_message,
     is_api_failure,
+    is_oci_transport_failure,
     is_service_alert,
 )
 from services.frontend_mqtt import (
@@ -89,6 +93,8 @@ class MinesWbWorkflow:
         self._idle_s2_s3_timer: Optional[threading.Timer] = None
         self._idle_weight_timer: Optional[threading.Timer] = None
         self._backward_timer: Optional[threading.Timer] = None
+        self._wrong_side_exit_timer: Optional[threading.Timer] = None
+        self._trip_type_timer: Optional[threading.Timer] = None
         self._digitizer_hang_timer: Optional[threading.Timer] = None
         self._timer_lock = threading.Lock()
         self._rfid_control_lock = threading.Lock()
@@ -104,14 +110,19 @@ class MinesWbWorkflow:
         self._idle_s2_s3_loop_active = False
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
+        self._wrong_side_exit_loop_active = False
         self._positioning_weight_seen = False
         self._positioning_last_weight: Optional[float] = None
         self._positioning_zero_exit = False
+        # Exit finish: wait for weight 0 after departure sensor cut→uncut.
+        self._exit_crossing_seen = False
+        self._exit_pending_idle = False
         self._rfid_started_direction = ""
         self._pending_rfid_tags: Optional[tuple[List[str], List[dict]]] = None
         self._status_check_alerted = False
 
     def _collect_reset_fields(self) -> tuple[str, str, str]:
+        """device_ip / rfid_no / truck_details from settings + RFID validate (/rfid_tag)."""
         settings = self.ctx.settings
         device_ip = str(getattr(settings, "device_ip", "") or "") if settings else ""
         txn = self.ctx.transactions
@@ -124,6 +135,8 @@ class MinesWbWorkflow:
                 if tags:
                     rfid = str(tags[0] or "")
             details = str(getattr(txn, "truck_details", "") or "")
+            if not rfid and details:
+                rfid = str(parse_truck_details(details).get("rfid") or "")
         return device_ip, rfid, details
 
     def _reset_checkpoint_enabled(self) -> bool:
@@ -172,6 +185,95 @@ class MinesWbWorkflow:
         """No-op. reset_checkpoint is only posted from the UI Reset button."""
         logger.info("startup reset_checkpoint skipped - UI Reset only")
 
+    def _reset_checkpoint_after_weight_reject(self) -> Optional[bool]:
+        """
+        After weight-confirm weight_status=2: POST reset_checkpoint until 200.
+
+        Payload uses device_ip / rfid_no / truck_details from the RFID validate
+        (/rfid_tag) transaction fields. Returns True on 200, None if Reset.
+        """
+        oci = self.ctx.oci
+        if oci is None or not hasattr(oci, "reset_checkpoint"):
+            logger.warning(
+                "reset_checkpoint after weight reject skipped - OCI client missing"
+            )
+            return True
+        retry_sec = TIMEOUTS.WEIGHT_CONFIRM_POLL_SEC
+        alerted = False
+        while not self._manual_stop.is_set():
+            device_ip, rfid, details = self._collect_reset_fields()
+            if not device_ip:
+                logger.warning(
+                    "reset_checkpoint after weight reject - device_ip missing"
+                )
+                if not alerted:
+                    alerted = True
+                    self._ui_status(
+                        STEP_READING_WEIGHT,
+                        "error",
+                        "Reset-checkpoint failed - device IP missing.",
+                    )
+                if self._wait_or_reset(retry_sec):
+                    return None
+                continue
+            if not rfid and not details:
+                logger.warning(
+                    "reset_checkpoint after weight reject - no RFID/truck_details"
+                )
+                if not alerted:
+                    alerted = True
+                    self._ui_status(
+                        STEP_READING_WEIGHT,
+                        "error",
+                        "Reset-checkpoint failed - RFID details missing.",
+                    )
+                if self._wait_or_reset(retry_sec):
+                    return None
+                continue
+            logger.info(
+                "weight_status=2 → reset_checkpoint device_ip=%s rfid=%s "
+                "truck_details=%r",
+                device_ip,
+                rfid or "(empty)",
+                details,
+            )
+            self._ui_status(
+                STEP_READING_WEIGHT,
+                "warning",
+                "Weight rejected - resetting checkpoint transaction.",
+            )
+            try:
+                resp = oci.reset_checkpoint(
+                    device_ip=device_ip,
+                    rfid_no=rfid,
+                    truck_details=details,
+                )
+            except Exception:
+                logger.exception("reset_checkpoint after weight reject failed")
+                if self._wait_or_reset(retry_sec):
+                    return None
+                continue
+            if self._reset_requested():
+                return None
+            if not is_api_failure(resp) and (
+                resp.ok or resp.status == 200 or resp.http_status == 200
+            ):
+                logger.info(
+                    "reset_checkpoint after weight reject ok status=%s - exit",
+                    resp.status,
+                )
+                return True
+            if not alerted:
+                alerted = True
+                self._ui_api_failure(
+                    STEP_READING_WEIGHT,
+                    resp,
+                    fallback="Reset-checkpoint service not reachable",
+                )
+            if self._wait_or_reset(retry_sec):
+                return None
+        return None
+
     # ------------------------------------------------------------------
     # Hardware helpers
     # ------------------------------------------------------------------
@@ -201,14 +303,16 @@ class MinesWbWorkflow:
     def _set_idle_traffic_lights(self) -> None:
         """Unidirectional: entry green, exit red.
 
-        Bidirectional: channel 0 and channel 1 normally closed.
+        Bidirectional: entry green on both sides; exit red on both sides.
+        Free Pass turns every light green; exit grant greens only the depart exit.
         """
         if self._is_bidirectional() and getattr(self.ctx, "traffic_lights", None):
             for direction in ("entry_a", "entry_b"):
                 entry_tl, exit_tl, _boom = self._side(direction)
-                self._set_light_contact(exit_tl or entry_tl, normally_open=False)
-                if entry_tl and entry_tl is not exit_tl:
-                    self._set_light_contact(entry_tl, normally_open=False)
+                if entry_tl:
+                    entry_tl.set_green()
+                if exit_tl:
+                    exit_tl.set_red()
             return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_green()
@@ -225,10 +329,77 @@ class MinesWbWorkflow:
         exit_tl = pair.get("exit") or self.ctx.exit_tl
         return entry_tl, exit_tl, self.ctx.entry_boom
 
+    def _opposite_direction_key(self, direction: Optional[str] = None) -> str:
+        key = direction or self._active_direction_key()
+        return "entry_b" if key == "entry_a" else "entry_a"
+
+    def _side_lights(self, direction: str):
+        """All configured traffic lights for one bi-dir side (exit + entry)."""
+        entry_tl, exit_tl, boom = self._side(direction)
+        lights = []
+        if exit_tl:
+            lights.append(exit_tl)
+        if entry_tl and entry_tl is not exit_tl:
+            lights.append(entry_tl)
+        return lights, boom
+
+    def _drive_side_lights(self, direction: str, *, green: bool) -> None:
+        """Drive every relay on one physical side to green or red."""
+        lights, _boom = self._side_lights(direction)
+        for light in lights:
+            if green:
+                light.set_green()
+            else:
+                light.set_red()
+
+    def _apply_bidirectional_direction_hardware(self) -> None:
+        """Direction known: approach entry green; other side all red; depart boom closed."""
+        approach = self._active_direction_key()
+        depart = self._opposite_direction_key(approach)
+        a_entry, a_exit, a_boom = self._side(approach)
+        if a_entry:
+            a_entry.set_green()
+        if a_exit:
+            a_exit.set_red()
+        self._drive_side_lights(depart, green=False)
+        if a_boom:
+            a_boom.open()
+        _d_lights, d_boom = self._side_lights(depart)
+        if d_boom:
+            d_boom.close()
+        logger.info(
+            "Bi direction set approach=%s entry green; opposite=%s all red; "
+            "depart boom closed",
+            approach,
+            depart,
+        )
+        self._ui_devices()
+
+    def _grant_bidirectional_exit_outputs(self) -> None:
+        """Exit process: only the depart-side exit light green; depart boom open."""
+        approach = self._active_direction_key()
+        depart = self._opposite_direction_key(approach)
+        self._drive_side_lights(approach, green=False)
+        _a_lights, a_boom = self._side_lights(approach)
+        if a_boom:
+            a_boom.close()
+        d_entry, d_exit, d_boom = self._side(depart)
+        if d_entry:
+            d_entry.set_red()
+        if d_exit:
+            d_exit.set_green()
+        if d_boom:
+            d_boom.open()
+        logger.info(
+            "Exit granted bi approach=%s red/closed; depart=%s exit light green",
+            approach,
+            depart,
+        )
+
     def apply_idle_hardware(self, delay_exit_boom_close: bool = False) -> None:
         """
         Unidirectional: entry green + open; exit red + closed.
-        Bidirectional: channels 0 and 1 normally closed, channels 2 and 3 normally open.
+        Bidirectional: both entry lights green, both exit lights red, both booms open.
 
         ``delay_exit_boom_close`` holds the unidirectional exit boom up for
         ``TIMEOUTS.BOOM_CLOSE_DELAY_SEC`` so a truck that just cleared the exit
@@ -256,7 +427,7 @@ class MinesWbWorkflow:
             self._ui_devices()
         self._stop_rfid_reader()
         if self._is_bidirectional():
-            boom_note = "channels 0-1 closed, channels 2-3 open"
+            boom_note = "entry green / exit red both sides, both booms open"
         elif delay_exit_boom_close:
             boom_note = f"exit boom closing in {TIMEOUTS.BOOM_CLOSE_DELAY_SEC}s"
         else:
@@ -288,11 +459,13 @@ class MinesWbWorkflow:
         Held closed whenever the platform sensor (sensor 2) is high.
         """
         if self._is_bidirectional():
-            _entry_tl, exit_tl, _boom = self._side(self._active_direction_key())
-        else:
-            exit_tl = self.ctx.exit_tl
-        if exit_tl:
-            exit_tl.set_red()
+            self._drive_side_lights(self._active_direction_key(), green=False)
+            logger.info(
+                "Approach-side traffic lights red (platform sensor high) direction=%s",
+                self._active_direction_key(),
+            )
+        elif self.ctx.exit_tl:
+            self.ctx.exit_tl.set_red()
             logger.info("Output channel 2 closed (platform sensor high)")
         self._ui_devices()
 
@@ -318,31 +491,20 @@ class MinesWbWorkflow:
         return self._platform_clear_except_wb()
 
     def _apply_boom_close_side_outputs(self) -> None:
-        """After boom-close: both booms open, and one departure light normally open.
-
-        Entry A leaves toward B, so only channel 1 is normally open.
-        Entry B leaves toward A, so only channel 0 is normally open.
-        """
-        self._open_both_booms()
-        entry_b = self._active_direction_key() == "entry_b"
-        for direction, normally_open in (
-            ("entry_a", entry_b),
-            ("entry_b", not entry_b),
-        ):
-            entry_tl, exit_tl, _boom = self._side(direction)
-            self._set_light_contact(exit_tl or entry_tl, normally_open=normally_open)
-        side = "entry B" if entry_b else "entry A"
-        channel = 0 if entry_b else 1
-        logger.info(
-            "Boom-close outputs %s: channel %s normally open, booms open",
-            side,
-            channel,
-        )
+        """After boom-close API: same as exit grant (only depart exit light green)."""
+        self._grant_bidirectional_exit_outputs()
         self._ui_devices()
 
     def _set_entry_closed(self) -> None:
         if self._is_bidirectional():
-            self._close_both_booms()
+            # Uni-like: approach entry red + approach boom closed.
+            # Depart boom was already closed when direction was set.
+            approach = self._active_direction_key()
+            self._drive_side_lights(approach, green=False)
+            _lights, a_boom = self._side_lights(approach)
+            if a_boom:
+                a_boom.close()
+            self._ui_devices()
             return
         if self.ctx.entry_tl:
             self.ctx.entry_tl.set_red()
@@ -364,19 +526,7 @@ class MinesWbWorkflow:
             logger.info("Exit granted after boom-close")
             return
         if self._is_bidirectional():
-            depart_a = self._active_direction_key() == "entry_b"
-            approach = "entry_b" if depart_a else "entry_a"
-            depart = "entry_a" if depart_a else "entry_b"
-            a_entry, _a_exit, a_boom = self._side(approach)
-            d_entry, d_exit, d_boom = self._side(depart)
-            if a_entry:
-                a_entry.set_red()
-            if a_boom:
-                a_boom.close()
-            if d_exit:
-                d_exit.set_green()
-            if d_boom:
-                d_boom.open()
+            self._grant_bidirectional_exit_outputs()
         else:
             if self.ctx.exit_tl:
                 self.ctx.exit_tl.set_green()
@@ -427,6 +577,9 @@ class MinesWbWorkflow:
         if popup and not title:
             title = "SERVICE ERROR"
         self._ui_status(step, "error", msg, popup=popup, popup_title=title)
+        # OCI unreachable after retries → LED / MQTT display
+        if is_oci_transport_failure(resp):
+            self._announce(MSG_INTERNET_DOWN)
 
     def _anpr_wait_message(self, txn: Any) -> str:
         try:
@@ -897,6 +1050,12 @@ class MinesWbWorkflow:
             self._maybe_announce_idle_s2_s3()
         elif sm and sm.current_state == State.VEHICLE_POSITIONING:
             self._maybe_exit_on_positioning_zero()
+        elif sm and sm.current_state in (
+            State.EXIT_GRANTED,
+            State.WAIT_EXIT,
+            State.FREE_PASS,
+        ):
+            self._maybe_progress_exit_on_weight()
         self._maybe_notify_digitizer_hang()
         # Push live weight to operator UI (Current Weight above RFID)
         dig = getattr(self.ctx, "digitizer", None)
@@ -972,9 +1131,10 @@ class MinesWbWorkflow:
         return self._beam_cut(which)
 
     def _start_backward_announcement(self) -> None:
-        """Play backward.wav while positioning with exit (s3) cut."""
+        """Play backward.wav while positioning with far-side exit cut and WB cut."""
         if self._backward_loop_active:
             return
+        self._stop_wrong_side_exit_announcement(stop_audio=False)
         self._stop_move_forward_announcement(stop_audio=True)
         self._backward_loop_active = True
         self._announce(MSG_MOVE_BACKWARD)
@@ -1004,7 +1164,7 @@ class MinesWbWorkflow:
                 not self._backward_loop_active
                 or not sm
                 or sm.current_state != State.VEHICLE_POSITIONING
-                or not self._sensor_cut("exit")
+                or not self._transaction_far_side_cut()
             ):
                 self._stop_backward_announcement(stop_audio=False)
                 return
@@ -1021,6 +1181,78 @@ class MinesWbWorkflow:
     def _stop_backward_announcement(self, stop_audio: bool = False) -> None:
         self._backward_loop_active = False
         self._cancel_timer("_backward_timer")
+        if stop_audio:
+            voice = self._voice()
+            if voice:
+                voice.stop()
+
+    def _transaction_far_side_cut(self) -> bool:
+        """Far-side (transaction exit) sensor for the active bidirectional approach."""
+        if (
+            self._is_bidirectional()
+            and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+        ):
+            return self._sensor_cut("entry")
+        return self._sensor_cut("exit")
+
+    def _start_wrong_side_exit_announcement(self) -> None:
+        """Bi-dir only: far-side cut before WB → buzzer + weighbridge_0.wav."""
+        if self._wrong_side_exit_loop_active:
+            return
+        self._stop_move_forward_announcement(stop_audio=True)
+        self._stop_backward_announcement(stop_audio=False)
+        self._wrong_side_exit_loop_active = True
+        logger.info(
+            "Far-side sensor cut before WB during bidirectional positioning - "
+            "check weighbridge"
+        )
+        self._ui_status(
+            STEP_VEHICLE_ENTERING,
+            "error",
+            "Exit side cut before weighbridge - check platform.",
+        )
+        self._play_wrong_side_exit_once()
+        self._schedule_wrong_side_exit_loop()
+
+    def _play_wrong_side_exit_once(self) -> None:
+        voice = self._voice()
+        if not voice:
+            return
+        # Prefer buzzer (error_start) + weighbridge_0; fall back to clip alone.
+        play = getattr(voice, "check_weighbridge", None) or getattr(
+            voice, "weighbridge_0", None
+        )
+        if callable(play):
+            play()
+
+    def _schedule_wrong_side_exit_loop(self) -> None:
+        if not self._wrong_side_exit_loop_active:
+            return
+
+        def _tick():
+            sm = self.ctx.state_machine
+            if (
+                not self._wrong_side_exit_loop_active
+                or not sm
+                or sm.current_state != State.VEHICLE_POSITIONING
+                or self._sensor_cut("wb")
+                or not self._transaction_far_side_cut()
+            ):
+                self._stop_wrong_side_exit_announcement(stop_audio=False)
+                return
+            self._play_wrong_side_exit_once()
+            self._schedule_wrong_side_exit_loop()
+
+        self._cancel_timer("_wrong_side_exit_timer")
+        timer = threading.Timer(TIMEOUTS.MOVE_FORWARD_INTERVAL_SEC, _tick)
+        timer.daemon = True
+        with self._timer_lock:
+            self._wrong_side_exit_timer = timer
+        timer.start()
+
+    def _stop_wrong_side_exit_announcement(self, stop_audio: bool = False) -> None:
+        self._wrong_side_exit_loop_active = False
+        self._cancel_timer("_wrong_side_exit_timer")
         if stop_audio:
             voice = self._voice()
             if voice:
@@ -1136,9 +1368,12 @@ class MinesWbWorkflow:
         self._idle_s2_s3_loop_active = False
         self._idle_weight_loop_active = False
         self._backward_loop_active = False
+        self._wrong_side_exit_loop_active = False
         self._positioning_weight_seen = False
         self._positioning_last_weight = None
         self._positioning_zero_exit = False
+        self._exit_crossing_seen = False
+        self._exit_pending_idle = False
         for name in (
             "_pos_timer",
             "_weight_timer",
@@ -1151,6 +1386,8 @@ class MinesWbWorkflow:
             "_idle_s2_s3_timer",
             "_idle_weight_timer",
             "_backward_timer",
+            "_wrong_side_exit_timer",
+            "_trip_type_timer",
         ):
             self._cancel_timer(name)
 
@@ -1169,6 +1406,8 @@ class MinesWbWorkflow:
         sm = self.ctx.state_machine
         if not sm or not sm.trigger(Event.ENTRY_SENSOR):
             return
+        # New trip may run status_check / confirm loops again.
+        self._manual_stop.clear()
         self._positioning_weight_seen = False
         self._positioning_last_weight = None
         self._positioning_zero_exit = False
@@ -1182,6 +1421,8 @@ class MinesWbWorkflow:
         # Sensor occupied (edge or already active): announce inspection and
         # do not start RFID. Reader starts only after weight > minimum.
         self._stop_rfid_reader()
+        if self._is_bidirectional():
+            self._apply_bidirectional_direction_hardware()
         voice = self._voice()
         #if voice:
         #    voice.weighbridge_janch()
@@ -1211,6 +1452,28 @@ class MinesWbWorkflow:
             return
         if sm.current_state == State.FREE_PASS:
             return
+        if (
+            self._is_bidirectional()
+            and sm.current_state in (State.EXIT_GRANTED, State.WAIT_EXIT)
+            and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+        ):
+            self._on_departure_sensor_cut()
+            return
+        # Bidirectional ENTRY_B: physical entry is the transaction exit side.
+        if (
+            self._is_bidirectional()
+            and sm.current_state == State.VEHICLE_POSITIONING
+            and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+        ):
+            if not self._sensor_cut("wb"):
+                self._start_wrong_side_exit_announcement()
+            else:
+                logger.info(
+                    "ENTRY_B far-side (entry) cut while WB occupied - move backward"
+                )
+                self._stop_wrong_side_exit_announcement(stop_audio=False)
+                self._start_backward_announcement()
+            return
         if sm.current_state != State.IDLE:
             return
         if self._digitizer_weight_nonzero():
@@ -1237,10 +1500,30 @@ class MinesWbWorkflow:
             and sm.current_state in (State.EXIT_GRANTED, State.WAIT_EXIT)
             and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
         ):
-            self._complete_lane_exit("ENTRY sensor cleared - ENTRY_B vehicle crossed")
+            self._on_departure_sensor_cleared(
+                "ENTRY sensor cleared - ENTRY_B vehicle crossed"
+            )
             return
-        if sm.current_state == State.VEHICLE_POSITIONING and self._sensor_cut("wb"):
-            self.on_wb_occupied()
+        if sm.current_state == State.VEHICLE_POSITIONING:
+            if (
+                self._is_bidirectional()
+                and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+            ):
+                self._stop_wrong_side_exit_announcement(stop_audio=True)
+                self._stop_backward_announcement(stop_audio=True)
+                if self._sensor_cut("wb"):
+                    self.on_wb_occupied()
+                else:
+                    self._announce(MSG_MOVE_FORWARD)
+                    self._ui_status(
+                        STEP_VEHICLE_ENTERING,
+                        "info",
+                        "Vehicle approaching weighbridge - move forward.",
+                    )
+                    self._start_move_forward_announcement()
+                return
+            if self._sensor_cut("wb"):
+                self.on_wb_occupied()
 
     def on_wb_occupied(self) -> None:
         sm = self.ctx.state_machine
@@ -1256,8 +1539,10 @@ class MinesWbWorkflow:
             return
         if sm.current_state != State.VEHICLE_POSITIONING:
             return
-        if self._sensor_cut("exit"):
-            logger.info("WB occupied while exit (s3) cut - wait for reverse")
+        # WB cut ends the "far-side before WB" fault.
+        self._stop_wrong_side_exit_announcement(stop_audio=False)
+        if self._transaction_far_side_cut():
+            logger.info("WB occupied while far-side exit cut - wait for reverse")
             self._start_backward_announcement()
             return
         if not self._platform_clear_except_wb():
@@ -1278,13 +1563,38 @@ class MinesWbWorkflow:
         threading.Thread(target=_run, name="WeightCycle", daemon=True).start()
 
     def on_exit_occupied(self) -> None:
-        """Bidirectional ENTRY_B approach, or IDLE s2+s3 error voice."""
+        """Bidirectional ENTRY_B approach, exit crossing, or IDLE s2+s3 error voice."""
         sm = self.ctx.state_machine
         if not sm:
             return
-        if sm.current_state == State.FREE_PASS:
+        if sm.current_state in (State.EXIT_GRANTED, State.WAIT_EXIT, State.FREE_PASS):
+            if (
+                self._is_bidirectional()
+                and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+                and sm.current_state != State.FREE_PASS
+            ):
+                # ENTRY_B finishes on the entry sensor, not the exit sensor.
+                return
+            self._on_departure_sensor_cut()
             return
         if sm.current_state == State.VEHICLE_POSITIONING:
+            if self._is_bidirectional():
+                direction = str(
+                    getattr(self.ctx.transactions, "direction", "") or ""
+                ).upper()
+                if direction == "ENTRY_A":
+                    # Physical exit is the transaction far side for ENTRY_A.
+                    if not self._sensor_cut("wb"):
+                        self._start_wrong_side_exit_announcement()
+                    else:
+                        logger.info(
+                            "Exit (s3) cut while WB occupied - move backward"
+                        )
+                        self._stop_wrong_side_exit_announcement(stop_audio=False)
+                        self._start_backward_announcement()
+                    return
+                # ENTRY_B: physical exit is the approach side — ignore re-cuts.
+                return
             logger.info("Exit (s3) cut during positioning - move backward")
             self._start_backward_announcement()
             return
@@ -1303,13 +1613,15 @@ class MinesWbWorkflow:
     def on_exit_cleared(self) -> None:
         """
         Vehicle fully crossed the exit sensor (uncut → cut → uncut).
-        Then reset IDLE and close the boom after the delay.
+
+        Boom stays open and IDLE waits until live weight is 0 and the
+        departure sensor is clear.
         """
         sm = self.ctx.state_machine
         if not sm:
             return
         if sm.current_state == State.FREE_PASS:
-            self._complete_lane_exit(
+            self._on_departure_sensor_cleared(
                 "EXIT sensor cleared - free pass complete",
                 success_message="Free pass complete - vehicle exited.",
             )
@@ -1318,6 +1630,7 @@ class MinesWbWorkflow:
             self._stop_idle_s2_s3_announcement()
             return
         if sm.current_state == State.VEHICLE_POSITIONING:
+            self._stop_wrong_side_exit_announcement(stop_audio=True)
             self._stop_backward_announcement(stop_audio=True)
             if self._sensor_cut("wb"):
                 logger.info("Exit (s3) cleared and platform (s2) occupied - weigh")
@@ -1339,7 +1652,140 @@ class MinesWbWorkflow:
         ):
             # ENTRY_B completes at the entry sensor after uncut → cut → uncut.
             return
-        self._complete_lane_exit("EXIT sensor cleared - vehicle crossed")
+        self._on_departure_sensor_cleared("EXIT sensor cleared - vehicle crossed")
+
+    def _departure_sensor_is_cut(self) -> bool:
+        """Far-side sensor the truck must clear before IDLE."""
+        if (
+            self._is_bidirectional()
+            and getattr(self.ctx.transactions, "direction", "") == "ENTRY_B"
+        ):
+            return self._sensor_cut("entry")
+        return self._sensor_cut("exit")
+
+    def _exit_weight_is_clear(self) -> bool:
+        """True when live weight is 0, or when no live digitizer feed exists."""
+        weight = self._live_digitizer_weight()
+        if weight is None:
+            return True
+        return float(weight) <= 0.0
+
+    def _ensure_exit_boom_open(self) -> None:
+        """Keep the departure boom up while the truck is still leaving."""
+        if self._is_bidirectional():
+            if self.ctx.entry_boom:
+                self.ctx.entry_boom.open()
+            if self.ctx.exit_boom:
+                self.ctx.exit_boom.open()
+        elif self.ctx.exit_boom:
+            self.ctx.exit_boom.open()
+        self._ui_devices()
+
+    def _on_departure_sensor_cut(self) -> None:
+        """Exit (or ENTRY_B far-side) beam cut while leaving the lane."""
+        self._exit_crossing_seen = True
+        self._exit_pending_idle = False
+        self._cancel_timer("_boom_close_timer")
+        if self._exit_weight_is_clear():
+            self._ensure_exit_boom_open()
+            logger.info(
+                "Departure sensor cut with weight 0 - boom held open"
+            )
+        else:
+            self._ensure_exit_boom_open()
+            logger.info(
+                "Departure sensor cut - boom stays open until weight is 0"
+            )
+
+    def _on_departure_sensor_cleared(
+        self,
+        reason: str,
+        success_message: str = "Vehicle exit completed.",
+    ) -> None:
+        """Far-side sensor cleared; finish only when weight is also 0."""
+        self._exit_crossing_seen = True
+        if self._try_finish_exit(
+            reason,
+            success_message=success_message,
+            departure_clear=True,
+        ):
+            return
+        self._exit_pending_idle = True
+        self._ensure_exit_boom_open()
+        logger.info(
+            "%s - waiting for weight 0 before closing boom and IDLE",
+            reason,
+        )
+
+    def _try_finish_exit(
+        self,
+        reason: str,
+        success_message: str = "Vehicle exit completed.",
+        *,
+        departure_clear: bool = False,
+    ) -> bool:
+        """
+        Close boom and reset IDLE only when:
+          - departure sensor has been crossed (cut seen)
+          - departure sensor is clear
+          - live digitizer weight is 0 (or no live feed)
+
+        ``departure_clear`` is True when the clear callback just fired, so the
+        far-side beam is treated as clear without re-reading a stale latch.
+        """
+        sm = self.ctx.state_machine
+        if not sm or sm.current_state not in (
+            State.EXIT_GRANTED,
+            State.WAIT_EXIT,
+            State.FREE_PASS,
+        ):
+            return False
+        if not self._exit_crossing_seen and not self._exit_pending_idle:
+            return False
+        if not departure_clear and self._departure_sensor_is_cut():
+            self._exit_pending_idle = False
+            if self._exit_weight_is_clear():
+                self._ensure_exit_boom_open()
+                logger.info(
+                    "Weight is 0 but departure sensor still cut - boom open"
+                )
+            return False
+        if not self._exit_weight_is_clear():
+            self._exit_pending_idle = True
+            self._ensure_exit_boom_open()
+            return False
+        self._exit_pending_idle = False
+        self._exit_crossing_seen = False
+        self._complete_lane_exit(reason, success_message=success_message)
+        return True
+
+    def _maybe_progress_exit_on_weight(self) -> None:
+        """While exiting, reopen boom if sensor cut, or finish when weight hits 0."""
+        sm = self.ctx.state_machine
+        if not sm or sm.current_state not in (
+            State.EXIT_GRANTED,
+            State.WAIT_EXIT,
+            State.FREE_PASS,
+        ):
+            return
+        if self._exit_pending_idle:
+            # Far-side already cleared; only weight was blocking IDLE.
+            # A new cut cancels pending via _on_departure_sensor_cut.
+            self._try_finish_exit(
+                "Weight returned to 0 after departure sensor cleared",
+                departure_clear=True,
+            )
+            return
+        if self._departure_sensor_is_cut():
+            self._exit_crossing_seen = True
+            if self._exit_weight_is_clear():
+                self._ensure_exit_boom_open()
+            return
+        if self._exit_crossing_seen:
+            self._try_finish_exit(
+                "Weight returned to 0 after departure sensor cleared",
+                departure_clear=True,
+            )
 
     def _complete_lane_exit(
         self, reason: str, success_message: str = "Vehicle exit completed."
@@ -1350,7 +1796,8 @@ class MinesWbWorkflow:
         exit_status = "error" if self._ui_had_flow_failure() else "success"
         self._ui_status(STEP_EXIT_COMPLETED, exit_status, success_message)
         self._ui_devices()
-        self.force_reset(delay_boom_close=True)
+        # Weight already at 0 (or no live feed); close boom with idle hardware now.
+        self.force_reset(delay_boom_close=False)
 
     def _ui_had_flow_failure(self) -> bool:
         """True when the current cycle already published a red step failure."""
@@ -1440,6 +1887,14 @@ class MinesWbWorkflow:
         threading.Thread(target=_run, name="MobileRFID", daemon=True).start()
         return body
 
+    def _reset_requested(self) -> bool:
+        """True after dashboard/API Reset until the next vehicle trip starts."""
+        return self._manual_stop.is_set()
+
+    def _wait_or_reset(self, seconds: float) -> bool:
+        """Wait up to ``seconds``; return True if Reset interrupted the wait."""
+        return self._manual_stop.wait(timeout=max(0.0, float(seconds)))
+
     def force_reset(
         self,
         announce_reset: bool = False,
@@ -1451,6 +1906,8 @@ class MinesWbWorkflow:
         logger.info("Force reset to IDLE")
         if announce_reset:
             self._notify_gmdc_reset(manual=True)
+        # Keep set until the next trip begins so status_check / weight-confirm
+        # / gross-tolerance loops exit and do not call OCI after Reset.
         self._manual_stop.set()
         self._awaiting_rfid = False
         self._pending_rfid_tags = None
@@ -1459,6 +1916,7 @@ class MinesWbWorkflow:
         self._stop_idle_s2_s3_announcement(stop_audio=False)
         self._stop_idle_weight_announcement(stop_audio=False)
         self._stop_backward_announcement(stop_audio=False)
+        self._stop_wrong_side_exit_announcement(stop_audio=False)
         sm = self.ctx.state_machine
         if sm:
             sm.trigger(Event.RESET)
@@ -1475,7 +1933,6 @@ class MinesWbWorkflow:
             voice.application_reset()
         elif stop_audio and voice:
             voice.stop()
-        self._manual_stop.clear()
 
     def start_free_pass(self) -> None:
         """Open every traffic light and boom; IDLE after exit sensor uncut→cut→uncut."""
@@ -1486,6 +1943,8 @@ class MinesWbWorkflow:
         self._cancel_all_timers()
         self._stop_move_forward_announcement(stop_audio=True)
         self._stop_rfid_reader()
+        self._exit_crossing_seen = False
+        self._exit_pending_idle = False
         sm = self.ctx.state_machine
         if sm:
             sm.force_state(State.FREE_PASS)
@@ -1784,7 +2243,8 @@ class MinesWbWorkflow:
             if voice:
                 voice.rfid_api_error()
             self._stop_rfid_reader()
-            self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
+            if not is_oci_transport_failure(service_alert):
+                self._announce(self._rfid_api_display(service_alert, MSG_RFID_ERR))
             self._ui_api_failure(
                 STEP_VALIDATING_RFID,
                 service_alert,
@@ -1816,6 +2276,58 @@ class MinesWbWorkflow:
             return
 
         sm.trigger(Event.RFID_VALID)
+        if self._maybe_hold_trip_type_before_anpr():
+            return
+        self._after_rfid_valid()
+
+    def _maybe_hold_trip_type_before_anpr(self) -> bool:
+        """Bidirectional only: show Tare/Gross for 5s after RFID OK, then continue.
+
+        Returns True when a hold timer was armed (caller must not continue yet).
+        """
+        if not self._is_bidirectional():
+            return False
+        txn = self.ctx.transactions
+        if not txn:
+            return False
+        parsed = parse_truck_details(getattr(txn, "truck_details", "") or "")
+        trip = (parsed.get("trip_type") or "").upper()[:1]
+        if trip == "T":
+            msg = MSG_TYPE_TARE
+            label = "Tare"
+        elif trip == "G":
+            msg = MSG_TYPE_GROSS
+            label = "Gross"
+        else:
+            return False
+        logger.info(
+            "Bidirectional trip type %s - showing %s for %.1fs before ANPR",
+            trip,
+            label,
+            TIMEOUTS.TRIP_TYPE_DISPLAY_SEC,
+        )
+        self._announce(msg)
+        self._ui_status(
+            STEP_VALIDATING_RFID,
+            "success",
+            f"{label} transaction - continuing in {int(TIMEOUTS.TRIP_TYPE_DISPLAY_SEC)}s.",
+        )
+        self._arm_timer(
+            "_trip_type_timer",
+            TIMEOUTS.TRIP_TYPE_DISPLAY_SEC,
+            self._after_trip_type_hold,
+        )
+        return True
+
+    def _after_trip_type_hold(self) -> None:
+        """Resume ANPR path after bidirectional Tare/Gross LED hold."""
+        sm = self.ctx.state_machine
+        if not sm or sm.current_state != State.ANPR_VALIDATE:
+            logger.info(
+                "Trip-type hold finished but state is %s - skip ANPR continue",
+                getattr(sm, "current_state", None),
+            )
+            return
         self._after_rfid_valid()
 
     def _apply_valid_rfid(self, rfid: str, truck_details: str, resp: Any = None) -> None:
@@ -1909,7 +2421,16 @@ class MinesWbWorkflow:
         oci = self.ctx.oci
         settings = self.ctx.settings
         txn = self.ctx.transactions
-        assert sm and oci and settings and txn
+        if self._reset_requested():
+            logger.info("_after_rfid_valid skipped - Reset requested")
+            return
+        if not sm or sm.current_state != State.ANPR_VALIDATE:
+            logger.info(
+                "_after_rfid_valid skipped - state=%s",
+                getattr(sm, "current_state", None),
+            )
+            return
+        assert oci and settings and txn
 
         parsed = parse_truck_details(txn.truck_details)
 
@@ -1954,7 +2475,11 @@ class MinesWbWorkflow:
                     invalid_resp,
                     fallback="Invalid-truck service not reachable",
                 )
-            if self._manual_update_loop():
+            update_ok = self._manual_update_loop()
+            if self._reset_requested() or update_ok is None:
+                logger.info("Manual update stopped by Reset (ANPR disabled)")
+                return
+            if update_ok:
                 sm.trigger(Event.UPDATE_STATUS_1)
                 sm.trigger(Event.MANUAL_OK)
                 self._final_weight_and_details(
@@ -2041,7 +2566,11 @@ class MinesWbWorkflow:
             self._ui_status(
                 STEP_VALIDATING_ANPR, "warning", "ANPR Err-0, Number plate mismatch"
             )
-        if self._manual_update_loop():
+        update_ok = self._manual_update_loop()
+        if self._reset_requested() or update_ok is None:
+            logger.info("Manual update stopped by Reset")
+            return
+        if update_ok:
             sm.trigger(Event.UPDATE_STATUS_1)
             sm.trigger(Event.MANUAL_OK)
             self._final_weight_and_details(
@@ -2136,12 +2665,17 @@ class MinesWbWorkflow:
             txn.front_image,
         )
 
-    def _manual_update_loop(self) -> bool:
+    def _manual_update_loop(self) -> Optional[bool]:
         """
         Poll update_truck_url (status_check) until approved or abort.
 
         Mines Entry: vehicleStatus 0=retry, 1=ok, 2=abort.
         HTTP/statusCode 200 alone does not continue the flow.
+
+        Returns:
+          True  - vehicleStatus=1
+          False - vehicleStatus=2 abort
+          None  - dashboard/API Reset stopped the loop
         """
         oci = self.ctx.oci
         settings = self.ctx.settings
@@ -2149,11 +2683,13 @@ class MinesWbWorkflow:
         sm = self.ctx.state_machine
         assert oci and settings and txn
 
+        if self._reset_requested():
+            return None
+
         retry_sec = float(
             getattr(settings, "truck_anpr_retry_timer", None)
             or TIMEOUTS.MANUAL_UPDATE_POLL_SEC
         )
-        self._manual_stop.clear()
         self._status_check_alerted = False
         while not self._manual_stop.is_set():
             resp = oci.update_truck_number(
@@ -2162,6 +2698,8 @@ class MinesWbWorkflow:
                 device_ip=settings.device_ip,
                 anpr_payload=txn.anpr_raw,
             )
+            if self._reset_requested():
+                return None
             if is_api_failure(resp):
                 if is_service_alert(resp):
                     if not self._status_check_alerted:
@@ -2176,7 +2714,8 @@ class MinesWbWorkflow:
                     self._ui_anpr_waiting(txn)
                 if sm:
                     sm.trigger(Event.UPDATE_STATUS_0)
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return None
                 continue
 
             vehicle_status = resp.status
@@ -2204,8 +2743,8 @@ class MinesWbWorkflow:
                 if sm:
                     sm.trigger(Event.UPDATE_STATUS_2)
                 logger.warning("status_check vehicleStatus=2 - abort to exit")
-                time.sleep(TIMEOUTS.UPDATE_STATUS_2_RESET_SEC)
-                return False
+                self._wait_or_reset(TIMEOUTS.UPDATE_STATUS_2_RESET_SEC)
+                return False if not self._reset_requested() else None
 
             self._ui_anpr_waiting(txn)
             if sm:
@@ -2213,8 +2752,9 @@ class MinesWbWorkflow:
             logger.info(
                 "vehicleStatus=0 - retry status_check in %ss", retry_sec
             )
-            time.sleep(retry_sec)
-        return False
+            if self._wait_or_reset(retry_sec):
+                return None
+        return None
 
     def _speak_final_weight(self) -> None:
         """Play intro + ton/kg clips after weight-details HTTP/status 200."""
@@ -2247,7 +2787,13 @@ class MinesWbWorkflow:
         txn = self.ctx.transactions
         assert sm and oci and settings and digitizer and txn
 
+        if self._reset_requested():
+            logger.info("Final weight skipped - Reset already requested")
+            return
+
         result = digitizer.read_stable_weight()
+        if self._reset_requested():
+            return
         weight = result.get("weight")
         if weight is None or not result.get("ok"):
             voice = self._voice()
@@ -2296,7 +2842,9 @@ class MinesWbWorkflow:
                 txn.weight_kg, txn.truck_details or ""
             )
             if not in_band:
-                err_msg = weight_type_error_display(trip)
+                err_msg = weight_type_error_display(
+                    txn.weight_kg or 0, txn.truck_details or ""
+                )
                 logger.warning(
                     "Final weight out of tolerance type=%s: %s", trip, band_msg
                 )
@@ -2306,7 +2854,11 @@ class MinesWbWorkflow:
                 if voice:
                     voice.weight_out_of_tolerance(trip)
 
-                if not self._weight_confirm_until_in_band():
+                confirm_ok = self._weight_confirm_until_in_band()
+                if self._reset_requested() or confirm_ok is None:
+                    logger.info("Weight-confirm stopped by Reset")
+                    return
+                if not confirm_ok:
                     self._enter_exit_granted(reason="weight_confirm_rejected")
                     return
 
@@ -2320,11 +2872,29 @@ class MinesWbWorkflow:
                 logger.warning(
                     "Vadhghat weight out of tolerance: %s", band_msg
                 )
+                self._announce(
+                    weight_type_error_display(
+                        txn.weight_kg or 0, txn.truck_details or ""
+                    )
+                )
                 self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
                 self._vadhghat_weight_adjustment_and_exit()
                 return
             self._vadhghat_in_band_and_exit()
             return
+
+        # Gross (G): announce Under/Over when outside the minus-only band.
+        if trip == "G":
+            in_band, band_msg = weight_within_rto_tolerance(
+                txn.weight_kg, txn.truck_details or ""
+            )
+            if not in_band:
+                self._announce(
+                    weight_type_error_display(
+                        txn.weight_kg or 0, txn.truck_details or ""
+                    )
+                )
+                self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
 
         sm.trigger(Event.WEIGHT_OK)
 
@@ -2364,6 +2934,9 @@ class MinesWbWorkflow:
         skip_second_details = False
         if is_gross_like and details.status == 201:
             outcome = self._gross_tolerance_confirm_until_ok()
+            if self._reset_requested() or outcome == "stopped":
+                logger.info("Gross-tolerance confirm stopped by Reset")
+                return
             if outcome == "ok":
                 self._ui_status(
                     STEP_VALIDATING_WEIGHT,
@@ -2564,8 +3137,7 @@ class MinesWbWorkflow:
         self._enter_exit_granted(
             reason="vadhghat_difference", speak_forward=False
         )
-        label = "Overweight" if weight_type == "o" else "Underweight"
-        self._announce(f"{label} by:@{diff_kg}Kg")
+        # Board already shows Under/Over + kg needed; voice keeps the kg loop.
         self._start_vadhghat_difference_announcement(weight_type, diff_kg)
 
     def _gross_tolerance_confirm_until_ok(self) -> str:
@@ -2580,11 +3152,14 @@ class MinesWbWorkflow:
           If still out of band, keep looping.
         tolerance_status 2 → return "rejected" (skip second weight-details,
           still boom_close).
+        Reset → return "stopped".
         """
         oci = self.ctx.oci
         settings = self.ctx.settings
         txn = self.ctx.transactions
         assert oci and settings and txn
+        if self._reset_requested():
+            return "stopped"
         retry_sec = TIMEOUTS.WEIGHT_CONFIRM_POLL_SEC
         device_ip = str(getattr(settings, "device_ip", "") or "")
         confirm_alerted = False
@@ -2608,6 +3183,8 @@ class MinesWbWorkflow:
                 truck_details=details,
                 device_ip=device_ip,
             )
+            if self._reset_requested():
+                return "stopped"
             if is_api_failure(resp):
                 if not confirm_alerted:
                     confirm_alerted = True
@@ -2616,7 +3193,8 @@ class MinesWbWorkflow:
                         resp,
                         fallback="Gross-tolerance service not reachable",
                     )
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return "stopped"
                 continue
             ts = resp.status
             logger.info(
@@ -2638,7 +3216,8 @@ class MinesWbWorkflow:
                 return "rejected"
 
             if ts != 1:
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return "stopped"
                 continue
 
             updated = resp.raw.get("gross_tolerance")
@@ -2666,11 +3245,12 @@ class MinesWbWorkflow:
                 "Gross weight still out of band after tolerance_status=1: %s",
                 band_msg,
             )
-            time.sleep(retry_sec)
+            if self._wait_or_reset(retry_sec):
+                return "stopped"
 
-        return "rejected"
+        return "stopped"
 
-    def _weight_confirm_until_in_band(self) -> bool:
+    def _weight_confirm_until_in_band(self) -> Optional[bool]:
         """
         Out-of-tolerance loop:
 
@@ -2678,12 +3258,17 @@ class MinesWbWorkflow:
         weight_status 0 → retry same payload.
         weight_status 1 → write updated_tolerance into truck_details,
           recapture weight, re-check band; if still out, confirm again.
-        weight_status 2 → abort (skip weight_details / boom_close).
+        weight_status 2 → POST reset_checkpoint (RFID validate fields);
+          on 200 abort (skip weight_details / boom_close) and exit.
+
+        Returns True / False / None (Reset).
         """
         oci = self.ctx.oci
         digitizer = self.ctx.digitizer
         txn = self.ctx.transactions
         assert oci and digitizer and txn
+        if self._reset_requested():
+            return None
         retry_sec = TIMEOUTS.WEIGHT_CONFIRM_POLL_SEC
         confirm_alerted = False
 
@@ -2707,6 +3292,8 @@ class MinesWbWorkflow:
                 current_weight=current_weight,
                 weight_type=weight_type,
             )
+            if self._reset_requested():
+                return None
             if is_api_failure(resp):
                 if not confirm_alerted:
                     confirm_alerted = True
@@ -2715,7 +3302,8 @@ class MinesWbWorkflow:
                         resp,
                         fallback="Weight-confirm service not reachable",
                     )
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return None
                 continue
             ws = resp.status
             logger.info(
@@ -2725,14 +3313,21 @@ class MinesWbWorkflow:
             )
 
             if ws == 2:
-                logger.warning("weight-confirm rejected (weight_status=2)")
+                logger.warning(
+                    "weight-confirm rejected (weight_status=2) - "
+                    "calling reset_checkpoint then exit"
+                )
                 self._ui_status(
                     STEP_READING_WEIGHT, "error", "Weight rejected by server."
                 )
+                reset_ok = self._reset_checkpoint_after_weight_reject()
+                if reset_ok is None:
+                    return None
                 return False
 
             if ws != 1:
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return None
                 continue
 
             updated = resp.raw.get("updated_tolerance")
@@ -2745,10 +3340,13 @@ class MinesWbWorkflow:
                 )
 
             recapture = digitizer.read_stable_weight()
+            if self._reset_requested():
+                return None
             recaptured = recapture.get("weight")
             if recaptured is None or not recapture.get("ok"):
                 logger.warning("weight recapture failed after confirm - retrying")
-                time.sleep(retry_sec)
+                if self._wait_or_reset(retry_sec):
+                    return None
                 continue
 
             txn.weight_kg = float(recaptured)
@@ -2770,24 +3368,35 @@ class MinesWbWorkflow:
                 )
                 return True
 
-            parsed = parse_truck_details(txn.truck_details or "")
-            trip = (parsed.get("trip_type") or "").upper()[:1]
             logger.warning(
                 "Recaptured weight still out of band: %s", band_msg
             )
-            self._announce(weight_type_error_display(trip))
+            self._announce(
+                weight_type_error_display(
+                    txn.weight_kg or 0, txn.truck_details or ""
+                )
+            )
             self._ui_status(STEP_READING_WEIGHT, "warning", band_msg)
-            time.sleep(retry_sec)
+            if self._wait_or_reset(retry_sec):
+                return None
 
-        return False
+        return None
 
     def _enter_exit_granted(
         self, reason: str = "", *, speak_forward: bool = True
     ) -> None:
+        if self._reset_requested():
+            logger.info("Exit grant skipped - Reset already requested (%s)", reason)
+            return
         sm = self.ctx.state_machine
+        if sm and sm.current_state == State.IDLE:
+            logger.info("Exit grant skipped - already IDLE (%s)", reason)
+            return
         if sm and sm.current_state != State.EXIT_GRANTED:
             sm.force_state(State.EXIT_GRANTED)
 
+        self._exit_crossing_seen = False
+        self._exit_pending_idle = False
         logger.info("EXIT_GRANTED reason=%s", reason)
         self._ui_position(4)
         reason_l = str(reason or "").lower()

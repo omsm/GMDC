@@ -21,6 +21,7 @@ from services.api_errors import (  # noqa: E402
     annotate_response,
     classify_http_status,
     is_api_failure,
+    is_oci_transport_failure,
     is_service_alert,
     is_transport_failure,
     operator_copy,
@@ -54,6 +55,26 @@ class TestApiErrors(unittest.TestCase):
         self.assertTrue(resp.popup)
         self.assertEqual(resp.popup_title, "ANPR NOT REACHABLE")
         self.assertNotIn("HTTPConnectionPool", resp.operator_message)
+        self.assertFalse(is_oci_transport_failure(resp))
+
+    def test_oci_unreachable_is_oci_transport_failure(self):
+        resp = SimpleNamespace(
+            ok=False, status=0, message="timeout", raw={}, http_status=0
+        )
+        annotate_response(resp, "rfid-validate")
+        self.assertTrue(is_transport_failure(resp))
+        self.assertTrue(is_oci_transport_failure(resp))
+        self.assertEqual(resp.service_label, "rfid-validate")
+        self.assertFalse(is_oci_transport_failure(resp))
+
+    def test_oci_unreachable_is_oci_transport_failure(self):
+        resp = SimpleNamespace(
+            ok=False, status=0, message="timeout", raw={}, http_status=0
+        )
+        annotate_response(resp, "rfid-validate")
+        self.assertTrue(is_transport_failure(resp))
+        self.assertTrue(is_oci_transport_failure(resp))
+        self.assertEqual(resp.service_label, "rfid-validate")
 
     def test_http_200_is_not_a_popup(self):
         resp = SimpleNamespace(
