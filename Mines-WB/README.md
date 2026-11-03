@@ -1,6 +1,6 @@
 # Mines-WB
 
-**Version:** 1.21.0 (product **1.21** — see [`../version.md`](../version.md))
+**Version:** 1.22.0 (product **1.22** — see [`../version.md`](../version.md))
 
 Single weighbridge runtime for GMDC yard sites (uni-directional or bi-directional).
 
@@ -22,7 +22,17 @@ python main.py
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-wb.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.21)
+## Behaviour notes (1.22)
+
+### I/O + sensors
+- Strict Modbus FC map (no FC fallback). I/O down → popup, reconnect, lock trips until healthy.
+- Sensors are realtime (no last-value hold). Poll rate: `polling.scan_interval` in `iot_configuration.json`.
+
+### Exit before weighbridge
+- Far-side exit cut with WB clear during positioning → invalidate → `error_start` + `weight_capture_issue` × 2 → exit grant → `application_reset` on IDLE.
+
+### Post-ANPR weight lock
+- Fresh 10-identical stable sample after RFID/ANPR; that kg stays fixed for APIs / WebUI / display for the rest of the trip.
 
 ### Bidirectional traffic lights / booms
 - Config: traffic-light `on_state=green` (coil ON = green).

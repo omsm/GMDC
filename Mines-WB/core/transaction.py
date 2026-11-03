@@ -13,6 +13,8 @@ class TransactionStore:
     rfid: str = ""
     vehicle_no: str = ""
     weight_kg: Optional[float] = None
+    # True after post-ANPR 10-stable lock; later digitizer values must not replace it.
+    weight_locked: bool = False
     truck_details: str = ""
     tags: List[str] = field(default_factory=list)
     front_image: str = ""
@@ -32,6 +34,7 @@ class TransactionStore:
         self.rfid = ""
         self.vehicle_no = ""
         self.weight_kg = None
+        self.weight_locked = False
         self.truck_details = ""
         self.tags = []
         self.front_image = ""
@@ -48,6 +51,7 @@ class TransactionStore:
             "rfid": self.rfid,
             "vehicle_no": self.vehicle_no,
             "weight_kg": self.weight_kg,
+            "weight_locked": self.weight_locked,
             "truck_details": self.truck_details,
             "tags": list(self.tags),
             "front_image": self.front_image,

@@ -655,6 +655,11 @@ def _io_online(status: Dict[str, Any]) -> bool:
     kind = str((status or {}).get("type") or "").lower()
     if kind == "demo":
         return bool(status.get("connected"))
+    if status.get("configured") is False:
+        return False
+    healthy = status.get("healthy")
+    if healthy is not None:
+        return bool(healthy) and _usable(status.get("host"), status.get("port"))
     return bool(status.get("connected")) and _usable(
         status.get("host"), status.get("port")
     )

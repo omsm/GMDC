@@ -342,7 +342,8 @@ def register_routes(app: Flask, os_type: str = "auto") -> None:
             }
         )
 
-    # Compatibility with Mines-WB DigitizerClient
+    # Compatibility path: returns *current* weight immediately (no N-stable wait).
+    # Mines-WB MQTT mode owns the 10-identical stable validation.
     @app.route("/read_stable_weight", methods=["GET", "POST", "OPTIONS"])
     def read_stable_weight():
         if request.method == "OPTIONS":
@@ -352,11 +353,11 @@ def register_routes(app: Flask, os_type: str = "auto") -> None:
             resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
             return resp
         ctx = AppContext.get_instance()
-        result = ctx.runtime.wait_stable()
+        result = ctx.runtime.current_weight_response()
         http_status = 200 if result.get("statusCode") == 200 else int(
             result.get("statusCode") or 500
         )
-        logger.info("read_stable_weight -> %s", result)
+        logger.info("read_stable_weight (current) -> %s", result)
         resp = jsonify(result)
         resp.status_code = http_status
         resp.headers["Access-Control-Allow-Origin"] = "*"

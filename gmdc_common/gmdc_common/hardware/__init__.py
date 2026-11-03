@@ -10,8 +10,11 @@ from gmdc_common.hardware.camera import (
 from gmdc_common.hardware.io_controller import (
     DemoIOController,
     IOController,
+    IO_CONNECTION_FAILURE_MSG,
+    IO_NOT_CONFIGURED_MSG,
     ModbusTCPController,
     create_io_controller,
+    is_controller_host_configured,
 )
 from gmdc_common.hardware.rfid_reader import (
     ApiRFIDReader,
@@ -31,8 +34,11 @@ __all__ = [
     "DemoIOController",
     "get_local_ip",
     "IOController",
+    "IO_CONNECTION_FAILURE_MSG",
+    "IO_NOT_CONFIGURED_MSG",
     "ModbusTCPController",
     "create_io_controller",
+    "is_controller_host_configured",
     "ApiRFIDReader",
     "DemoRFIDReader",
     "RFIDReader",

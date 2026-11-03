@@ -2,16 +2,18 @@
 
 Web replacement for the PySide `digitizer-app/serial_ui.py` shell.
 
-Same serial indexing + stable-weight logic, with a **Mines-Checkpoint / Mines-WB** style dashboard and selectable transport:
+Same serial indexing, with a **Mines-Checkpoint / Mines-WB** style dashboard and selectable transport:
 
 | Mode | Behavior |
 |------|----------|
-| **API** | `POST/GET /read_stable_weight` → `{"statusCode":200,"stable_weight":…}` (Mines-WB compatible) |
-| **MQTT** | Publish every weight, including zero and repeats, every 200 ms. A message on `topic_subscribe` publishes the current value immediately on `topic_publish`. |
+| **API** | `POST/GET /read_stable_weight` → immediate **current** weight (no N-stable wait) |
+| **MQTT** | Publish every **current** weight, including zero and repeats, every 200 ms. A message on `topic_subscribe` republishes immediately. |
+
+**Stable validation:** Mines-WB counts N identical MQTT samples. This decoder does **not** gate publish/API on stability; the dashboard streak (`1…10`) is view-only.
 
 The original `digitizer-app/` PySide UI remains available unchanged.
 
-Product version: **1.17** (see root [`version.md`](../version.md)).
+Product version: **1.22** (see root [`version.md`](../version.md)).
 
 ## Layout
 
@@ -23,7 +25,7 @@ digitizer-decoder/
   core/app_context.py     # application management
   services/
     index_engine.py       # ASCII index extraction (from digitizer-app)
-    weight_runtime.py     # stable-weight waiter
+    weight_runtime.py     # live weight + UI-only streak counter
     serial_service.py     # fixed 40-byte reads + reconnect
     mqtt_bridge.py        # MQTT request/response + live status
   api/                    # Flask dashboard + weight API
@@ -57,7 +59,7 @@ Live weight is published on `gmdc/digitizer/weight` in MQTT mode every 200 ms. Z
 
 **Site layout:** run Mosquitto on the Mines-WB Mac; point decoder `communication.mqtt.broker_host` at that Mac’s LAN IP.
 
-Live weight is always shown: **red** while unstable, **green** when stable. Stable count wraps `1…10` then restarts at `1`.
+Live weight is always shown. The local streak counter wraps `1…10` then restarts at `1` (**view only** — Mines-WB decides trip stability).
 
 ### MQTT weight topics
 

@@ -1,16 +1,21 @@
-"""Thread-safe live / stable weight runtime (from digitizer-app WeightRuntime)."""
+"""Thread-safe live weight runtime for digitizer-decoder.
+
+Stability validation (N identical readings) belongs to Mines-WB.
+This runtime only:
+  - tracks the latest current weight for MQTT / HTTP
+  - maintains a local identical-reading counter for the dashboard UI (view only)
+"""
 
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any, Callable, Dict, Optional
 
 from config.settings import READ_TIMEOUT_SEC, STABLE_READ_COUNT
 
 
 class WeightRuntime:
-    """Thread-safe live weight + stable-weight waiter used by HTTP / MQTT."""
+    """Live weight store + UI-only identical-count display helper."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -18,12 +23,12 @@ class WeightRuntime:
         self.current_weight: Optional[float] = None
         self.last_raw: str = ""
         self.last_raw_bytes: bytes = b""
-        self.stable_weight: Optional[float] = None
-        self.stable_count_seen = 0
-        self.stable_count_required = STABLE_READ_COUNT
+        # UI view-only streak (not used to gate MQTT/HTTP/API consumers).
+        self.view_weight: Optional[float] = None
+        self.view_count_seen = 0
+        self.view_count_required = STABLE_READ_COUNT
         self.read_timeout_sec = READ_TIMEOUT_SEC
         self.indexing: Optional[Dict[str, Any]] = None
-        self._stable_latched = False
         self._cond = threading.Condition(self._lock)
         self._on_update: Optional[Callable[[], None]] = None
 
@@ -42,7 +47,7 @@ class WeightRuntime:
     def update_config(self, config: Dict[str, Any]) -> None:
         with self._lock:
             self.indexing = config.get("indexing") or None
-            self.stable_count_required = STABLE_READ_COUNT
+            self.view_count_required = STABLE_READ_COUNT
             self.read_timeout_sec = READ_TIMEOUT_SEC
 
     def set_connected(self, connected: bool) -> None:
@@ -50,9 +55,8 @@ class WeightRuntime:
             self.connected = connected
             if not connected:
                 self.current_weight = None
-                self.stable_weight = None
-                self.stable_count_seen = 0
-                self._stable_latched = False
+                self.view_weight = None
+                self.view_count_seen = 0
                 self.last_raw = ""
                 self.last_raw_bytes = b""
             self._cond.notify_all()
@@ -70,79 +74,74 @@ class WeightRuntime:
             self.current_weight = weight
             self.last_raw = raw_message
             self.last_raw_bytes = raw_bytes
-            required = self.stable_count_required
+            required = self.view_count_required
 
+            # Dashboard streak only — never gates MQTT publish or HTTP responses.
             if weight <= 0:
-                self.stable_weight = None
-                self.stable_count_seen = 0
-                self._stable_latched = False
-            elif self.stable_weight is not None and weight == self.stable_weight:
-                self.stable_count_seen += 1
-                if self.stable_count_seen >= required:
-                    self._stable_latched = True
-                # Wrap after required so UI never shows 11/10, 19/10, …
-                if self.stable_count_seen > required:
-                    self.stable_count_seen = 1
+                self.view_weight = None
+                self.view_count_seen = 0
+            elif self.view_weight is not None and weight == self.view_weight:
+                self.view_count_seen += 1
+                if self.view_count_seen > required:
+                    self.view_count_seen = 1
             else:
-                self.stable_weight = weight
-                self.stable_count_seen = 1
-                self._stable_latched = False
+                self.view_weight = weight
+                self.view_count_seen = 1
 
             self._cond.notify_all()
         self._notify_update()
 
-    def is_stable(self) -> bool:
-        with self._lock:
-            if (
-                self._stable_latched
-                and self.stable_weight is not None
-                and self.stable_weight > 0
-            ):
-                return True
-            return (
-                self.stable_weight is not None
-                and self.stable_weight > 0
-                and self.stable_count_seen >= self.stable_count_required
-            )
-
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            stable = self.is_stable()
+            required = self.view_count_required
+            seen = self.view_count_seen
+            view_ok = (
+                self.view_weight is not None
+                and self.view_weight > 0
+                and seen >= required
+            )
             return {
                 "connected": self.connected,
                 "current_weight": self.current_weight,
-                "stable": stable,
-                "stable_weight": self.stable_weight if stable else None,
-                "stable_count": f"{self.stable_count_seen}/{self.stable_count_required}",
+                # UI aliases (view-only; Mines-WB owns real stable validation).
+                "stable": view_ok,
+                "stable_weight": self.view_weight if view_ok else None,
+                "stable_count": f"{seen}/{required}",
                 "indexing_configured": bool(self.indexing),
                 "last_raw": self.last_raw,
             }
 
+    def current_weight_response(self) -> Dict[str, Any]:
+        """
+        Immediate current weight for HTTP callers.
+
+        Does not wait for N identical readings — Mines-WB validates stability
+        from the MQTT live stream (or by polling this endpoint itself).
+        """
+        with self._lock:
+            if not self.connected:
+                return {
+                    "statusCode": 503,
+                    "stable_weight": None,
+                    "current_weight": None,
+                    "message": "Digitizer serial not connected",
+                }
+            if self.current_weight is None:
+                return {
+                    "statusCode": 408,
+                    "stable_weight": None,
+                    "current_weight": None,
+                    "message": "No weight reading yet",
+                }
+            weight = float(self.current_weight)
+            return {
+                "statusCode": 200,
+                "stable_weight": weight,
+                "current_weight": weight,
+                "weight": weight,
+                "message": "current weight (stability validated by Mines-WB)",
+            }
+
     def wait_stable(self, timeout: Optional[float] = None) -> Dict[str, Any]:
-        deadline = time.monotonic() + (
-            self.read_timeout_sec if timeout is None else timeout
-        )
-        with self._cond:
-            while True:
-                if not self.connected:
-                    return {
-                        "statusCode": 503,
-                        "stable_weight": None,
-                        "message": "Digitizer serial not connected",
-                    }
-                if self.is_stable():
-                    return {
-                        "statusCode": 200,
-                        "stable_weight": self.stable_weight,
-                    }
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return {
-                        "statusCode": 408,
-                        "stable_weight": self.current_weight,
-                        "message": (
-                            f"Stable weight not reached "
-                            f"({self.stable_count_seen}/{self.stable_count_required})"
-                        ),
-                    }
-                self._cond.wait(timeout=min(remaining, 0.25))
+        """Backward-compatible alias — returns current weight with no wait."""
+        return self.current_weight_response()

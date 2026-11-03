@@ -1,6 +1,6 @@
 # Mines-Checkpoint
 
-**Version:** 1.21.0 (product **1.21** — see [`../version.md`](../version.md))
+**Version:** 1.22.0 (product **1.22** — see [`../version.md`](../version.md))
 
 Single checkpoint runtime for GMDC yard sites. One process can run multiple lanes from `lanes` in `iot_configuration.json` (Mines Entry, Traffic IN/OUT, Mines Exit).
 
@@ -30,8 +30,9 @@ Change that value and restart the app. `.env` overrides per-lane `vehicle_crossi
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-checkpoint.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.21)
+## Behaviour notes (1.22)
 
+- **I/O + sensors:** strict Modbus FCs; I/O down → popup / reconnect / lock trips; sensors realtime (no last-value hold). Poll: `polling.scan_interval`.
 - **Idle FTP photo upload:** on every IDLE (start or after a trip), a background FTP uploader sends all files under `images/` (including lane folders) to `10.80.118.100` as user `ftpclient`, remote `/Mines-Checkpoint`. Configure via `FTP_*` in `.env`. Successful uploads are removed locally.
 - **Display MQTT:** set `display.display_ip` per lane in `iot_configuration.json`. App subscribes to `display_info/{display_ip}` and immediately publishes that lane’s letter on `pcb_id/{display_ip}`:
   - Mines Entry → `a` · Traffic IN → `b` · Traffic OUT → `c` · Mines Exit → `d`

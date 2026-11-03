@@ -42,6 +42,8 @@ class SensorPoller:
         on_entry_occupied: Optional[Callable[[], None]] = None,
         on_exit_occupied: Optional[Callable[[], None]] = None,
         on_wb_occupied: Optional[Callable[[], None]] = None,
+        on_read_failure: Optional[Callable[[], None]] = None,
+        on_read_recovered: Optional[Callable[[], None]] = None,
     ):
         self.io = io
         self.entry_pin = entry_pin
@@ -56,6 +58,8 @@ class SensorPoller:
         self.on_entry_occupied = on_entry_occupied
         self.on_exit_occupied = on_exit_occupied
         self.on_wb_occupied = on_wb_occupied
+        self.on_read_failure = on_read_failure
+        self.on_read_recovered = on_read_recovered
 
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -69,19 +73,29 @@ class SensorPoller:
         self._entry_occupied = False
         self._exit_occupied = False
         self._wb_occupied = False
+        self._read_healthy = True
+        self._consecutive_failures = 0
 
     def _addr(self, pin: int) -> int:
         return self.di_start_address + pin
 
-    def _read_active(self, pin: Optional[int]) -> bool:
+    def _read_active(self, pin: Optional[int]) -> Optional[bool]:
+        """
+        Return True/False for beam active, or None when the Modbus read fails.
+
+        Uses the controller's configured read_fc only (via read_discrete_inputs).
+        Never falls back to the other function code. Sensors are realtime-only:
+        on None the poller clears displayed levels and reconnects — it does not
+        keep a stale occupied value.
+        """
         if pin is None:
             return False
         addr = self._addr(pin)
         bits = self.io.read_discrete_inputs(addr, 1)
         if bits is None:
-            bits = self.io.read_coils(addr, 1)
+            return None
         if not bits:
-            return False
+            return None
         raw = bool(bits[0])
         return raw if self.active_high else not raw
 
@@ -110,10 +124,13 @@ class SensorPoller:
             self._thread = None
 
     def reset_edge_state(self) -> None:
-        """Clear occupied latch (e.g. after force reset to IDLE)."""
+        """Clear occupied latch and previous samples (e.g. after force reset)."""
         self._entry_occupied = False
         self._exit_occupied = False
         self._wb_occupied = False
+        self._prev_entry = False
+        self._prev_exit = False
+        self._prev_wb = False
 
     def _handle_channel(
         self,
@@ -156,6 +173,21 @@ class SensorPoller:
                     logger.exception(
                         "%s sensor occupied callback error: %s", name, e
                     )
+        elif current and prev and not occupied:
+            # Already TRUE but latch unset (startup / after I/O recovery).
+            occupied = publish(True)
+            logger.info(
+                "%s sensor already TRUE (occupied latch sync) addr=%s",
+                name,
+                self._addr(pin),
+            )
+            if occupied_callback:
+                try:
+                    occupied_callback()
+                except Exception as e:
+                    logger.exception(
+                        "%s sensor occupied callback error: %s", name, e
+                    )
         elif not current and prev and occupied:
             occupied = publish(False)
             logger.info(
@@ -170,20 +202,72 @@ class SensorPoller:
                     logger.exception("%s sensor clear callback error: %s", name, e)
         return occupied
 
+    def _mark_failure(self) -> None:
+        was_healthy = self._read_healthy
+        self._consecutive_failures += 1
+        self._read_healthy = False
+        # Realtime: drop stale levels immediately (no last-value hold).
+        # Skip edge callbacks — I/O fault popup + reconnect owns the reaction.
+        self._last_entry = False
+        self._last_exit = False
+        self._last_wb = False
+        self._entry_occupied = False
+        self._exit_occupied = False
+        self._wb_occupied = False
+        self._prev_entry = False
+        self._prev_exit = False
+        self._prev_wb = False
+        ensure = getattr(self.io, "ensure_connected", None)
+        if callable(ensure):
+            try:
+                ensure()
+            except Exception:
+                logger.debug(
+                    "ensure_connected after sensor fail raised", exc_info=True
+                )
+        if was_healthy and self.on_read_failure:
+            try:
+                self.on_read_failure()
+            except Exception:
+                logger.exception("on_read_failure callback error")
+
+    def _mark_success(self) -> None:
+        was_healthy = self._read_healthy
+        self._consecutive_failures = 0
+        self._read_healthy = True
+        if not was_healthy and self.on_read_recovered:
+            try:
+                self.on_read_recovered()
+            except Exception:
+                logger.exception("on_read_recovered callback error")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
                 entry = self._read_active(self.entry_pin)
                 exit_ = self._read_active(self.exit_pin)
                 wb = self._read_active(self.wb_pin)
-                self._last_entry = entry
-                self._last_exit = exit_
-                self._last_wb = wb
+
+                # Any configured channel returning None is a Modbus failure.
+                failed = (
+                    (self.entry_pin is not None and entry is None)
+                    or (self.exit_pin is not None and exit_ is None)
+                    or (self.wb_pin is not None and wb is None)
+                )
+                if failed:
+                    self._mark_failure()
+                    self._stop.wait(self.poll_interval)
+                    continue
+
+                self._mark_success()
+                self._last_entry = bool(entry)
+                self._last_exit = bool(exit_)
+                self._last_wb = bool(wb)
 
                 self._entry_occupied = self._handle_channel(
                     name="Entry",
                     pin=self.entry_pin,
-                    current=entry,
+                    current=self._last_entry,
                     prev=self._prev_entry,
                     occupied=self._entry_occupied,
                     callback=self.on_entry,
@@ -193,7 +277,7 @@ class SensorPoller:
                 self._exit_occupied = self._handle_channel(
                     name="Exit",
                     pin=self.exit_pin,
-                    current=exit_,
+                    current=self._last_exit,
                     prev=self._prev_exit,
                     occupied=self._exit_occupied,
                     callback=self.on_exit,
@@ -203,7 +287,7 @@ class SensorPoller:
                 self._wb_occupied = self._handle_channel(
                     name="WB",
                     pin=self.wb_pin,
-                    current=wb,
+                    current=self._last_wb,
                     prev=self._prev_wb,
                     occupied=self._wb_occupied,
                     callback=self.on_wb,
@@ -211,11 +295,12 @@ class SensorPoller:
                     store=lambda value: setattr(self, "_wb_occupied", value),
                 )
 
-                self._prev_entry = entry
-                self._prev_exit = exit_
-                self._prev_wb = wb
+                self._prev_entry = self._last_entry
+                self._prev_exit = self._last_exit
+                self._prev_wb = self._last_wb
             except Exception as e:
                 logger.error("Sensor poll error: %s", e)
+                self._mark_failure()
             self._stop.wait(self.poll_interval)
 
     def simulate_entry(self) -> None:
@@ -256,6 +341,8 @@ class SensorPoller:
             "wb_pin": self.wb_pin,
             "di_start_address": self.di_start_address,
             "edge_mode": "falling_after_occupied",
+            "read_healthy": self._read_healthy,
+            "consecutive_failures": self._consecutive_failures,
             "entry_addr": (
                 self._addr(self.entry_pin) if self.entry_pin is not None else None
             ),

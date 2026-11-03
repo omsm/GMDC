@@ -2,10 +2,14 @@
 GMDC Digitizer Decoder — web-based weighbridge digitizer service.
 
 Replaces the PySide serial_ui desktop shell with a Flask dashboard that keeps
-the same serial indexing / stable-weight logic, and adds selectable transport:
+the same serial indexing, and adds selectable transport:
 
-  - API  → POST/GET /read_stable_weight (Mines-WB compatible)
-  - MQTT → publish every weight, including zero and repeats, every 200 ms; request topic publishes the current value immediately
+  - API  → POST/GET /read_stable_weight returns *current* weight immediately
+  - MQTT → publish every current weight (incl. zero/repeats) every 200 ms;
+           request topic republishes the current value immediately
+
+N-identical stable validation is owned by Mines-WB (MQTT stream). This app
+only shows a local streak counter on the dashboard for operator view.
 
 Usage:
   cd digitizer-decoder

@@ -84,6 +84,92 @@ class CheckpointWorkflow:
         self._boom_close_timer_lock = threading.Lock()
         self._rfid_idle_prepare_lock = threading.Lock()
         self._status_check_alerted = False
+        self._io_fault = False
+        self._io_fault_message = ""
+        self._io_monitor_attached = False
+
+    def attach_io_monitor(self) -> None:
+        """Subscribe to Modbus health and lock the lane when the link is down."""
+        if self._io_monitor_attached:
+            return
+        io = getattr(self.ctx, "io", None)
+        if io is None:
+            return
+        setter = getattr(io, "set_health_callback", None)
+        if callable(setter):
+            setter(self.on_io_health)
+            self._io_monitor_attached = True
+        configured = True
+        if hasattr(io, "is_configured"):
+            configured = bool(io.is_configured())
+        connected = bool(io.is_connected()) if hasattr(io, "is_connected") else False
+        status = io.get_status() if hasattr(io, "get_status") else {}
+        last_error = str((status or {}).get("last_error") or "")
+        if not configured:
+            self.on_io_health(
+                False, last_error or "Controller not configured. Please Check!"
+            )
+        elif not connected:
+            self.on_io_health(
+                False, last_error or "I/O connection failure. Please Check !"
+            )
+
+    def io_is_locked(self) -> bool:
+        return bool(self._io_fault)
+
+    def on_io_health(self, healthy: bool, message: str = "") -> None:
+        msg = str(message or "").strip()
+        if healthy:
+            if not self._io_fault:
+                return
+            logger.info("I/O controller recovered - unlocking workflow")
+            self._io_fault = False
+            self._io_fault_message = ""
+            self._ui_status(
+                STEP_RFID_READ,
+                "success",
+                "I/O controller online.",
+                popup=False,
+                popup_title="",
+            )
+            fe = self._frontend()
+            if fe and hasattr(fe, "publish_device_status"):
+                fe.publish_device_status()
+            return
+
+        if not msg:
+            msg = "I/O connection failure. Please Check !"
+        already = self._io_fault and self._io_fault_message == msg
+        self._io_fault = True
+        self._io_fault_message = msg
+        logger.error("I/O controller fault - locking workflow: %s", msg)
+        title = (
+            "CONTROLLER NOT CONFIGURED"
+            if "not configured" in msg.lower()
+            else "I/O CONNECTION FAILURE"
+        )
+        self._ui_status(
+            STEP_RFID_READ,
+            "error",
+            msg,
+            popup=True,
+            popup_title=title,
+        )
+        voice = getattr(self.ctx, "voice", None)
+        if voice and hasattr(voice, "weighbridge_0") and not already:
+            try:
+                voice.weighbridge_0()
+            except Exception:
+                logger.exception("weighbridge_0 voice failed during I/O fault")
+        sm = self.ctx.state_machine
+        if sm and sm.current_state not in (State.IDLE, State.FREE_PASS):
+            try:
+                self.force_reset()
+            except Exception:
+                logger.exception("force_reset during I/O fault failed")
+        fe = self._frontend()
+        if fe and hasattr(fe, "publish_device_status"):
+            fe.publish_device_status()
 
     def _lane_log_key(self) -> str:
         settings = self.ctx.settings
@@ -387,6 +473,12 @@ class CheckpointWorkflow:
         sm = self.ctx.state_machine
         if not sm:
             return
+        if self.io_is_locked():
+            logger.warning(
+                "RFID tags ignored - I/O locked (%s)", self._io_fault_message
+            )
+            self.on_io_health(False, self._io_fault_message)
+            return
         if sm.current_state != State.IDLE:
             logger.warning(
                 "Ignoring RFID tags while in state %s", sm.current_state.name
@@ -425,6 +517,10 @@ class CheckpointWorkflow:
         txn_store = self.ctx.transactions
         if not sm or not oci or not settings or not txn_store:
             raise RuntimeError("Workflow not ready")
+        if self.io_is_locked():
+            raise RuntimeError(
+                self._io_fault_message or "I/O connection failure. Please Check !"
+            )
         if sm.current_state != State.IDLE:
             raise RuntimeError(
                 f"Ignoring RFID while in state {sm.current_state.name}"

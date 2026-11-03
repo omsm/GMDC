@@ -35,6 +35,9 @@ class TrafficLight:
         """One Modbus DO drives both colours via NO/NC contacts."""
         return self.green_pin is None and self.red_pin is not None
 
+    def _has_pins(self) -> bool:
+        return self.red_pin is not None or self.green_pin is not None
+
     def _write(self, address: Optional[int], value: bool) -> bool:
         if address is None:
             return True
@@ -57,6 +60,12 @@ class TrafficLight:
         return ok
 
     def set_red(self) -> bool:
+        if not self._has_pins():
+            logger.error(
+                "TrafficLight[%s] no pins configured - set_red rejected",
+                self.name,
+            )
+            return False
         ok = True
         if self._is_single_coil():
             # Energize when NO = red; de-energize when NO = green.
@@ -66,11 +75,24 @@ class TrafficLight:
                 ok = self._write(self.green_pin, False) and ok
             if self.red_pin is not None:
                 ok = self._write(self.red_pin, True) and ok
-        self._state = "red"
-        logger.info("TrafficLight[%s] -> RED", self.name)
+        if ok:
+            self._state = "red"
+            logger.info("TrafficLight[%s] -> RED", self.name)
+        else:
+            logger.error(
+                "TrafficLight[%s] RED write failed - state left as %s",
+                self.name,
+                self._state,
+            )
         return ok
 
     def set_green(self) -> bool:
+        if not self._has_pins():
+            logger.error(
+                "TrafficLight[%s] no pins configured - set_green rejected",
+                self.name,
+            )
+            return False
         ok = True
         if self._is_single_coil():
             ok = self._write(self.red_pin, self.relay_on_green) and ok
@@ -79,18 +101,38 @@ class TrafficLight:
                 ok = self._write(self.red_pin, False) and ok
             if self.green_pin is not None:
                 ok = self._write(self.green_pin, True) and ok
-        self._state = "green"
-        logger.info("TrafficLight[%s] -> GREEN", self.name)
+        if ok:
+            self._state = "green"
+            logger.info("TrafficLight[%s] -> GREEN", self.name)
+        else:
+            logger.error(
+                "TrafficLight[%s] GREEN write failed - state left as %s",
+                self.name,
+                self._state,
+            )
         return ok
 
     def set_off(self) -> bool:
+        if not self._has_pins():
+            logger.error(
+                "TrafficLight[%s] no pins configured - set_off rejected",
+                self.name,
+            )
+            return False
         ok = True
         if self.red_pin is not None:
             ok = self._write(self.red_pin, False) and ok
         if self.green_pin is not None:
             ok = self._write(self.green_pin, False) and ok
-        self._state = "off"
-        logger.info("TrafficLight[%s] -> OFF", self.name)
+        if ok:
+            self._state = "off"
+            logger.info("TrafficLight[%s] -> OFF", self.name)
+        else:
+            logger.error(
+                "TrafficLight[%s] OFF write failed - state left as %s",
+                self.name,
+                self._state,
+            )
         return ok
 
     def get_status(self) -> dict:

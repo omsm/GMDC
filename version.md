@@ -1,13 +1,45 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.21**
+**Current version: 1.22**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.21 — 2026-11-02 (latest)
+## 1.22 — 2026-11-03 (latest)
+
+Strict Modbus I/O (no FC fallbacks), realtime sensors with I/O-down lock, far-side exit-before-WB abort, post-ANPR locked stable weight, and digitizer-decoder current-weight-only MQTT.
+
+### I/O controller (`gmdc_common`)
+- Strict function codes only: read FC1/FC2, write FC5/FC6 — **no** FC2→FC1 (or other) cross-fallback on failure
+- Immediate socket reconnect on the first failed transaction (`RESYNC_AFTER_FAILURES = 1`)
+- Host missing / localhost → not configured: connect refused, status `configured=false`, operator message *Controller not configured. Please Check!*
+- Boom / traffic light: no fake success when disabled, pins missing, or Modbus write fails (state unchanged on fail)
+
+### Sensors — realtime + I/O fault lock (Mines-WB + Mines-Checkpoint)
+- Sensor values are **realtime only** (no last-value hold on read failure); levels clear when the link drops; no ghost edges from a failed poll
+- I/O unreachable → popup (*I/O connection failure* / *Controller not configured*), `weighbridge_0.wav` on WB when available, abort in-flight trip, block new trips until the controller is healthy again
+- Sensor poll rate remains `polling.scan_interval` in `iot_configuration.json` (default `0.3` s); `polling.delay` is unused
+
+### Mines-WB — exit before weighbridge
+- Uni: after entry starts positioning, exit cut with WB clear → invalidate trip
+- Bi: after direction is set, corresponding far-side cut with WB clear → same path
+- Sequence: `error_start.wav` → `weight_capture_issue.wav` × 2 → grant vehicle exit → `application_reset.wav` when the lane returns to IDLE
+- Exit cut **with** WB still occupied still uses move-backward
+
+### Mines-WB — post-ANPR weight lock
+- After RFID + ANPR, a **fresh** 10-identical MQTT stable sample is taken (`read_stable_weight(fresh=True)`)
+- That weight is locked for the rest of the trip (OCI APIs, WebUI digitizer panel, LED weight text)
+- Later digitizer changes are ignored for the transaction; weight-confirm re-checks the **locked** kg against updated tolerance (no recapture)
+
+### Digitizer Decoder
+- MQTT / HTTP return **current** weight only; backend does **not** wait for N-identical stable validation
+- Dashboard streak `1…10` remains **view-only**; Mines-WB owns trip stability from the live MQTT stream
+
+---
+
+## 1.21 — 2026-11-02
 
 Site-wide MQTT display handshake via `display_ip` (pcb letters a–d), idle background FTP photo upload, and Checkpoint crossing timeout from `.env`.
 
@@ -515,6 +547,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.22** | Strict Modbus I/O + realtime sensors + I/O-down lock; exit-before-WB abort; post-ANPR locked 10-stable weight; decoder current-weight MQTT |
 | **1.21** | display_ip pcb a–d handshake; idle FTP photo upload; Checkpoint `VEHICLE_CROSSING_TIMEOUT_SEC` from `.env` |
 | **1.20** | Mac Mini launchd services; bi-dir TL polarity/idle/exit; tare reset_checkpoint on weight_status=2; tare/gross URL split; RFID keepalive; internet@ down |
 | **1.19** | Checkpoint ANPR-off RTSP photo per lane; Mines-WB low-weight wait until 0; `MISC_MIN_WEIGHT` reset vs exit on positioning drop |

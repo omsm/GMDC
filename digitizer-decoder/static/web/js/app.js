@@ -299,9 +299,10 @@
             liveEl.classList.toggle('is-unstable', !s.stable);
         }
 
+        // View-only streak on this page. Mines-WB validates 10-identical for trips.
         $('stable-meta').textContent = s.stable
-            ? ('Stable: ' + Number(s.stable_weight).toFixed(2) + ' kg (' + (s.stable_count || '--') + ')')
-            : ('Waiting for stable… (' + (s.stable_count || '--') + ')');
+            ? ('View streak: ' + Number(s.stable_weight).toFixed(2) + ' kg (' + (s.stable_count || '--') + ') — Mines-WB validates')
+            : ('View streak… (' + (s.stable_count || '--') + ') — Mines-WB validates');
         $('raw-line').textContent = s.last_raw || '';
 
         setBadge('serial-status-badge', 'serial-status-text', !!s.serial_connected,
@@ -528,10 +529,11 @@
     }
 
     async function onTestWeight() {
-        $('save-result').textContent = 'Waiting for stable weight…';
+        $('save-result').textContent = 'Reading current weight…';
         var res = await api('/read_stable_weight', { method: 'POST', body: '{}' });
         if (res.data && res.data.statusCode === 200) {
-            $('save-result').textContent = 'Stable weight: ' + Number(res.data.stable_weight).toFixed(2) + ' kg';
+            var w = res.data.current_weight != null ? res.data.current_weight : res.data.stable_weight;
+            $('save-result').textContent = 'Current weight: ' + Number(w).toFixed(2) + ' kg (Mines-WB validates stability)';
         } else {
             $('save-result').textContent = (res.data && (res.data.message || JSON.stringify(res.data))) || 'Failed';
         }

@@ -467,6 +467,30 @@ class VoiceService:
             self._end_multi_play()
         logger.info("Voice: weight error (error_start + weight-error)")
 
+    def weight_capture_issue(self) -> None:
+        """Far-side exit before WB: error_start then weight_capture_issue.wav twice.
+
+        Blocks until all clips finish so the caller can grant exit afterwards.
+        """
+        if not self._enabled:
+            return
+        my_id = self._start_multi_play()
+        try:
+            if not self._is_play_valid(my_id):
+                return
+            self._play_safe(self._err("error_start.wav"), interrupt=False)
+            for _ in range(2):
+                if not self._is_play_valid(my_id):
+                    return
+                self._play_safe(
+                    self._err("weight_capture_issue.wav"), interrupt=False
+                )
+        finally:
+            self._end_multi_play()
+        logger.info(
+            "Voice: weight capture issue (error_start + weight_capture_issue x2)"
+        )
+
     def weighbridge_0(self) -> None:
         """Platform (s2) and exit (s3) occupied while the lane is IDLE."""
         self._play_async(self._err("weighbridge_0.wav"))

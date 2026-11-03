@@ -30,25 +30,44 @@ class BoomBarrier:
 
     def open(self) -> bool:
         if not self.enabled:
-            logger.warning("BoomBarrier[%s] disabled - open ignored", self.name)
-            self._state = "open"
-            return True
+            logger.warning(
+                "BoomBarrier[%s] disabled - open rejected (no fake success)",
+                self.name,
+            )
+            return False
+        if self.open_pin is None and self.close_pin is None:
+            logger.error(
+                "BoomBarrier[%s] no pins configured - open rejected", self.name
+            )
+            return False
         ok = True
         if self.close_pin is not None:
             ok = self.io.write_coil(self.close_pin, False) and ok
         if self.open_pin is not None:
             ok = self.io.write_coil(self.open_pin, True) and ok
-        elif self.close_pin is None and self.open_pin is None:
-            logger.warning("BoomBarrier[%s] no pins configured", self.name)
-        self._state = "open"
-        logger.info("BoomBarrier[%s] -> OPEN", self.name)
+        if ok:
+            self._state = "open"
+            logger.info("BoomBarrier[%s] -> OPEN", self.name)
+        else:
+            logger.error(
+                "BoomBarrier[%s] OPEN write failed - state left as %s",
+                self.name,
+                self._state,
+            )
         return ok
 
     def close(self) -> bool:
         if not self.enabled:
-            logger.warning("BoomBarrier[%s] disabled - close ignored", self.name)
-            self._state = "closed"
-            return True
+            logger.warning(
+                "BoomBarrier[%s] disabled - close rejected (no fake success)",
+                self.name,
+            )
+            return False
+        if self.open_pin is None and self.close_pin is None:
+            logger.error(
+                "BoomBarrier[%s] no pins configured - close rejected", self.name
+            )
+            return False
         ok = True
         if self.open_pin is not None and self.close_pin is None:
             # Single-pin: LOW = closed
@@ -58,8 +77,15 @@ class BoomBarrier:
                 ok = self.io.write_coil(self.open_pin, False) and ok
             if self.close_pin is not None:
                 ok = self.io.write_coil(self.close_pin, True) and ok
-        self._state = "closed"
-        logger.info("BoomBarrier[%s] -> CLOSED", self.name)
+        if ok:
+            self._state = "closed"
+            logger.info("BoomBarrier[%s] -> CLOSED", self.name)
+        else:
+            logger.error(
+                "BoomBarrier[%s] CLOSE write failed - state left as %s",
+                self.name,
+                self._state,
+            )
         return ok
 
     def get_status(self) -> dict:

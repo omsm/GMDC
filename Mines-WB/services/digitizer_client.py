@@ -95,7 +95,12 @@ class DigitizerClient:
     def supports_live_weight(self) -> bool:
         return False
 
-    def read_stable_weight(self) -> Dict[str, Any]:
+    def clear_stability(self) -> None:
+        """API mode has no local stability state."""
+        return None
+
+    def read_stable_weight(self, *, fresh: bool = False) -> Dict[str, Any]:
+        """POST /read_stable_weight. ``fresh`` is accepted for API parity."""
         if self.demo_mode:
             logger.info("Digitizer DEMO weight=%.1f", self.demo_weight_kg)
             return {
@@ -107,7 +112,7 @@ class DigitizerClient:
         from urllib.error import HTTPError, URLError
         from urllib.request import Request, urlopen
 
-        logger.info("Digitizer POST %s", self.url)
+        logger.info("Digitizer POST %s (fresh=%s)", self.url, fresh)
         try:
             req = Request(
                 self.url,
@@ -343,6 +348,15 @@ class DigitizerMqttClient:
         with self._lock:
             return self._current_weight
 
+    def clear_stability(self) -> None:
+        """Drop any cached stable sample so the next read waits for a new streak."""
+        with self._lock:
+            self._stable = False
+            self._stable_weight = None
+            self._stable_candidate = None
+            self._stable_seen = 0
+            self._stable_wait.clear()
+
     def is_alive(self) -> bool:
         if self.demo_mode:
             return True
@@ -355,7 +369,13 @@ class DigitizerMqttClient:
             age = time.monotonic() - self._last_heartbeat
             return age <= self.heartbeat_timeout_sec
 
-    def read_stable_weight(self) -> Dict[str, Any]:
+    def read_stable_weight(self, *, fresh: bool = False) -> Dict[str, Any]:
+        """
+        Wait until ``stable_count`` identical non-zero MQTT readings arrive.
+
+        ``fresh=True`` clears any previously reached stable sample first so the
+        caller (post RFID/ANPR lock) does not reuse a mid-validation weight.
+        """
         if self.demo_mode:
             logger.info("Digitizer MQTT DEMO weight=%.1f", self.demo_weight_kg)
             return {
@@ -377,9 +397,13 @@ class DigitizerMqttClient:
                 "popup_title": title,
             }
 
+        if fresh:
+            self.clear_stability()
+
         with self._lock:
             if (
-                self._stable
+                not fresh
+                and self._stable
                 and self._stable_weight is not None
                 and float(self._stable_weight) > 0
             ):

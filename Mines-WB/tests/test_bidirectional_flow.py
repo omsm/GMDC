@@ -451,8 +451,9 @@ class TestBidirectionalFlow(unittest.TestCase):
         ctx.digitizer.read_stable_weight.assert_called()
         workflow.force_reset()
 
-    def test_entry_a_far_side_cut_before_wb_plays_check_weighbridge(self):
-        """ENTRY_A: exit cut while WB clear → buzzer + weighbridge_0 (bi only)."""
+    def test_entry_a_far_side_cut_before_wb_invalidates(self):
+        """ENTRY_A: exit cut while WB clear → weight_capture_issue then exit grant."""
+        import time
         from config.constants import State
 
         workflow, ctx = self._make_workflow()
@@ -469,12 +470,24 @@ class TestBidirectionalFlow(unittest.TestCase):
 
         workflow.on_exit_occupied()
 
-        ctx.voice.check_weighbridge.assert_called()
+        for _ in range(50):
+            if ctx.voice.weight_capture_issue.called:
+                break
+            time.sleep(0.02)
+        ctx.voice.weight_capture_issue.assert_called()
         ctx.voice.move_backward.assert_not_called()
+        ctx.voice.check_weighbridge.assert_not_called()
+        for _ in range(50):
+            if ctx.state_machine.current_state == State.EXIT_GRANTED:
+                break
+            time.sleep(0.02)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        self.assertTrue(workflow._announce_reset_after_exit)
         workflow.force_reset()
 
-    def test_entry_b_far_side_cut_before_wb_plays_check_weighbridge(self):
-        """ENTRY_B: entry cut while WB clear → buzzer + weighbridge_0 (bi only)."""
+    def test_entry_b_far_side_cut_before_wb_invalidates(self):
+        """ENTRY_B: entry cut while WB clear → weight_capture_issue then exit grant."""
+        import time
         from config.constants import State
 
         workflow, ctx = self._make_workflow()
@@ -490,12 +503,22 @@ class TestBidirectionalFlow(unittest.TestCase):
 
         workflow.on_entry_occupied()
 
-        ctx.voice.check_weighbridge.assert_called()
+        for _ in range(50):
+            if ctx.voice.weight_capture_issue.called:
+                break
+            time.sleep(0.02)
+        ctx.voice.weight_capture_issue.assert_called()
         ctx.voice.move_backward.assert_not_called()
+        for _ in range(50):
+            if ctx.state_machine.current_state == State.EXIT_GRANTED:
+                break
+            time.sleep(0.02)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
         workflow.force_reset()
 
-    def test_uni_exit_cut_during_positioning_still_move_backward(self):
-        """Unidirectional keeps move-backward when exit cuts during positioning."""
+    def test_uni_exit_cut_without_wb_invalidates(self):
+        """Unidirectional: exit without WB → invalidate (not move-backward)."""
+        import time
         from config.constants import State
 
         workflow, ctx = self._make_workflow()
@@ -511,8 +534,38 @@ class TestBidirectionalFlow(unittest.TestCase):
 
         workflow.on_exit_occupied()
 
+        for _ in range(50):
+            if ctx.voice.weight_capture_issue.called:
+                break
+            time.sleep(0.02)
+        ctx.voice.weight_capture_issue.assert_called()
+        ctx.voice.move_backward.assert_not_called()
+        for _ in range(50):
+            if ctx.state_machine.current_state == State.EXIT_GRANTED:
+                break
+            time.sleep(0.02)
+        self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+        workflow.force_reset()
+
+    def test_uni_exit_cut_with_wb_still_move_backward(self):
+        """Unidirectional keeps move-backward when exit cuts while WB is occupied."""
+        from config.constants import State
+
+        workflow, ctx = self._make_workflow()
+        ctx.settings.wb_type = "unidirectional"
+        ctx.sensor_poller = MagicMock()
+        ctx.sensor_poller.get_status.return_value = {
+            "entry_active": True,
+            "wb_active": True,
+            "exit_active": True,
+        }
+        workflow.on_entry_occupied()
+        self.assertEqual(ctx.state_machine.current_state, State.VEHICLE_POSITIONING)
+
+        workflow.on_exit_occupied()
+
         ctx.voice.move_backward.assert_called()
-        ctx.voice.check_weighbridge.assert_not_called()
+        ctx.voice.weight_capture_issue.assert_not_called()
         workflow.force_reset()
 
     def test_bidirectional_tare_hold_before_anpr(self):

@@ -467,6 +467,9 @@ def bootstrap() -> AppContext:
     ctx.frontend.register_status_request_handler(ctx.frontend.republish_snapshot)
     ctx.frontend.connect()
     ctx.frontend.start_device_monitor(interval_sec=0.4)
+    # After MQTT is up so not-configured / connect-fail popups publish.
+    if ctx.workflow and hasattr(ctx.workflow, "attach_io_monitor"):
+        ctx.workflow.attach_io_monitor()
 
     # Set TL/boom immediately. Do not call Zebra login/mode/start at boot;
     # the selected reader starts only after a valid > minimum weight result.

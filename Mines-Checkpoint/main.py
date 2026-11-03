@@ -275,6 +275,9 @@ def _activate_lane_body(ctx: AppContext, settings, lane: str) -> None:
     ctx.frontend.register_status_request_handler(ctx.frontend.republish_snapshot)
     ctx.frontend.connect()
     ctx.frontend.start_device_monitor(interval_sec=0.4)
+    # After MQTT is up so not-configured / connect-fail popups publish.
+    if ctx.workflow and hasattr(ctx.workflow, "attach_io_monitor"):
+        ctx.workflow.attach_io_monitor()
 
     # Start sensors after workflow + MQTT exist so an already-cut S1 is
     # published to the dashboard.

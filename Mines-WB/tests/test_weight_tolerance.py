@@ -192,7 +192,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_tare_under_weight_confirm_approved_continues_flow(self):
-        """Under-weight → confirm status 1 + recapture in new band → details."""
+        """Under-weight → confirm status 1 + locked weight vs new band → details."""
         from config.constants import State
         from services.oci_client import OCIResponse
 
@@ -210,7 +210,10 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         call_kw = ctx.oci.weight_confirm.call_args.kwargs
         self.assertEqual(call_kw["weight_type"], "u")
         self.assertEqual(call_kw["current_weight"], "14000")
-        self.assertEqual(ctx.digitizer.read_stable_weight.call_count, 2)
+        # One fresh stable read at lock time — no post-confirm recapture.
+        self.assertEqual(ctx.digitizer.read_stable_weight.call_count, 1)
+        self.assertTrue(ctx.transactions.weight_locked)
+        self.assertEqual(ctx.transactions.weight_kg, 14000.0)
         details_td = ctx.oci.weight_details.call_args.kwargs["truck_details"]
         self.assertIn("|25550|", details_td)
         self.assertEqual(
@@ -219,7 +222,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_tare_over_weight_confirm_approved_continues_flow(self):
-        """Over-weight → confirm status 1 + recapture in new band → details."""
+        """Over-weight → confirm status 1 + locked weight vs new band → details."""
         from config.constants import State
         from services.oci_client import OCIResponse
 
@@ -291,7 +294,7 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
     def test_weight_confirm_polls_until_status_1(self):
-        """weight_status=0 retries, then status 1 recaptures and continues."""
+        """weight_status=0 retries, then status 1 keeps locked weight and continues."""
         from config.constants import State
         from services.oci_client import OCIResponse
 
@@ -321,8 +324,8 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ctx.oci.weight_details.assert_called_once()
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
 
-    def test_recapture_still_out_confirms_again_with_updated_tolerance(self):
-        """Status 1 with tight tolerance → recapture still out → confirm again."""
+    def test_locked_weight_still_out_confirms_again_with_updated_tolerance(self):
+        """Status 1 with tight tolerance → locked weight still out → confirm again."""
         from config.constants import State
         from services.oci_client import OCIResponse
 
@@ -344,12 +347,34 @@ class TestFinalWeightToleranceWorkflow(unittest.TestCase):
         ):
             wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
         self.assertEqual(ctx.oci.weight_confirm.call_count, 2)
+        self.assertEqual(ctx.digitizer.read_stable_weight.call_count, 1)
+        self.assertEqual(ctx.transactions.weight_kg, 16000.0)
+        self.assertTrue(ctx.transactions.weight_locked)
         second = ctx.oci.weight_confirm.call_args_list[1].kwargs
         self.assertIn("|50|", second["truck_details"])
         self.assertEqual(second["weight_type"], "o")
+        self.assertEqual(second["current_weight"], "16000")
         details_td = ctx.oci.weight_details.call_args.kwargs["truck_details"]
         self.assertIn("|20000|", details_td)
         self.assertEqual(ctx.state_machine.current_state, State.EXIT_GRANTED)
+
+    def test_final_weight_lock_ignores_later_digitizer_updates(self):
+        """After lock, live digitizer updates must not change txn weight or UI value."""
+        from config.constants import State
+
+        wf, ctx = self._make_workflow(TARE_DETAILS, 15050)
+        ctx.frontend = MagicMock()
+        wf._final_weight_and_details(boom_close_after=TARE_DETAILS)
+        self.assertTrue(ctx.transactions.weight_locked)
+        self.assertEqual(ctx.transactions.weight_kg, 15050.0)
+        self.assertEqual(ctx.digitizer.read_stable_weight.call_count, 1)
+
+        ctx.digitizer.get_current_weight.return_value = 15100.0
+        ctx.digitizer.supports_live_weight.return_value = True
+        ctx.state_machine.force_state(State.EXIT_GRANTED)
+        wf._on_digitizer_update()
+        ctx.frontend.publish_digitizer.assert_called_with(15050.0)
+        self.assertEqual(ctx.transactions.weight_kg, 15050.0)
 
     def test_gross_in_band_weight_details_200_skips_confirm(self):
         """G + weight-details 200 → boom_close, no weight-confirm / gross-confirm."""
