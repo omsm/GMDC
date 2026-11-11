@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -155,9 +156,127 @@ class BoomAndTrafficHonestyTests(unittest.TestCase):
         self.assertEqual(tl.get_status()["state"], "green")
 
 
-class ModbusImmediateResyncTests(unittest.TestCase):
-    def test_resync_threshold_is_immediate(self):
-        self.assertEqual(ModbusTCPController.RESYNC_AFTER_FAILURES, 1)
+class _FakeBits:
+    def __init__(self, bits, error=False):
+        self.bits = list(bits)
+        self._error = error
+
+    def isError(self):
+        return self._error
+
+
+class ModbusSoftFailDebounceTests(unittest.TestCase):
+    def test_resync_threshold_is_debounced(self):
+        self.assertEqual(ModbusTCPController.RESYNC_AFTER_FAILURES, 3)
+        self.assertEqual(ModbusTCPController.CLEAR_FAILURES_AFTER_SUCCESSES, 3)
+
+    def _controller(self):
+        ctrl = ModbusTCPController(host="10.80.118.136", port=502)
+        ctrl._client = MagicMock()
+        ctrl._client.connected = True
+        ctrl._healthy = True
+        return ctrl
+
+    def test_single_modbus_exception_keeps_socket_and_health(self):
+        ctrl = self._controller()
+        health = []
+        ctrl.set_health_callback(lambda ok, msg: health.append((ok, msg)))
+        ctrl._client.read_discrete_inputs.return_value = _FakeBits([], error=True)
+
+        self.assertIsNone(ctrl.read_discrete_inputs(1, 1))
+        self.assertEqual(ctrl._failures, 1)
+        self.assertTrue(ctrl._healthy)
+        self.assertEqual(health, [])
+        ctrl._client.close.assert_not_called()
+
+    def test_three_soft_fails_resync_and_lock(self):
+        ctrl = self._controller()
+        client = ctrl._client
+        health = []
+        ctrl.set_health_callback(lambda ok, msg: health.append((ok, msg)))
+        client.read_discrete_inputs.return_value = _FakeBits([], error=True)
+        # Avoid real TCP on the reconnect path after threshold.
+        ctrl._connect_locked = MagicMock(return_value=True)
+
+        for _ in range(3):
+            self.assertIsNone(ctrl.read_discrete_inputs(1, 1))
+
+        time.sleep(0.05)
+        self.assertFalse(ctrl._healthy)
+        self.assertTrue(any(ok is False for ok, _ in health))
+        client.close.assert_called()
+        ctrl._connect_locked.assert_called()
+
+    def test_second_soft_fail_reconnects_and_returns_fresh_input(self):
+        ctrl = self._controller()
+        client = ctrl._client
+        client.read_discrete_inputs.side_effect = [
+            _FakeBits([], error=True),
+            _FakeBits([], error=True),
+            _FakeBits([True], error=False),
+        ]
+        original_connect = ctrl._connect_locked
+
+        def reconnect():
+            # Reconnect the same fake client, as ModbusTcpClient would.
+            ctrl._client = client
+            client.connected = True
+            return True
+
+        ctrl._connect_locked = MagicMock(side_effect=reconnect)
+
+        self.assertIsNone(ctrl.read_discrete_inputs(1, 1))
+        self.assertEqual(ctrl._failures, 1)
+        self.assertEqual(ctrl.read_discrete_inputs(1, 1), [True])
+        self.assertEqual(ctrl._failures, 0)
+        ctrl._connect_locked.assert_called_once()
+        client.close.assert_called_once()
+
+    def test_second_wb_failure_reconnects_before_fresh_retry(self):
+        """Healthy entry/exit reads do not prevent the WB reconnect retry."""
+        ctrl = self._controller()
+        client = ctrl._client
+        health = []
+        ctrl.set_health_callback(lambda ok, msg: health.append((ok, msg)))
+        ctrl._connect_locked = MagicMock(
+            side_effect=lambda: setattr(ctrl, "_client", client) or True
+        )
+
+        def read_side_effect(*args, **kwargs):
+            address = kwargs.get("address", args[0] if args else None)
+            if address == 1:
+                return _FakeBits([], error=True)
+            return _FakeBits([False], error=False)
+
+        ctrl._client.read_discrete_inputs.side_effect = read_side_effect
+
+        # First WB failure is returned to the poller. The second WB failure
+        # reconnects, then the fresh read still fails and marks I/O down.
+        for _ in range(2):
+            self.assertIsNotNone(ctrl.read_discrete_inputs(0, 1))
+            self.assertIsNotNone(ctrl.read_discrete_inputs(2, 1))
+            wb = ctrl.read_discrete_inputs(1, 1)
+
+        time.sleep(0.05)
+        self.assertIsNone(wb)
+        self.assertFalse(ctrl._healthy)
+        self.assertTrue(any(ok is False for ok, _ in health))
+        # One reconnect before the fresh retry, and one after the third
+        # failed read when the controller is marked unhealthy.
+        self.assertEqual(ctrl._connect_locked.call_count, 2)
+
+    def test_hard_transport_error_resyncs_immediately(self):
+        ctrl = self._controller()
+        health = []
+        ctrl.set_health_callback(lambda ok, msg: health.append((ok, msg)))
+        ctrl._client.read_discrete_inputs.side_effect = ConnectionError("reset")
+        ctrl._connect_locked = MagicMock(return_value=True)
+
+        self.assertIsNone(ctrl.read_discrete_inputs(1, 1))
+        time.sleep(0.05)
+        self.assertFalse(ctrl._healthy)
+        self.assertTrue(any(ok is False for ok, _ in health))
+        ctrl._connect_locked.assert_called()
 
 
 if __name__ == "__main__":

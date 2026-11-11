@@ -1,19 +1,31 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.22**
+**Current version: 1.23**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.22 — 2026-11-03 (latest)
+## 1.23 — 2026-11-03 (latest)
+
+Debounced Modbus soft-fail handling so a single FC2 exception (site log `130 / 0`) does not flash-lock the yard.
+
+### I/O controller (`gmdc_common`)
+- Soft Modbus errors (exception responses): keep socket, no health-down until `RESYNC_AFTER_FAILURES = 3`
+- Soft-fail streak clears only after `CLEAR_FAILURES_AFTER_SUCCESSES = 3` good transactions (healthy entry/exit pins cannot wipe a flaky WB-pin streak too early)
+- Hard transport errors (socket exceptions): still resync + lock immediately
+- Failed DI reads still return `None` (realtime sensors; no invented values / no FC fallback)
+
+---
+
+## 1.22 — 2026-11-03
 
 Strict Modbus I/O (no FC fallbacks), realtime sensors with I/O-down lock, far-side exit-before-WB abort, post-ANPR locked stable weight, and digitizer-decoder current-weight-only MQTT.
 
 ### I/O controller (`gmdc_common`)
 - Strict function codes only: read FC1/FC2, write FC5/FC6 — **no** FC2→FC1 (or other) cross-fallback on failure
-- Immediate socket reconnect on the first failed transaction (`RESYNC_AFTER_FAILURES = 1`)
+- Soft-fail debounce added in **1.23** (1.22 used immediate reconnect on first failure)
 - Host missing / localhost → not configured: connect refused, status `configured=false`, operator message *Controller not configured. Please Check!*
 - Boom / traffic light: no fake success when disabled, pins missing, or Modbus write fails (state unchanged on fail)
 
@@ -547,6 +559,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.23** | Debounced Modbus soft-fail (`RESYNC_AFTER_FAILURES=3`, success streak clear, reconnect + fresh DI retry on WB path); hard transport still immediate lock; no FC fallback / realtime sensors unchanged |
 | **1.22** | Strict Modbus I/O + realtime sensors + I/O-down lock; exit-before-WB abort; post-ANPR locked 10-stable weight; decoder current-weight MQTT |
 | **1.21** | display_ip pcb a–d handshake; idle FTP photo upload; Checkpoint `VEHICLE_CROSSING_TIMEOUT_SEC` from `.env` |
 | **1.20** | Mac Mini launchd services; bi-dir TL polarity/idle/exit; tare reset_checkpoint on weight_status=2; tare/gross URL split; RFID keepalive; internet@ down |

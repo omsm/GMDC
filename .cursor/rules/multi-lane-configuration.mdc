@@ -1,0 +1,19 @@
+---
+description: Rules for checkpoint profiles, lane isolation, and configuration changes
+globs: "**/iot_configuration*.json,**/checkpoint-config/**/*.py,**/Mines-Checkpoint/config/**/*.py,**/Mines-Checkpoint/main.py"
+alwaysApply: false
+---
+
+# Multi-Lane Configuration
+
+- Treat `Mines-Checkpoint` lanes as independent hardware contexts inside one
+  process.
+- Preserve unique per-lane Modbus controller, RFID reader, RFID listen port,
+  display topic/IP, camera, and workflow settings.
+- `checkpoint-config` canonical layout profiles are `checkpoint` and
+  `weighbridge`; legacy IDs may normalize to those families.
+- Do not assume a lane label creates a distinct business/API profile. Verify
+  the RFID-selected flow and configured endpoint contract.
+- Before changing a lane, inspect the complete lane object and validate that
+  ports and topics do not collide.
+- Do not copy credentials from local configuration into docs, tests, or logs.

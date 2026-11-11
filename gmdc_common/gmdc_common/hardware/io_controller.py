@@ -180,11 +180,20 @@ class ModbusTCPController(IOController):
       write_fc=6 → FC6 Write Single Register only
 
     There is no FC2↔FC1 cross-fallback on failure.
-    On any transaction failure the socket is closed and reopened immediately.
+
+    Soft Modbus errors (exception responses) are debounced: the socket stays
+    open and the yard is not locked until RESYNC_AFTER_FAILURES soft failures
+    accumulate. Interleaved successes from other DI pins only clear that streak
+    after CLEAR_FAILURES_AFTER_SUCCESSES good transactions (so one flaky WB pin
+    among healthy entry/exit pins can still trip after repeated faults).
+    Hard errors (socket/transport exceptions) resync immediately.
     """
 
-    #: Immediate reconnect on the first failed transaction.
-    RESYNC_AFTER_FAILURES = 1
+    #: Soft Modbus errors before close + health-down + reconnect.
+    RESYNC_AFTER_FAILURES = 3
+    #: Good transactions required to wipe a soft-fail streak (must be >
+    #: typical other-pin successes between repeats of a single flaky DI).
+    CLEAR_FAILURES_AFTER_SUCCESSES = 3
 
     def __init__(
         self,
@@ -210,6 +219,7 @@ class ModbusTCPController(IOController):
         self._client = None
         self._lock = threading.Lock()
         self._failures = 0
+        self._success_streak = 0
         self._healthy = False
         self._last_error = ""
         self._health_callback: Optional[HealthCallback] = None
@@ -287,6 +297,7 @@ class ModbusTCPController(IOController):
             ok = bool(self._client.connect())
             if ok:
                 self._failures = 0
+                self._success_streak = 0
                 self._last_error = ""
                 logger.info(
                     "ModbusTCP connected %s:%s slave=%s read_fc=%s write_fc=%s "
@@ -336,22 +347,51 @@ class ModbusTCPController(IOController):
                 return True
             return self._connect_locked()
 
-    def _note_result_locked(self, ok: bool, op: str) -> None:
-        """Reopen the socket immediately after a failed transaction."""
+    def _note_result_locked(
+        self, ok: bool, op: str, *, hard: bool = False
+    ) -> None:
+        """
+        Track transaction health.
+
+        soft failure  → count toward RESYNC_AFTER_FAILURES; keep socket
+        hard failure  → resync on this call (transport/socket broken)
+        success       → clear soft streak only after CLEAR_FAILURES_AFTER_SUCCESSES
+                        good replies (avoids healthy pins wiping a flaky-pin streak)
+        """
         if ok:
-            self._failures = 0
-            if not self._healthy:
+            self._success_streak += 1
+            if self._success_streak >= self.CLEAR_FAILURES_AFTER_SUCCESSES:
+                self._failures = 0
+                self._success_streak = 0
+            if not self._healthy and self._failures == 0:
                 self._emit_health_locked(True, "")
             return
-        self._failures += 1
-        if self._failures < self.RESYNC_AFTER_FAILURES:
-            return
+
+        self._success_streak = 0
+        if hard:
+            self._failures = self.RESYNC_AFTER_FAILURES
+        else:
+            self._failures += 1
+            if self._failures < self.RESYNC_AFTER_FAILURES:
+                logger.warning(
+                    "ModbusTCP %s soft-fail on %s:%s (%s/%s) - keeping socket",
+                    op,
+                    self.host,
+                    self.port,
+                    self._failures,
+                    self.RESYNC_AFTER_FAILURES,
+                )
+                return
+
         msg = f"{IO_CONNECTION_FAILURE_MSG} ({op})"
         logger.warning(
-            "ModbusTCP %s failed on %s:%s - reopening socket immediately",
+            "ModbusTCP %s failed on %s:%s - reopening socket "
+            "(failures=%s hard=%s)",
             op,
             self.host,
             self.port,
+            self._failures,
+            hard,
         )
         self._close_locked()
         self._emit_health_locked(False, msg)
@@ -374,7 +414,7 @@ class ModbusTCPController(IOController):
                     )
                 else:
                     logger.error("Unsupported write_fc=%s", self.write_fc)
-                    self._note_result_locked(False, "write_coil")
+                    self._note_result_locked(False, "write_coil", hard=True)
                     return False
                 ok = result is not None and not (
                     hasattr(result, "isError") and result.isError()
@@ -390,7 +430,7 @@ class ModbusTCPController(IOController):
                 return ok
             except Exception as e:
                 logger.error("write failed addr=%s: %s", address, e)
-                self._note_result_locked(False, "write_coil")
+                self._note_result_locked(False, "write_coil", hard=True)
                 return False
 
     def read_coils(self, address: int, count: int = 1) -> Optional[List[bool]]:
@@ -413,7 +453,7 @@ class ModbusTCPController(IOController):
                 return [bool(b) for b in bits]
             except Exception as e:
                 logger.error("read_coils failed: %s", e)
-                self._note_result_locked(False, "read_coils")
+                self._note_result_locked(False, "read_coils", hard=True)
                 return None
 
     def read_discrete_inputs(
@@ -429,38 +469,66 @@ class ModbusTCPController(IOController):
             if not self._client_connected_locked():
                 if not self._connect_locked():
                     return None
-            try:
-                if self.read_fc == FC_READ_COILS:
-                    result = read_coils_compat(
-                        self._client, address, count, self.slave_id
+            retry_after_reconnect = False
+            while True:
+                try:
+                    fresh_after_reconnect = retry_after_reconnect
+                    retry_after_reconnect = False
+                    if self.read_fc == FC_READ_COILS:
+                        result = read_coils_compat(
+                            self._client, address, count, self.slave_id
+                        )
+                    elif self.read_fc == FC_READ_DISCRETE_INPUTS:
+                        result = read_discrete_inputs_compat(
+                            self._client, address, count, self.slave_id
+                        )
+                    else:
+                        logger.error("Unsupported read_fc=%s", self.read_fc)
+                        self._note_result_locked(
+                            False, "read_discrete_inputs", hard=True
+                        )
+                        return None
+                    if result is None or (
+                        hasattr(result, "isError") and result.isError()
+                    ):
+                        logger.error(
+                            "read_fc=%s failed addr=%s count=%s: %s",
+                            self.read_fc,
+                            address,
+                            count,
+                            result,
+                        )
+                        self._note_result_locked(False, "read_discrete_inputs")
+                        if self._failures == 2:
+                            logger.warning(
+                                "ModbusTCP soft-fail threshold reached for "
+                                "read_discrete_inputs; reconnecting before retry"
+                            )
+                            self._close_locked()
+                            if not self._connect_locked():
+                                return None
+                            # _connect_locked resets the transport state, but
+                            # preserve the logical soft-failure streak so a
+                            # failed fresh read becomes failure 3.
+                            self._failures = 2
+                            retry_after_reconnect = True
+                            continue
+                        return None
+                    bits = list(result.bits[:count])
+                    self._note_result_locked(True, "read_discrete_inputs")
+                    if fresh_after_reconnect:
+                        # A fresh read after reconnect succeeded: this is a
+                        # recovered transaction, so clear the old soft-fail
+                        # streak immediately.
+                        self._failures = 0
+                        self._success_streak = 0
+                    return [bool(b) for b in bits]
+                except Exception as e:
+                    logger.error("read_discrete_inputs failed: %s", e)
+                    self._note_result_locked(
+                        False, "read_discrete_inputs", hard=True
                     )
-                elif self.read_fc == FC_READ_DISCRETE_INPUTS:
-                    result = read_discrete_inputs_compat(
-                        self._client, address, count, self.slave_id
-                    )
-                else:
-                    logger.error("Unsupported read_fc=%s", self.read_fc)
-                    self._note_result_locked(False, "read_discrete_inputs")
                     return None
-                if result is None or (
-                    hasattr(result, "isError") and result.isError()
-                ):
-                    logger.error(
-                        "read_fc=%s failed addr=%s count=%s: %s",
-                        self.read_fc,
-                        address,
-                        count,
-                        result,
-                    )
-                    self._note_result_locked(False, "read_discrete_inputs")
-                    return None
-                bits = list(result.bits[:count])
-                self._note_result_locked(True, "read_discrete_inputs")
-                return [bool(b) for b in bits]
-            except Exception as e:
-                logger.error("read_discrete_inputs failed: %s", e)
-                self._note_result_locked(False, "read_discrete_inputs")
-                return None
 
     def get_status(self) -> dict:
         with self._lock:

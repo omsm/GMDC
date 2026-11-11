@@ -1,6 +1,6 @@
 # Mines-WB
 
-**Version:** 1.22.0 (product **1.22** — see [`../version.md`](../version.md))
+**Version:** 1.23.0 (product **1.23** — see [`../version.md`](../version.md))
 
 Single weighbridge runtime for GMDC yard sites (uni-directional or bi-directional).
 
@@ -22,10 +22,10 @@ python main.py
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-wb.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.22)
+## Behaviour notes (1.23)
 
 ### I/O + sensors
-- Strict Modbus FC map (no FC fallback). I/O down → popup, reconnect, lock trips until healthy.
+- Strict Modbus FC map (no FC fallback). Debounced Modbus soft-fail (three strikes before health-down; reconnect + fresh DI retry at second soft fail on the WB pin path); hard transport errors still lock immediately. I/O down → popup, reconnect, lock trips until healthy.
 - Sensors are realtime (no last-value hold). Poll rate: `polling.scan_interval` in `iot_configuration.json`.
 
 ### Exit before weighbridge

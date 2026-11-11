@@ -1,0 +1,19 @@
+---
+description: Persistent GMDC Yard IoT architecture and safety context
+alwaysApply: true
+---
+
+# GMDC Yard IoT Context
+
+- Read `AGENTS.md` and the relevant `docs/` knowledge-base file before making
+  architectural changes.
+- Current runtimes are `Mines-Checkpoint` and `Mines-WB`; legacy app folders are
+  reference-only.
+- This is a Python, JSON/environment, filesystem, and MQTT system. There is no
+  database schema or migration layer.
+- Preserve strict Modbus function codes, realtime-only sensors, and I/O safety
+  locking.
+- Do not invent undocumented API payloads, hardware addresses, or site behavior.
+- Keep secrets out of source, docs, logs, and commits.
+- Update `docs/CURRENT_STATUS.md` and relevant decision docs when behavior or
+  deployment assumptions change.

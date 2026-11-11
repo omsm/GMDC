@@ -73,7 +73,10 @@ Desktop.ini
 .idea/
 .vscode/
 *.code-workspace
-.cursor/
+.cursor/*
+!.cursor/
+!.cursor/rules/
+!.cursor/rules/*.mdc
 
 # ---------------------------------------------------------------------------
 # Packaging / large archives (never commit build zips)

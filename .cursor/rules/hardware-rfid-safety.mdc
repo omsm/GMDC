@@ -1,0 +1,19 @@
+---
+description: Safety rules for Modbus, sensors, and the verified Zebra RFID contract
+globs: "**/gmdc_common/**/*.py,**/Mines-Checkpoint/**/*.py,**/Mines-WB/**/*.py"
+alwaysApply: false
+---
+
+# Hardware and RFID Safety
+
+- Do not modify the verified Zebra CUSTOM JSON in
+  `gmdc_common/gmdc_common/services/rfid_control.py` without explicit approval.
+  The fixed contract uses antennas 5/6, TID pointer 6, length 24, mask
+  `800600`, 31/31 power, and per-antenna reporting.
+- Keep FC1/FC2 reads and FC5/FC6 writes strict; never cross-fallback.
+- A failed sensor read must not become a stale or invented sensor value.
+- I/O health loss must remain a workflow safety lock.
+- Distinguish a Modbus exception response from a transport/socket failure.
+  Preserve the current soft-failure debounce and fresh-read reconnect behavior.
+- Test failed writes and failed reads explicitly; a failed output must not claim
+  that the physical device changed state.
