@@ -26,6 +26,7 @@ from config.constants import (
 from core.app_context import AppContext
 from core.state_machine import StateMachine
 from core.transaction import TransactionStore
+from gmdc_common.core.workflow_lock import WorkflowLock, sensor_io_recovery_ok
 from gmdc_common.hardware.camera import (
     capture_rtsp_snapshot,
     get_local_ip,
@@ -75,7 +76,7 @@ class CheckpointWorkflow:
 
     def __init__(self, ctx: AppContext):
         self.ctx = ctx
-        self._worker_lock = threading.Lock()
+        self._wf = WorkflowLock()
         self._manual_stop = threading.Event()
         self._busy = False
         self._crossing_timer: Optional[threading.Timer] = None
@@ -118,9 +119,30 @@ class CheckpointWorkflow:
         return bool(self._io_fault)
 
     def on_io_health(self, healthy: bool, message: str = "") -> None:
+        with self._wf.rlock:
+            self._apply_io_health(healthy, message)
+
+    def on_sensor_read_failure(self) -> None:
+        """Align workflow lock with realtime sensor read failure (no stale unlock)."""
+        with self._wf.rlock:
+            self._apply_io_health(False, "Sensor read failure. Please Check !")
+
+    def on_sensor_read_recovered(self) -> None:
+        with self._wf.rlock:
+            if not self._io_fault:
+                return
+            if sensor_io_recovery_ok(self.ctx.io, self.ctx.sensor_poller):
+                self._apply_io_health(True, "")
+
+    def _apply_io_health(self, healthy: bool, message: str = "") -> None:
         msg = str(message or "").strip()
         if healthy:
             if not self._io_fault:
+                return
+            if not sensor_io_recovery_ok(self.ctx.io, self.ctx.sensor_poller):
+                logger.info(
+                    "I/O unlock deferred until sensor polls and Modbus are healthy"
+                )
                 return
             logger.info("I/O controller recovered - unlocking workflow")
             self._io_fault = False
@@ -164,7 +186,7 @@ class CheckpointWorkflow:
         sm = self.ctx.state_machine
         if sm and sm.current_state not in (State.IDLE, State.FREE_PASS):
             try:
-                self.force_reset()
+                self._force_reset_body()
             except Exception:
                 logger.exception("force_reset during I/O fault failed")
         fe = self._frontend()
@@ -410,10 +432,19 @@ class CheckpointWorkflow:
         if timer is not None:
             timer.cancel()
 
+    def _oci_grants_exit_access(self, resp: Optional[OCIResponse]) -> bool:
+        """OCI boom-close (grant exit access). Status 200 required when OCI is configured."""
+        oci = self.ctx.oci
+        if oci is None:
+            return True
+        if resp is None:
+            return False
+        return int(resp.status) == 200
+
     def grant_entry_hardware(self, truck_no: str) -> Optional[OCIResponse]:
         """
-        Call OCI boom-close first; only open boom if status == 200.
-        Then set TL green and show entry granted message.
+        Call OCI boom-close (grant exit access); on status 200 open boom / green TL if configured.
+        On failure do not change traffic light or boom.
         """
         # A pending post-crossing close must not drop the boom on this truck.
         self._cancel_boom_close_timer()
@@ -453,17 +484,21 @@ class CheckpointWorkflow:
             logger.warning("OCI client missing - opening boom without boom-close API")
             boom_ok = True
 
-        if tl:
-            tl.set_green()
-        if boom and boom_ok:
-            boom.open()
-        elif boom and not boom_ok:
-            logger.error("Boom NOT opened - boom-close API status != 200")
+        if boom_ok:
+            if tl:
+                tl.set_green()
+            if boom:
+                boom.open()
+            msg = MSG_ENTRY_GRANTED_FMT.format(truck=truck_no or "TRUCK")
+            self._announce(msg)
+            logger.info("Exit access granted: %s (hardware updated=%s)", msg, bool(tl or boom))
+        else:
+            logger.error(
+                "Exit access NOT granted - boom-close API status=%s",
+                getattr(close_resp, "status", None),
+            )
 
-        msg = MSG_ENTRY_GRANTED_FMT.format(truck=truck_no or "TRUCK")
-        self._announce(msg)
         self._ui_devices()
-        logger.info("Entry granted: %s (boom_opened=%s)", msg, boom_ok)
         return close_resp
 
     # ------------------------------------------------------------------
@@ -488,7 +523,7 @@ class CheckpointWorkflow:
             logger.warning("Empty RFID tag list - ignored")
             return
 
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             logger.warning("Workflow busy - ignoring RFID")
             return
 
@@ -499,7 +534,7 @@ class CheckpointWorkflow:
                 try:
                     self._process_rfid_cycle(id_hexes, raw_tags or [])
                 finally:
-                    self._worker_lock.release()
+                    self._wf.release()
 
         threading.Thread(target=_run, name="RFIDCycle", daemon=True).start()
 
@@ -592,6 +627,10 @@ class CheckpointWorkflow:
         Vehicle cleared the entry sensor (FALSE after TRUE) while waiting to cross.
         Close boom, set TL red, reset to IDLE.
         """
+        with self._wf.rlock:
+            self._on_exit_sensor_body()
+
+    def _on_exit_sensor_body(self) -> None:
         with lane_log_scope(self._lane_log_key()):
             sm = self.ctx.state_machine
             if not sm:
@@ -622,6 +661,10 @@ class CheckpointWorkflow:
             self._reset_to_idle(delay_boom_close=True, notify_gmdc=False)
 
     def force_reset(self) -> None:
+        with self._wf.rlock:
+            self._force_reset_body()
+
+    def _force_reset_body(self) -> None:
         with lane_log_scope(self._lane_log_key()):
             logger.info("Force reset requested")
             self._manual_stop.set()
@@ -634,8 +677,9 @@ class CheckpointWorkflow:
 
     def start_free_pass(self) -> None:
         """Open traffic light and boom; return to IDLE after entry sensor."""
-        with lane_log_scope(self._lane_log_key()):
-            self._start_free_pass_body()
+        with self._wf.rlock:
+            with lane_log_scope(self._lane_log_key()):
+                self._start_free_pass_body()
 
     def _start_free_pass_body(self) -> None:
         logger.info("Free pass - opening traffic light and boom barrier")
@@ -1371,23 +1415,31 @@ class CheckpointWorkflow:
             )
             if not self._wait_for_exit_document_download(txn, oci, device_ip):
                 return
-        if txn:
-            txn.granted = True
-            txn.truck_no = truck_no or txn.truck_no
         close_resp = self.grant_entry_hardware(truck_no)
+        granted = self._oci_grants_exit_access(close_resp)
         self._ui_position(2)
-        if close_resp is not None and close_resp.status != 200:
+        if not granted:
+            if txn:
+                txn.granted = False
             self._ui_api_failure(
                 STEP_ENTRY_GRANTED,
                 close_resp,
-                fallback="Boom-close rejected.",
+                fallback="Exit access rejected (boom-close).",
             )
-        else:
-            self._ui_status(
-                STEP_ENTRY_GRANTED,
-                "success",
-                f"{truck_no or 'TRUCK'} Entry Granted",
+            self._ui_devices()
+            logger.warning(
+                "Entry not advanced - OCI exit access not granted (status=%s)",
+                getattr(close_resp, "status", None),
             )
+            return
+        if txn:
+            txn.granted = True
+            txn.truck_no = truck_no or txn.truck_no
+        self._ui_status(
+            STEP_ENTRY_GRANTED,
+            "success",
+            f"{truck_no or 'TRUCK'} Entry Granted",
+        )
         if sm and sm.current_state == State.ENTRY_GRANTED:
             sm.trigger(Event.ENTRY_OPENED)  # -> WAIT_CROSSING
         elif sm:
@@ -1415,28 +1467,32 @@ class CheckpointWorkflow:
         )
         return sec if sec > 0 else TIMEOUTS.VEHICLE_CROSSING_TIMEOUT_SEC
 
+    def _crossing_timeout_body(self, timeout_sec: float) -> None:
+        sm = self.ctx.state_machine
+        if not sm:
+            return
+        if sm.current_state not in (State.ENTRY_GRANTED, State.WAIT_CROSSING):
+            logger.debug(
+                "Crossing timeout ignored - state is %s",
+                sm.current_state.name,
+            )
+            return
+        logger.info(
+            "Vehicle crossing timeout (%ss) - auto reset to IDLE",
+            timeout_sec,
+        )
+        sm.trigger(Event.CROSSING_TIMEOUT)
+        self._reset_to_idle()
+
     def _start_crossing_timer(self, timeout_sec: float) -> None:
         self._cancel_crossing_timer()
 
         lane_key = self._lane_log_key()
 
         def _on_timeout():
-            with lane_log_scope(lane_key):
-                sm = self.ctx.state_machine
-                if not sm:
-                    return
-                if sm.current_state not in (State.ENTRY_GRANTED, State.WAIT_CROSSING):
-                    logger.debug(
-                        "Crossing timeout ignored - state is %s",
-                        sm.current_state.name,
-                    )
-                    return
-                logger.info(
-                    "Vehicle crossing timeout (%ss) - auto reset to IDLE",
-                    timeout_sec,
-                )
-                sm.trigger(Event.CROSSING_TIMEOUT)
-                self._reset_to_idle()
+            with self._wf.rlock:
+                with lane_log_scope(lane_key):
+                    self._crossing_timeout_body(timeout_sec)
 
         timer = threading.Timer(timeout_sec, _on_timeout)
         timer.daemon = True

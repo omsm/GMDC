@@ -29,8 +29,17 @@ validation on the deployed machine or hardware.
   - failed retry: third failure, mark I/O unhealthy
   - hard socket/transport failure: immediate resync/lock
 - Unit tests cover the current I/O debounce and reconnect behavior.
-- Product version **1.23** is reflected consistently in `version.md`, root and
+- Product version **1.24** is reflected consistently in `version.md`, root and
   per-app READMEs, and `docs/PROJECT_OVERVIEW.md`.
+- OCI grant exit access: **HTTP 200** required before Checkpoint crossing or WB
+  exit grant after boom-close (hardware optional when not configured).
+- MQTT: runtimes default to **port check only**; use
+  `mqtt_broker_setup/install_mosquitto_service.sh` for a persistent broker (or
+  `GMDC_ENSURE_MQTT=1` for legacy in-app install).
+- Sensor poll failures wire to workflow lock; unlock requires **both** healthy
+  Modbus and successful sensor reads (`on_read_failure` / `on_read_recovered`).
+- Per-lane workflow serialization (`WorkflowLock`) on sensor, RFID, reset,
+  crossing timeout, and I/O health paths (Checkpoint + WB).
 
 ## Pending implementation or verification
 

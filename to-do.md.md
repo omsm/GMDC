@@ -24,6 +24,11 @@ Shipped on Mines-Checkpoint / Mines-WB dashboards.
 - Code already present: `Mines-WB/services/digitizer_client.py` (`DigitizerMqttClient`), config `digitizer.mode=mqtt`, topics `gmdc/digitizer/weight|request|status`
 - Next: field-verify WB dashboard live weight / capture when decoder is publishing; fix gaps if any
 
+### Important — Digitizer API mode health (reliability)
+- **Goal:** In Mines-WB **API** digitizer mode, `DigitizerApiClient.is_alive()` must not always return `True`. Add HTTP (or decoder status) heartbeat so a dead decoder blocks weighing / shows fault instead of silent hangs.
+- **File:** `Mines-WB/services/digitizer_client.py`
+- **Priority:** Important; defer until after current I/O + sensor fault work unless site uses API-only digitizer in production.
+
 ### Optional follow-ups
 - Align PySide `digitizer-app` with decoder MQTT publish-on-change protocol
 - Bidirectional ENTRY_B hardware swap

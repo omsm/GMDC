@@ -52,7 +52,8 @@ families.
 
 ## Current declared version
 
-Product version **1.23** is declared in [`version.md`](../version.md). Runtime
+Product version **1.24** is declared in [`version.md`](../version.md). Runtime
 builds read per-app `VERSION` files (e.g. Mines-Checkpoint and Mines-WB
-**1.23.0**). The digitizer-decoder keeps its own component semver in
-`digitizer-decoder/VERSION` (see that README).
+**1.24.0**). The digitizer-decoder keeps its own component semver in
+`digitizer-decoder/VERSION` (see that README). Operator display error codes are
+listed in [`ERRORS.md`](ERRORS.md).

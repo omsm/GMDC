@@ -13,7 +13,7 @@ Same serial indexing, with a **Mines-Checkpoint / Mines-WB** style dashboard and
 
 The original `digitizer-app/` PySide UI remains available unchanged.
 
-Product version: **1.23** (see root [`version.md`](../version.md)).
+Product version: **1.24** (see root [`version.md`](../version.md)).
 
 ## Layout
 

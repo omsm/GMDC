@@ -55,7 +55,7 @@ def _lane_key(settings) -> str:
 
 
 def _ensure_local_mqtt_broker() -> None:
-    """Install/start Mosquitto if 1883 (MQTT) or 9001 (WS) is not listening."""
+    """Check Mosquitto on 1883/9001. Install only when GMDC_ENSURE_MQTT=1."""
     try:
         if getattr(sys, "frozen", False):
             roots = [Path(sys.executable).resolve().parent]
@@ -148,6 +148,16 @@ def _build_hardware(ctx: AppContext) -> None:
             if ctx.workflow:
                 ctx.workflow.on_exit_sensor()
 
+    def on_sensor_fail():
+        with lane_log_scope(lane_key):
+            if ctx.workflow:
+                ctx.workflow.on_sensor_read_failure()
+
+    def on_sensor_ok():
+        with lane_log_scope(lane_key):
+            if ctx.workflow:
+                ctx.workflow.on_sensor_read_recovered()
+
     ctx.sensor_poller = SensorPoller(
         ctx.io,
         entry_pin=entry_pin,
@@ -157,6 +167,8 @@ def _build_hardware(ctx: AppContext) -> None:
         active_high=active_high,
         on_entry=on_vehicle_crossed if entry_pin is not None else None,
         on_exit=on_vehicle_crossed if exit_pin is not None else None,
+        on_read_failure=on_sensor_fail,
+        on_read_recovered=on_sensor_ok,
     )
     logger.info(
         "Hardware mapped: TL red/green DO=%s/%s boom open/close DO=%s/%s "
@@ -376,6 +388,9 @@ def bootstrap() -> AppContext:
 
 
 def main() -> int:
+    from gmdc_common.utils.runtime_instance import replace_prior_runtime_instance
+
+    replace_prior_runtime_instance("mines_checkpoint", Path(__file__).resolve().parent)
     ctx = bootstrap()
     settings = ctx.settings
     assert settings

@@ -1,8 +1,15 @@
 # Shared Mosquitto MQTT broker bootstrap for GMDC IoT apps
 #
-# Ensures local Mosquitto listens on:
+# Listeners:
 #   1883  – MQTT (backend / digitizer / display)
 #   9001  – WebSockets (frontend dashboard)
+#
+# **Default (production):** runtimes only **check** ports via `bootstrap_local_mqtt()`.
+# Install and run Mosquitto as an OS service once:
+#
+#   ./mqtt_broker_setup/install_mosquitto_service.sh
+#
+# Legacy in-app install/start: set `GMDC_ENSURE_MQTT=1` when launching an app.
 #
 # Usage from any sibling app:
 #

@@ -191,13 +191,46 @@ def add_package_to_sys_path() -> str:
     return pkg_dir
 
 
+def check_mqtt_broker_ready(
+    host: str = "127.0.0.1",
+    mqtt_port: int = MQTT_PORT,
+    ws_port: int = WS_PORT,
+) -> Tuple[bool, str]:
+    """
+    Check only — do not install or start Mosquitto.
+
+    Runtimes should use this by default; install/start belongs in
+    ``install_mosquitto_service.sh`` / OS service (brew, systemd, Windows service).
+    """
+    if mqtt_ports_ready(host, mqtt_port, ws_port):
+        return True, (
+            f"MQTT broker listening on {mqtt_port} (mqtt) and {ws_port} (websocket)"
+        )
+    return False, (
+        f"MQTT broker not listening on {host}:{mqtt_port} and/or "
+        f"{host}:{ws_port}. Run mqtt_broker_setup/install_mosquitto_service.sh "
+        f"(or enable the Mosquitto OS service) before starting the app."
+    )
+
+
+def _ensure_mqtt_from_env() -> bool:
+    import os
+
+    flag = (os.getenv("GMDC_ENSURE_MQTT") or "").strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
+
 def bootstrap_local_mqtt(
     caller_file: str,
     *,
     fatal: bool = False,
+    install_if_missing: Optional[bool] = None,
 ) -> Tuple[bool, str]:
     """
-    Ensure Mosquitto on 1883 + 9001 for any GMDC app.
+    Verify local Mosquitto on 1883 + 9001 for any GMDC app.
+
+    By default only **checks** ports. Set ``install_if_missing=True`` or
+    env ``GMDC_ENSURE_MQTT=1`` to run the legacy in-app installer.
 
     Resolves repo-root ``mqtt_broker_setup`` from the caller's ``__file__``
     (app lives one level under the monorepo root).
@@ -213,6 +246,21 @@ def bootstrap_local_mqtt(
             sys.path.insert(0, path)
 
     add_package_to_sys_path()
+    do_install = (
+        bool(install_if_missing)
+        if install_if_missing is not None
+        else _ensure_mqtt_from_env()
+    )
+    if not do_install:
+        ok, message = check_mqtt_broker_ready()
+        if ok:
+            logger.info("MQTT broker check: %s", message)
+        else:
+            logger.error("MQTT broker check failed: %s", message)
+            if fatal:
+                raise RuntimeError(message)
+        return ok, message
+
     ok, message = ensure_mqtt_broker_ready(app_data_path=str(app_dir))
     if ok:
         logger.info("MQTT broker ready: %s", message)

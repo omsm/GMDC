@@ -986,9 +986,13 @@ class TestWorkflow(unittest.TestCase):
         )
 
         self.workflow.on_rfid_tags(["e200001d7507013115006bb9"])
-        self.assertTrue(_wait_state(self.ctx.state_machine, State.WAIT_CROSSING))
+        time.sleep(0.3)
+        self.assertEqual(
+            self.ctx.state_machine.current_state,
+            State.ENTRY_GRANTED,
+        )
         self.boom.open.assert_not_called()
-        self.tl.set_green.assert_called()
+        self.tl.set_green.assert_not_called()
 
     def test_manual_loop_vehicle_status_0_then_1(self):
         self._rfid_ok()

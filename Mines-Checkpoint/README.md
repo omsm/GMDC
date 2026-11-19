@@ -1,6 +1,6 @@
 # Mines-Checkpoint
 
-**Version:** 1.23.0 (product **1.23** — see [`../version.md`](../version.md))
+**Version:** 1.24.0 (product **1.24** — see [`../version.md`](../version.md))
 
 Single checkpoint runtime for GMDC yard sites. One process can run multiple lanes from `lanes` in `iot_configuration.json` (Mines Entry, Traffic IN/OUT, Mines Exit).
 
@@ -30,9 +30,12 @@ Change that value and restart the app. `.env` overrides per-lane `vehicle_crossi
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-checkpoint.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.23)
+## Behaviour notes (1.24)
 
-- **I/O + sensors:** strict Modbus FCs; debounced Modbus soft-fail (three strikes before health-down; reconnect + fresh DI retry at second soft fail on the WB path); hard transport errors still lock immediately; I/O down → popup / reconnect / lock trips; sensors realtime (no last-value hold). Poll: `polling.scan_interval`.
+- **Exit grant:** OCI boom-close (grant exit access) must return **200** before TL green, boom open, and `WAIT_CROSSING`; otherwise stay in validation with API error.
+- **I/O + sensors:** strict Modbus FCs; debounced soft-fail (1.23); sensor read failure locks workflow; unlock when Modbus and sensor polls are both healthy; per-lane `WorkflowLock` for sensor/RFID/reset.
+- **MQTT broker:** app checks ports only — run `../mqtt_broker_setup/install_mosquitto_service.sh` once, or set `GMDC_ENSURE_MQTT=1` for in-app install.
+- **Single instance:** restarting the app stops the previous process (`.mines_checkpoint.pid`).
 - **Idle FTP photo upload:** on every IDLE (start or after a trip), a background FTP uploader sends all files under `images/` (including lane folders) to `10.80.118.100` as user `ftpclient`, remote `/Mines-Checkpoint`. Configure via `FTP_*` in `.env`. Successful uploads are removed locally.
 - **Display MQTT:** set `display.display_ip` per lane in `iot_configuration.json`. App subscribes to `display_info/{display_ip}` and immediately publishes that lane’s letter on `pcb_id/{display_ip}`:
   - Mines Entry → `a` · Traffic IN → `b` · Traffic OUT → `c` · Mines Exit → `d`

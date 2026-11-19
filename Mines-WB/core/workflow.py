@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -32,6 +33,7 @@ from config.constants import (
     State,
 )
 from core.app_context import AppContext
+from gmdc_common.core.workflow_lock import WorkflowLock, sensor_io_recovery_ok
 from gmdc_common.hardware.camera import (
     build_top_photo_filename,
     capture_rtsp_snapshot,
@@ -73,6 +75,15 @@ DIGITIZER_HANG_GRACE_SEC = 10.0
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 
 
+def _workflow_guard(fn):
+    @functools.wraps(fn)
+    def _wrapped(self, *args, **kwargs):
+        with self._wf.rlock:
+            return fn(self, *args, **kwargs)
+
+    return _wrapped
+
+
 class MinesWbWorkflow:
     """
     IDLE → POSITIONING → WEIGHT → RFID → ANPR → FINAL_WEIGHT/IMAGES
@@ -81,7 +92,7 @@ class MinesWbWorkflow:
 
     def __init__(self, ctx: AppContext):
         self.ctx = ctx
-        self._worker_lock = threading.Lock()
+        self._wf = WorkflowLock()
         self._manual_stop = threading.Event()
         self._pos_timer: Optional[threading.Timer] = None
         self._weight_timer: Optional[threading.Timer] = None
@@ -155,13 +166,30 @@ class MinesWbWorkflow:
         return bool(self._io_fault)
 
     def on_io_health(self, healthy: bool, message: str = "") -> None:
-        """
-        Healthy=False → popup + weighbridge_0, abort trip, block new trips.
-        Healthy=True  → clear lock so the next trip can start.
-        """
+        """Healthy=False → lock; Healthy=True → unlock when sensor + Modbus are OK."""
+        with self._wf.rlock:
+            self._apply_io_health(healthy, message)
+
+    def on_sensor_read_failure(self) -> None:
+        with self._wf.rlock:
+            self._apply_io_health(False, "Sensor read failure. Please Check !")
+
+    def on_sensor_read_recovered(self) -> None:
+        with self._wf.rlock:
+            if not self._io_fault:
+                return
+            if sensor_io_recovery_ok(self.ctx.io, self.ctx.sensor_poller):
+                self._apply_io_health(True, "")
+
+    def _apply_io_health(self, healthy: bool, message: str = "") -> None:
         msg = str(message or "").strip()
         if healthy:
             if not self._io_fault:
+                return
+            if not sensor_io_recovery_ok(self.ctx.io, self.ctx.sensor_poller):
+                logger.info(
+                    "I/O unlock deferred until sensor polls and Modbus are healthy"
+                )
                 return
             logger.info("I/O controller recovered - unlocking workflow")
             self._io_fault = False
@@ -203,7 +231,7 @@ class MinesWbWorkflow:
         sm = self.ctx.state_machine
         if sm and sm.current_state not in (State.IDLE, State.FREE_PASS):
             try:
-                self.force_reset(stop_audio=False)
+                self._force_reset_body(stop_audio=False)
             except Exception:
                 logger.exception("force_reset during I/O fault failed")
         self._ui_devices()
@@ -1095,7 +1123,7 @@ class MinesWbWorkflow:
             return
         if not self._positioning_weight_seen:
             return
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             return
         self._positioning_zero_exit = True
         last_weight = float(self._positioning_last_weight or 0.0)
@@ -1130,7 +1158,7 @@ class MinesWbWorkflow:
                 )
                 self._enter_exit_granted(reason="weight_zero_error")
             finally:
-                self._worker_lock.release()
+                self._wf.release()
 
         threading.Thread(target=_run, name="ZeroWeightExit", daemon=True).start()
 
@@ -1581,6 +1609,7 @@ class MinesWbWorkflow:
         )
         self._ui_devices()
 
+    @_workflow_guard
     def on_entry_occupied(self) -> None:
         sm = self.ctx.state_machine
         if not sm:
@@ -1625,13 +1654,14 @@ class MinesWbWorkflow:
             )
             self._maybe_announce_idle_s2_s3()
             return
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             return
         try:
             self._begin_vehicle_positioning("ENTRY_A")
         finally:
-            self._worker_lock.release()
+            self._wf.release()
 
+    @_workflow_guard
     def on_entry_cleared(self) -> None:
         """ENTRY_B exit complete: uncut → cut → uncut on the entry sensor."""
         sm = self.ctx.state_machine
@@ -1667,6 +1697,7 @@ class MinesWbWorkflow:
             if self._sensor_cut("wb"):
                 self.on_wb_occupied()
 
+    @_workflow_guard
     def on_wb_occupied(self) -> None:
         sm = self.ctx.state_machine
         if not sm or sm.current_state == State.FREE_PASS:
@@ -1693,17 +1724,18 @@ class MinesWbWorkflow:
             )
             return
         self._stop_backward_announcement()
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             return
 
         def _run():
             try:
                 self._weight_capture_cycle()
             finally:
-                self._worker_lock.release()
+                self._wf.release()
 
         threading.Thread(target=_run, name="WeightCycle", daemon=True).start()
 
+    @_workflow_guard
     def on_exit_occupied(self) -> None:
         """Bidirectional ENTRY_B approach, exit crossing, or IDLE s2+s3 error voice."""
         sm = self.ctx.state_machine
@@ -1751,14 +1783,15 @@ class MinesWbWorkflow:
             if self._maybe_announce_idle_s2_s3():
                 return
             if self._is_bidirectional():
-                if not self._worker_lock.acquire(blocking=False):
+                if not self._wf.acquire_nonblocking():
                     return
                 try:
                     self._begin_vehicle_positioning("ENTRY_B")
                 finally:
-                    self._worker_lock.release()
+                    self._wf.release()
             return
 
+    @_workflow_guard
     def on_exit_cleared(self) -> None:
         """
         Vehicle fully crossed the exit sensor (uncut → cut → uncut).
@@ -1995,7 +2028,7 @@ class MinesWbWorkflow:
             return
         if not self._awaiting_rfid:
             return
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             logger.warning("Workflow busy - ignoring RFID")
             return
 
@@ -2003,7 +2036,7 @@ class MinesWbWorkflow:
             try:
                 self._rfid_and_beyond(id_hexes, raw_tags or [])
             finally:
-                self._worker_lock.release()
+                self._wf.release()
 
         threading.Thread(target=_run, name="RFIDCycle", daemon=True).start()
 
@@ -2026,7 +2059,7 @@ class MinesWbWorkflow:
             "truck_details": resp.truck_details,
         }
 
-        if not self._worker_lock.acquire(blocking=False):
+        if not self._wf.acquire_nonblocking():
             raise RuntimeError("Workflow busy")
 
         self._awaiting_rfid = False
@@ -2043,7 +2076,7 @@ class MinesWbWorkflow:
                 else:
                     self._rfid_and_beyond([rfid], [])
             finally:
-                self._worker_lock.release()
+                self._wf.release()
 
         threading.Thread(target=_run, name="MobileRFID", daemon=True).start()
         return body
@@ -2057,6 +2090,23 @@ class MinesWbWorkflow:
         return self._manual_stop.wait(timeout=max(0.0, float(seconds)))
 
     def force_reset(
+        self,
+        announce_reset: bool = False,
+        stop_audio: bool = True,
+        delay_boom_close: bool = False,
+        notify_gmdc: Optional[bool] = None,
+        manual: bool = False,
+    ) -> None:
+        with self._wf.rlock:
+            self._force_reset_body(
+                announce_reset=announce_reset,
+                stop_audio=stop_audio,
+                delay_boom_close=delay_boom_close,
+                notify_gmdc=notify_gmdc,
+                manual=manual,
+            )
+
+    def _force_reset_body(
         self,
         announce_reset: bool = False,
         stop_audio: bool = True,
@@ -3197,6 +3247,10 @@ class MinesWbWorkflow:
                     close,
                     fallback="Boom-close rejected.",
                 )
+                logger.warning(
+                    "Exit not granted - boom-close status=%s", close.status
+                )
+                return
 
         self._enter_exit_granted(
             reason=(
@@ -3275,6 +3329,10 @@ class MinesWbWorkflow:
                 close,
                 fallback="Vadhghat boom-close rejected.",
             )
+            logger.warning(
+                "Exit not granted - vadhghat boom-close status=%s", close.status
+            )
+            return
         self._enter_exit_granted(
             reason="vadhghat_details_ok" if details_ok else "vadhghat_details_fail"
         )

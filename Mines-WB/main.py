@@ -47,7 +47,7 @@ logger = logging.getLogger("mines_wb.main")
 
 
 def _ensure_local_mqtt_broker() -> None:
-    """Install/start Mosquitto if 1883 (MQTT) or 9001 (WS) is not listening."""
+    """Check Mosquitto on 1883/9001. Install only when GMDC_ENSURE_MQTT=1."""
     try:
         if getattr(sys, "frozen", False):
             roots = [Path(sys.executable).resolve().parent]
@@ -282,6 +282,14 @@ def _build_hardware(ctx: AppContext) -> None:
         if ctx.workflow:
             ctx.workflow.on_exit_cleared()
 
+    def on_sensor_fail():
+        if ctx.workflow:
+            ctx.workflow.on_sensor_read_failure()
+
+    def on_sensor_ok():
+        if ctx.workflow:
+            ctx.workflow.on_sensor_read_recovered()
+
     ctx.sensor_poller = SensorPoller(
         ctx.io,
         entry_pin=entry_pin,
@@ -295,6 +303,8 @@ def _build_hardware(ctx: AppContext) -> None:
         on_entry_occupied=on_entry_occ if entry_pin is not None else None,
         on_wb_occupied=on_wb_occ if wb_pin is not None else None,
         on_exit_occupied=on_exit_occ if exit_pin is not None else None,
+        on_read_failure=on_sensor_fail,
+        on_read_recovered=on_sensor_ok,
     )
     logger.info(
         "I/O mapped demo=%s TL entry=%s/%s exit=%s/%s boom entry=%s(en=%s) "
@@ -539,6 +549,9 @@ def bootstrap() -> AppContext:
 
 
 def main() -> int:
+    from gmdc_common.utils.runtime_instance import replace_prior_runtime_instance
+
+    replace_prior_runtime_instance("mines_wb", Path(__file__).resolve().parent)
     ctx = bootstrap()
     settings = ctx.settings
     assert settings

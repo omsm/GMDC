@@ -1,6 +1,6 @@
 # Mines-WB
 
-**Version:** 1.23.0 (product **1.23** — see [`../version.md`](../version.md))
+**Version:** 1.24.0 (product **1.24** — see [`../version.md`](../version.md))
 
 Single weighbridge runtime for GMDC yard sites (uni-directional or bi-directional).
 
@@ -22,10 +22,15 @@ python main.py
 
 On Mac Mini production, use a local `pyenv` and [`../macos-services/README.md`](../macos-services/README.md) (`enable-mines-wb.sh`). Project root must be `/Users/csm-gmdc/GMDC_IOT` (not Downloads).
 
-## Behaviour notes (1.23)
+## Behaviour notes (1.24)
+
+### Exit grant
+- Post-weight **boom-close** / **vadhghat boom-close** must return **200** before `EXIT_GRANTED` and exit hardware; failure paths that clear the lane without OCI unchanged.
 
 ### I/O + sensors
-- Strict Modbus FC map (no FC fallback). Debounced Modbus soft-fail (three strikes before health-down; reconnect + fresh DI retry at second soft fail on the WB pin path); hard transport errors still lock immediately. I/O down → popup, reconnect, lock trips until healthy.
+- Strict Modbus FC map (no FC fallback). Debounced soft-fail (1.23). Sensor read failure locks workflow; unlock when Modbus and sensor polls are both healthy. Per-lane `WorkflowLock`.
+- **MQTT broker:** port check at startup; use `../mqtt_broker_setup/install_mosquitto_service.sh` or `GMDC_ENSURE_MQTT=1`.
+- **Single instance:** `.mines_wb.pid` replaces prior process on restart.
 - Sensors are realtime (no last-value hold). Poll rate: `polling.scan_interval` in `iot_configuration.json`.
 
 ### Exit before weighbridge

@@ -1,13 +1,38 @@
 # GMDC Yard IoT — Version History
 
 Workspace-level changelog for the site install (runtimes + shared packages).  
-**Current version: 1.23**
+**Current version: 1.24**
 
 Per-app `VERSION` files track each runtime build. This document tracks the **monorepo / product** releases.
 
 ---
 
-## 1.23 — 2026-11-03 (latest)
+## 1.24 — 2026-11-19 (latest)
+
+Reliability and operator-safety integration: OCI exit grant on HTTP 200 only, aligned sensor/Modbus lock, workflow serialization, independent MQTT broker check, single-instance runtime guard.
+
+### OCI “boom-close” = grant exit access (Mines-Checkpoint + Mines-WB)
+- **200:** advance workflow and apply hardware when configured (boom open / TL green / exit grant)
+- **Not 200:** no green TL, no boom open, no `WAIT_CROSSING` (Checkpoint); no `EXIT_GRANTED` after post-weight boom-close (WB)
+- No hardware required when boom/TL are absent in config (software grant still follows API 200)
+
+### I/O + sensors (`gmdc_common`, both runtimes)
+- `SensorPoller` `on_read_failure` / `on_read_recovered` wired in `main.py`
+- Workflow locks on sensor read failure; unlock only when **Modbus healthy and** sensor `read_healthy`
+- Shared `WorkflowLock` serializes sensor, RFID, reset, crossing timeout, I/O health (per lane)
+
+### Process + MQTT ops
+- `replace_prior_runtime_instance()` at Mines-Checkpoint / Mines-WB startup (PID file; Windows may use `instance_guard`)
+- MQTT: `bootstrap_local_mqtt()` **checks ports only** by default; `GMDC_ENSURE_MQTT=1` for legacy in-app install
+- `mqtt_broker_setup/install_mosquitto_service.sh` for persistent OS-level Mosquitto
+
+### Documentation
+- `docs/ERRORS.md` — display error codes (e.g. `ERROR@H01`, `Invalid@Sensor Cut`)
+- Product version **1.24** aligned across READMEs and knowledge base
+
+---
+
+## 1.23 — 2026-11-03
 
 Debounced Modbus soft-fail handling so a single FC2 exception (site log `130 / 0`) does not flash-lock the yard.
 
@@ -559,6 +584,7 @@ Tracking-2 and Mines Exit were profiles only in 1.0 (now covered by Mines-Checkp
 
 | Version | Focus |
 |---------|--------|
+| **1.24** | Grant exit on OCI 200 only; sensor+Modbus lock alignment; `WorkflowLock`; MQTT check-only + install script; runtime single-instance guard |
 | **1.23** | Debounced Modbus soft-fail (`RESYNC_AFTER_FAILURES=3`, success streak clear, reconnect + fresh DI retry on WB path); hard transport still immediate lock; no FC fallback / realtime sensors unchanged |
 | **1.22** | Strict Modbus I/O + realtime sensors + I/O-down lock; exit-before-WB abort; post-ANPR locked 10-stable weight; decoder current-weight MQTT |
 | **1.21** | display_ip pcb a–d handshake; idle FTP photo upload; Checkpoint `VEHICLE_CROSSING_TIMEOUT_SEC` from `.env` |
